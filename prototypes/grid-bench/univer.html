@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Прототип A: Univer</title>
+<link rel="stylesheet" href="./vendor/univer/index.css">
+<style>
+  body { margin: 0; font: 13px "Segoe UI", Carlito, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  #report { white-space: pre; background: #f3f3f3; padding: 6px 10px; border-bottom: 1px solid #ccc; min-height: 3em; }
+  #app { flex: 1; min-height: 0; }
+</style>
+</head>
+<body>
+<div id="report">Загрузка…</div>
+<div id="app"></div>
+<script type="module">
+import { createUniver, LocaleType, mergeLocales, UniverSheetsCorePreset, ruRU } from './vendor/univer/univer.bundle.js';
+import { makeDataset, LOOKUP_ROWS, COLS, EDIT_VALUE, memMB, measureScroll, report, rowsParam, lookupParam, yieldNow } from './data.js';
+
+const ROWS = rowsParam();
+const res = { rows: ROWS, vlookup: lookupParam(), startedVisible: document.visibilityState };
+const status = t => { document.getElementById('report').textContent = t + ' ' + JSON.stringify(res); };
+addEventListener('error', e => status('ОШИБКА: ' + e.message));
+addEventListener('unhandledrejection', e => status('ОШИБКА: ' + e.reason));
+const t0 = performance.now();
+const { data, lookup, editLookupRow, expectedTotal } = makeDataset(ROWS, lookupParam());
+res.genMs = Math.round(performance.now() - t0);
+
+// --- Снимок книги в формате Univer ---
+const cellData = {};
+data.forEach((row, r) => { const o = {}; row.forEach((c, i) => { if (c) o[i] = c.f ? { f: c.f } : { v: c.v }; }); cellData[r] = o; });
+const lookupData = {};
+lookup.forEach(([k, v], i) => { lookupData[i] = { 0: { v: k }, 1: { v } }; });
+const snapshot = {
+  id: 'bench', sheetOrder: ['data', 'lookup'],
+  sheets: {
+    data: { id: 'data', name: 'Data', rowCount: ROWS + 10, columnCount: COLS + 2, cellData },
+    lookup: { id: 'lookup', name: 'Lookup', rowCount: LOOKUP_ROWS + 10, columnCount: 4, cellData: lookupData },
+  },
+};
+
+const t1 = performance.now();
+const { univerAPI } = createUniver({
+  locale: LocaleType.RU_RU,
+  locales: { [LocaleType.RU_RU]: mergeLocales(ruRU) },
+  presets: [UniverSheetsCorePreset({ container: 'app' })],
+});
+const wb = univerAPI.createWorkbook(snapshot);
+const ws = wb.getSheetBySheetId('data');
+const lk = wb.getSheetBySheetId('lookup');
+res.loadMs = Math.round(performance.now() - t1);
+
+// Univer считает формулы асинхронно: ждём, пока в ВСЕГО появится число.
+const totalCell = () => ws.getRange(1, COLS - 1).getValue();
+async function waitFor(pred, timeoutMs = 600000) {
+  const s = performance.now();
+  while (!pred()) {
+    if (performance.now() - s > timeoutMs) return null;
+    await (document.visibilityState === 'visible' ? new Promise(r => setTimeout(r, 10)) : yieldNow());
+  }
+  return Math.round(performance.now() - s);
+}
+status('расчёт…');
+const t2 = performance.now();
+const waited = await waitFor(() => typeof totalCell() === 'number');
+res.firstCalcMs = waited === null ? 'не дождались' : Math.round(performance.now() - t2);
+res.total = totalCell();
+res.expectedTotal = expectedTotal;
+res.totalCorrect = Math.abs(Number(totalCell()) - expectedTotal) < 0.005;
+
+status('правка…');
+// --- Правка одной ячейки справочника ---
+const before = totalCell();
+const t3 = performance.now();
+lk.getRange(editLookupRow, 1).setValue(EDIT_VALUE);
+const w2 = await waitFor(() => totalCell() !== before, 120000);
+res.editRecalcMs = w2 === null ? 'не дождались' : Math.round(performance.now() - t3);
+res.editChangedTotal = totalCell() !== before;
+
+status('прокрутка…');
+// --- Прокрутка: 240 кадров по 25 строк (колесом мыши по холсту) ---
+const canvas = document.querySelector('#app canvas[data-u-comp="render-canvas"]') || [...document.querySelectorAll('#app canvas')].sort((a, b) => b.width * b.height - a.width * a.height)[0];
+const rect = canvas.getBoundingClientRect();
+Object.assign(res, await measureScroll(() => canvas.dispatchEvent(new WheelEvent('wheel', {
+  deltaY: 25 * 20, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, bubbles: true, cancelable: true,
+}))));
+res.scrolledToRow = (() => { try { return ws.getScrollState?.()?.sheetViewStartRow ?? '?'; } catch { return '?'; } })();
+res.jsHeapMB = memMB();
+report('Прототип A: Univer 1.0.4 (sheets-core, open source)', res);
+</script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Прототип B: своя сетка + IronCalc</title>
+<style>
+  body { margin: 0; font: 13px "Segoe UI", Carlito, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  #report { white-space: pre; background: #f3f3f3; padding: 6px 10px; border-bottom: 1px solid #ccc; min-height: 3em; }
+  #scroller { flex: 1; overflow: auto; position: relative; }
+  #spacer { position: absolute; top: 0; left: 0; width: 1px; }
+  #grid { position: sticky; top: 0; left: 0; display: block; }
+</style>
+</head>
+<body>
+<div id="report">Загрузка…</div>
+<div id="scroller"><div id="spacer"></div><canvas id="grid"></canvas></div>
+<script type="module">
+import init, { Model } from './vendor/ironcalc/wasm.js';
+import { makeDataset, LOOKUP_ROWS, COLS, EDIT_VALUE, memMB, measureScroll, report, rowsParam, lookupParam, yieldNow } from './data.js';
+
+const ROWS = rowsParam();
+const RH = 22, CW = 96, HW = 56; // высота строки, ширина столбца, ширина заголовка строк
+const res = { rows: ROWS, vlookup: lookupParam() };
+const status = t => { document.getElementById('report').textContent = t + ' ' + JSON.stringify(res); console.log('STATUS', t, JSON.stringify(res)); };
+addEventListener('error', e => status('ОШИБКА: ' + e.message));
+addEventListener('unhandledrejection', e => status('ОШИБКА: ' + e.reason));
+
+const t0 = performance.now();
+const wasm = await init();
+const { data, lookup, editLookupRow, expectedTotal } = makeDataset(ROWS, lookupParam());
+res.genMs = Math.round(performance.now() - t0);
+
+// --- Загрузка в движок ---
+status('загрузка ячеек…'); await yieldNow();
+const t1 = performance.now();
+const model = new Model('Bench', 'en', 'UTC', 'en');
+model.renameSheet(0, 'Data');
+model.newSheet(); model.renameSheet(1, 'Lookup');
+model.pauseEvaluation();
+lookup.forEach(([k, v], i) => { model.setUserInput(1, i + 1, 1, k); model.setUserInput(1, i + 1, 2, String(v)); });
+for (let r = 0; r < data.length; r++) {
+  const row = data[r];
+  for (let c = 0; c < row.length; c++) {
+    const cell = row[c]; if (!cell) continue;
+    model.setUserInput(0, r + 1, c + 1, cell.f ?? String(cell.v)); // IronCalc: строки и столбцы с 1
+  }
+}
+res.loadMs = Math.round(performance.now() - t1);
+status('первый расчёт…'); await yieldNow();
+const t2 = performance.now();
+model.resumeEvaluation();
+model.evaluate();
+res.firstCalcMs = Math.round(performance.now() - t2);
+
+const total = () => Number(model.getFormattedCellValue(0, 2, COLS).replace(/[^\d.\-]/g, ''));
+res.total = model.getFormattedCellValue(0, 2, COLS);
+res.expectedTotal = expectedTotal;
+res.totalCorrect = Math.abs(total() - expectedTotal) < 0.005;
+
+status('отрисовка…'); await yieldNow();
+// --- Сетка на Canvas: рисуем только видимые ячейки ---
+const scroller = document.getElementById('scroller'), canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d');
+document.getElementById('spacer').style.height = (ROWS + 2) * RH + 'px';
+document.getElementById('spacer').style.width = HW + COLS * CW + 'px';
+function resize() {
+  const dpr = devicePixelRatio || 1;
+  canvas.width = scroller.clientWidth * dpr; canvas.height = scroller.clientHeight * dpr;
+  canvas.style.width = scroller.clientWidth + 'px'; canvas.style.height = scroller.clientHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); draw();
+}
+const colName = c => String.fromCharCode(65 + c);
+function draw() {
+  const w = scroller.clientWidth, h = scroller.clientHeight;
+  const first = Math.floor(scroller.scrollTop / RH), count = Math.ceil(h / RH) + 1;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+  ctx.font = '13px "Segoe UI", Carlito, sans-serif'; ctx.textBaseline = 'middle';
+  ctx.strokeStyle = '#e1e1e1'; ctx.beginPath();
+  for (let i = 0; i <= count; i++) { const y = (i + 1) * RH + .5; ctx.moveTo(0, y); ctx.lineTo(w, y); }
+  for (let c = 0; c <= COLS; c++) { const x = HW + c * CW + .5; ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+  ctx.stroke();
+  ctx.fillStyle = '#f3f3f3'; ctx.fillRect(0, 0, w, RH); ctx.fillRect(0, 0, HW, h);
+  ctx.fillStyle = '#444';
+  for (let c = 0; c < COLS; c++) ctx.fillText(colName(c), HW + c * CW + CW / 2 - 4, RH / 2);
+  for (let i = 0; i < count; i++) {
+    const row = first + i + 1; if (row > ROWS + 1) break;
+    const y = (i + 1) * RH + RH / 2;
+    ctx.fillStyle = '#444'; ctx.fillText(String(row), 6, y);
+    ctx.fillStyle = '#000';
+    for (let c = 0; c < COLS; c++) {
+      const s = model.getFormattedCellValue(0, row, c + 1);
+      if (s) ctx.fillText(s.length > 12 ? s.slice(0, 12) + '…' : s, HW + c * CW + 4, y);
+    }
+  }
+}
+scroller.addEventListener('scroll', () => requestAnimationFrame(draw));
+addEventListener('resize', resize); resize();
+
+status('правка…'); await yieldNow();
+// --- Правка одной ячейки справочника → пересчёт зависимых ---
+const before = total();
+const t3 = performance.now();
+model.setUserInput(1, editLookupRow + 1, 2, String(EDIT_VALUE));
+model.evaluate();
+res.editRecalcMs = Math.round(performance.now() - t3);
+res.editChangedTotal = total() !== before;
+
+status('прокрутка…'); await yieldNow();
+// --- Прокрутка: 240 кадров по 25 строк ---
+Object.assign(res, await measureScroll(i => { scroller.scrollTop = i * 25 * RH; draw(); }));
+res.jsHeapMB = memMB();
+res.wasmMB = Math.round(wasm.memory.buffer.byteLength / 1048576);
+report('Прототип B: своя сетка + IronCalc 0.8.4', res);
+</script>
+</body>
+</html>

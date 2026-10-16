@@ -5,3 +5,5 @@ tests/corpus/private/
 !tests/corpus/public/**
 target/
 node_modules/
+prototypes/*/vendor/
+prototypes/*/univer-build/node_modules/
