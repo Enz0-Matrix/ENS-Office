@@ -1,0 +1,7 @@
+# Реальные документы компаний не храним в репозитории
+tests/corpus/private/
+*.xlsx
+*.docx
+!tests/corpus/public/**
+target/
+node_modules/
