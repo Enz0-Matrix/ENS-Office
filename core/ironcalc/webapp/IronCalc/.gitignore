@@ -1,0 +1,9 @@
+node_modules/*
+dist/*
+.vscode/*
+
+*storybook.log
+
+# visual regression failure artifacts (tests/worksheetCanvas)
+*.new.png
+*.diff.png
