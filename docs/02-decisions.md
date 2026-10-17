@@ -23,6 +23,12 @@ IronCalc быстрее в 25 раз, но содержит ошибки (ОКР
 Решение: свой Canvas-грид + форк IronCalc, нативно в Tauri, расчёт в фоновом потоке.
 Исправления по возможности отдаём в основной проект IronCalc.
 
+## ADR-006. Форк IronCalc как git subtree (принято 17.10.2026)
+`core/ironcalc` — subtree от ironcalc/IronCalc (squash). Обновление:
+`git subtree pull --prefix=core/ironcalc https://github.com/ironcalc/IronCalc <тег> --squash`.
+Наши изменения помечены комментарием «ENS-Office» и покрыты тестами `test_ens_*`;
+общие исправления стараемся отдавать авторам. Результаты: [engine-01](research/engine-01-ironcalc-fixes.md).
+
 ## ADR-005. Надёжность сохранения (принято, приоритет №1)
 - Исходный файл меняется только по «Сохранить».
 - Сохранение: временный файл рядом → проверка (перечитать) → атомарная замена;

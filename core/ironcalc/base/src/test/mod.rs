@@ -126,6 +126,8 @@ mod test_fn_map_reduce;
 mod test_fn_mmult;
 mod test_fn_oddfprice;
 mod test_fn_round;
+mod test_ens_excel_compat;
+mod test_ens_lookup_index;
 mod test_fn_scan;
 mod test_fn_tocol_torow;
 mod test_fn_transpose;

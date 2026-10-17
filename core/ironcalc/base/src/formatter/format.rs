@@ -127,6 +127,9 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
         ParsePart::General(..) => {
             // FIXME: This is "General formatting"
             // We should have different codepaths for general formatting and errors
+            // ENS-Office: like Excel, General never shows more than 15
+            // significant digits (6366933.539999999 is shown as 6366933.54).
+            let mut value = crate::number_format::to_excel_precision(value, 15);
             let value_abs = value.abs();
             if (1.0e-8..1.0e+11).contains(&value_abs) {
                 let mut text = format!("{value:.9}");

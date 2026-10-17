@@ -9,6 +9,9 @@ use crate::{
 
 use super::binary_search::binary_search_on_array;
 use super::util::{compare_values, from_wildcard_to_regex, result_matches_regex, values_are_equal};
+use crate::evaluation::KeyBuild;
+use crate::number_format::to_excel_precision;
+use std::collections::HashMap;
 
 mod address_areas;
 mod choosecols_chooserows;
@@ -126,6 +129,146 @@ fn lookup_index(
                 Box::new(move |x| compare_values(x, &lookup_value) == 0)
             };
         search_vector.iter().position(result_matches)
+    }
+}
+
+/// ENS-Office: identifies a lookup vector, the first column (VLOOKUP, MATCH on a
+/// column) or the first row (HLOOKUP, MATCH on a row) of a range:
+/// `(sheet, first row, first column, last row, last column)`.
+pub(crate) type LookupCacheKey = (u32, i32, i32, i32, i32);
+
+/// ENS-Office: an index of a lookup vector for exact matches. Built once per
+/// evaluation pass, it turns the linear scan of every exact VLOOKUP into a hash
+/// lookup. It returns the same position as the scan (the first match) and is
+/// only consulted for lookup values where that is guaranteed, see
+/// [`ExactKey::of`]; every other lookup takes the original path.
+pub(crate) struct ExactIndex {
+    /// Numbers by the bits of their 15-digit Excel value: first position.
+    numbers: HashMap<u64, usize, KeyBuild>,
+    /// Strings in lower case (as the wildcard matcher compares): first position.
+    strings: HashMap<String, usize, KeyBuild>,
+}
+
+impl ExactIndex {
+    fn new(values: &[CalcResult]) -> ExactIndex {
+        let mut numbers = HashMap::default();
+        let mut strings = HashMap::default();
+        for (position, value) in values.iter().enumerate() {
+            match value {
+                CalcResult::Number(f) => {
+                    numbers
+                        .entry(to_excel_precision(*f, 15).to_bits())
+                        .or_insert(position);
+                }
+                CalcResult::String(s) => {
+                    strings.entry(s.to_lowercase()).or_insert(position);
+                }
+                _ => {}
+            }
+        }
+        ExactIndex {
+            numbers,
+            strings,
+        }
+    }
+
+    fn find(&self, key: &ExactKey) -> Option<usize> {
+        match key {
+            ExactKey::Number(bits) => self.numbers.get(bits).copied(),
+            ExactKey::String(s) => self.strings.get(s).copied(),
+        }
+    }
+}
+
+/// A lookup value the index answers exactly like the linear scan does.
+enum ExactKey {
+    Number(u64),
+    String(String),
+}
+
+impl ExactKey {
+    /// * Text without wildcards (`*`, `?`, `~`): the scan matches strings equal
+    ///   in lower case and nothing else.
+    /// * Numbers of magnitude at least 1: the scan (`compare_values`) matches
+    ///   numbers whose 15-digit values differ by less than `f64::EPSILON`. Two
+    ///   distinct 15-digit values of magnitude >= 1 differ by far more, so the
+    ///   match is the one with identical bits. Empty cells, which the scan
+    ///   takes as 0, cannot match. Smaller numbers keep the scan.
+    ///
+    /// `numbers_by_precision` is false for MATCH, whose scan compares raw
+    /// values: there only text uses the index.
+    fn of(value: &CalcResult, numbers_by_precision: bool) -> Option<ExactKey> {
+        match value {
+            CalcResult::String(s) if !s.contains(['*', '?', '~']) => {
+                Some(ExactKey::String(s.to_lowercase()))
+            }
+            CalcResult::Number(f) if numbers_by_precision => {
+                let value = to_excel_precision(*f, 15);
+                if value.is_finite() && value.abs() >= 1.0 {
+                    Some(ExactKey::Number(value.to_bits()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LookupVector {
+    FirstColumn,
+    FirstRow,
+}
+
+impl Model<'_> {
+    /// ENS-Office: exact lookup of `lookup_value` in the first column or row of
+    /// the range `left:right` through the per-pass index. Returns `None` when
+    /// the index cannot answer (outside an evaluation pass, wildcards, small
+    /// numbers...): the caller then runs the original scan.
+    fn exact_lookup_cached(
+        &mut self,
+        lookup_value: &CalcResult,
+        left: CellReferenceIndex,
+        right: CellReferenceIndex,
+        vector: LookupVector,
+        numbers_by_precision: bool,
+        cell: CellReferenceIndex,
+    ) -> Option<Option<usize>> {
+        if !self.evaluation.in_pass {
+            return None;
+        }
+        let key = ExactKey::of(lookup_value, numbers_by_precision)?;
+        let (last_row, last_column) = match vector {
+            LookupVector::FirstColumn => (right.row, left.column),
+            LookupVector::FirstRow => (left.row, right.column),
+        };
+        let cache_key = (left.sheet, left.row, left.column, last_row, last_column);
+        if let Some(index) = self.evaluation.lookup_cache.get(&cache_key) {
+            return Some(index.find(&key));
+        }
+        let table = LookupTable::Range { left, right };
+        let values = match vector {
+            LookupVector::FirstColumn => table.first_column(self, cell),
+            LookupVector::FirstRow => table.first_row(self, cell),
+        };
+        let index = ExactIndex::new(&values);
+        let found = index.find(&key);
+        // Keep the index only if every value in it is final for this pass: no
+        // restart or unwind is pending and no cell of the vector is still being
+        // evaluated (a circular read returns a placeholder).
+        let state = &self.evaluation;
+        let in_progress = state.stack.iter().any(|c| {
+            c.sheet == left.sheet
+                && (left.row..=last_row).contains(&c.row)
+                && (left.column..=last_column).contains(&c.column)
+        });
+        if state.restart.is_none() && !state.unwinding && !in_progress {
+            self.evaluation
+                .lookup_cache
+                .insert(cache_key, std::sync::Arc::new(index));
+        }
+        Some(found)
     }
 }
 
@@ -410,6 +553,31 @@ impl<'a> Model<'a> {
         };
         let match_range = self.evaluate_node_in_context(&args[1], cell);
 
+        // ENS-Office: exact text match through the per-pass index.
+        if let (0, CalcResult::Range { left, right }) = (match_type, &match_range) {
+            let vector = if left.column == right.column {
+                Some(LookupVector::FirstColumn)
+            } else if left.row == right.row {
+                Some(LookupVector::FirstRow)
+            } else {
+                None
+            };
+            if let Some(vector) = vector {
+                if let Some(found) =
+                    self.exact_lookup_cached(&target, *left, *right, vector, false, cell)
+                {
+                    return match found {
+                        Some(position) => CalcResult::Number(position as f64 + 1.0),
+                        None => CalcResult::Error {
+                            error: Error::NA,
+                            origin: cell,
+                            message: "Not found".to_string(),
+                        },
+                    };
+                }
+            }
+        }
+
         // MATCH operates on a vector (a single row or single column). We
         // materialize the second argument, be it a range reference or an array
         // literal, into a flat list of values and then run the search on it.
@@ -535,8 +703,25 @@ impl<'a> Model<'a> {
             };
         }
         // We look for `lookup_value` in the first row of the table
-        let search_vector = table.first_row(self, cell);
-        match lookup_index(&lookup_value, &search_vector, is_sorted) {
+        let cached = match (&table, is_sorted) {
+            (LookupTable::Range { left, right }, false) => self.exact_lookup_cached(
+                &lookup_value,
+                *left,
+                *right,
+                LookupVector::FirstRow,
+                true,
+                cell,
+            ),
+            _ => None,
+        };
+        let found = match cached {
+            Some(found) => found,
+            None => {
+                let search_vector = table.first_row(self, cell);
+                lookup_index(&lookup_value, &search_vector, is_sorted)
+            }
+        };
+        match found {
             Some(column) => table.get(self, row_index - 1, column as i32, cell),
             None => CalcResult::Error {
                 error: Error::NA,
@@ -599,8 +784,25 @@ impl<'a> Model<'a> {
             };
         }
         // We look for `lookup_value` in the first column of the table
-        let search_vector = table.first_column(self, cell);
-        match lookup_index(&lookup_value, &search_vector, is_sorted) {
+        let cached = match (&table, is_sorted) {
+            (LookupTable::Range { left, right }, false) => self.exact_lookup_cached(
+                &lookup_value,
+                *left,
+                *right,
+                LookupVector::FirstColumn,
+                true,
+                cell,
+            ),
+            _ => None,
+        };
+        let found = match cached {
+            Some(found) => found,
+            None => {
+                let search_vector = table.first_column(self, cell);
+                lookup_index(&lookup_value, &search_vector, is_sorted)
+            }
+        };
+        match found {
             Some(row) => table.get(self, row as i32, column_index - 1, cell),
             None => CalcResult::Error {
                 error: Error::NA,

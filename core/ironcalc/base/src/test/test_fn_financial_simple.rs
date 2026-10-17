@@ -167,7 +167,8 @@ fn fn_received_example() {
     let mut model = new_empty_model();
     model._set("A1", "=RECEIVED(39493, 39583, 1000000, 0.0575, 2)");
     model.evaluate();
-    assert_eq!(model._get_text("A1"), *"1014584.654407102");
+    // ENS-Office: General shows at most 15 significant digits, as Excel does.
+    assert_eq!(model._get_text("A1"), *"1014584.6544071");
 }
 
 #[test]

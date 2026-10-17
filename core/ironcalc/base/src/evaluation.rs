@@ -409,6 +409,12 @@ pub(crate) struct Evaluation {
     pub(crate) depth: usize,
     /// The deepest the recursion is allowed to go, in formulas.
     pub(crate) max_depth: usize,
+    /// ENS-Office: indexes of lookup vectors (first column/row of a range) for
+    /// exact-match VLOOKUP, HLOOKUP and MATCH, built once per pass. Values do
+    /// not change within a pass (a change forces a restart), so an index stays
+    /// valid until the next pass clears it.
+    pub(crate) lookup_cache:
+        HashMap<crate::functions::LookupCacheKey, std::sync::Arc<crate::functions::ExactIndex>, KeyBuild>,
     /// The most stack the recursion is allowed to use, in bytes, measured from
     /// the outermost formula. How much one formula needs varies a lot, with
     /// the formula and with the build, so a number of formulas alone does not
@@ -468,6 +474,7 @@ impl Default for Evaluation {
             restarts_in_last_evaluation: 0,
             depth: 0,
             max_depth: default_max_depth(),
+            lookup_cache: HashMap::default(),
             max_stack: DEFAULT_MAX_STACK,
             stack_base: 0,
             unwinding: false,
@@ -691,6 +698,7 @@ impl<'a> Model<'a> {
         state.stack.clear();
         state.seen.clear();
         state.seen_ranges.clear();
+        state.lookup_cache.clear();
         state.restart = None;
         state.depth = 0;
         state.unwinding = false;
@@ -714,6 +722,7 @@ impl<'a> Model<'a> {
         }
         self.evaluation.in_pass = false;
         self.evaluation.root = None;
+        self.evaluation.lookup_cache.clear();
         restart
     }
 

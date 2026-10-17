@@ -15,6 +15,7 @@ mod financial;
 mod information;
 mod logical;
 mod lookup_and_reference;
+pub(crate) use lookup_and_reference::{ExactIndex, LookupCacheKey};
 mod macros;
 mod math_and_trigonometry;
 mod spill_functions;
