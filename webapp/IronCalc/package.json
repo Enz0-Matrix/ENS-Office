@@ -1,0 +1,74 @@
+{
+  "name": "@ironcalc/workbook",
+  "version": "0.9.0",
+  "type": "module",
+  "sideEffects": [
+    "*.css",
+    "**/*.css"
+  ],
+  "main": "./dist/ironcalc.js",
+  "module": "./dist/ironcalc.js",
+  "source": "./src/index.ts",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/ironcalc.js"
+    },
+    "./style.css": "./dist/ironcalc.css"
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.json",
+    "check": "biome check ./src ./tests .storybook/ *.ts *.json && npm run lint:i18n",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "check-write": "biome check --write ./src ./tests .storybook/ *.ts *.json",
+    "lint:i18n": "node scripts/lint-i18n.js",
+    "test": "vitest run --exclude tests/worksheetCanvas/renderSheet.test.ts && npm run test:visual",
+    "test:visual": "node scripts/visual-tests.js",
+    "test:visual:update": "node scripts/visual-tests.js --update",
+    "storybook": "storybook dev -p 6006 --no-open",
+    "build-storybook": "storybook build"
+  },
+  "dependencies": {
+    "@ironcalc/wasm": "file:../../bindings/wasm/pkg",
+    "react-colorful": "^5.6.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@napi-rs/canvas": "^1.0.7",
+    "@storybook/react": "^10.6.1",
+    "@storybook/react-vite": "^10.6.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "i18next": "^26.3.1",
+    "lucide-react": "^1.49.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-i18next": "^17.0.15",
+    "storybook": "^10.6.1",
+    "ts-node": "^10.9.2",
+    "typescript": "7.0.2",
+    "vite": "^8.3.1",
+    "vite-plugin-svgr": "^5.2.0",
+    "vitest": "^5.0.3"
+  },
+  "peerDependencies": {
+    "i18next": "^26.4.2",
+    "lucide-react": "^1.49.0",
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19",
+    "react-i18next": "^17.0.15"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ironcalc/IronCalc.git",
+    "directory": "webapp/IronCalc"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}
