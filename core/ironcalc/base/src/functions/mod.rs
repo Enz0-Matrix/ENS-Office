@@ -2317,6 +2317,19 @@ impl<'a> Model<'a> {
         args: &[Node],
         cell: CellReferenceIndex,
     ) -> CalcResult {
+        // ENS-Office: volatile functions run on every incremental evaluation.
+        if matches!(
+            kind,
+            Function::Now
+                | Function::Today
+                | Function::Rand
+                | Function::Randbetween
+                | Function::Randarray
+                | Function::Cell
+                | Function::Info
+        ) {
+            self.record_volatile();
+        }
         match kind {
             Function::And => self.fn_and(args, cell),
             Function::False => self.fn_false(args, cell),

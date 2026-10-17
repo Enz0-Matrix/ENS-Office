@@ -90,14 +90,29 @@ fn main() {
     m.evaluate();
     let calc = ms(t);
     let total = m.get_formatted_cell_value(0, 2, 10).expect("total");
+    eprintln!("first_calc={calc}ms load={load}ms");
 
+    // Правка ставки в справочнике (затрагивает ~rows/2000 строк и итог).
+    // set_user_input сам пересчитывает (частично, если возможно).
     let t = Instant::now();
     m.set_user_input(1, first_key_row as i32, 2, "99.99").expect("edit");
-    m.evaluate();
-    let edit = ms(t);
+    let edit = t.elapsed().as_secs_f64() * 1000.0;
     let total2 = m.get_formatted_cell_value(0, 2, 10).expect("total");
 
+    // Правка цены в одной строке данных (одна строка и итог).
+    let t = Instant::now();
+    m.set_user_input(0, (rows / 2 + 2) as i32, 5, "123.45").expect("edit");
+    let edit_row = t.elapsed().as_secs_f64() * 1000.0;
+    let total3 = m.get_formatted_cell_value(0, 2, 10).expect("total");
+
+    // Контроль: полный пересчёт той же модели даёт тот же итог.
+    let t = Instant::now();
+    m.evaluate_full();
+    let full = ms(t);
+    let total_full = m.get_formatted_cell_value(0, 2, 10).expect("total");
+    assert_eq!(total3, total_full, "incremental and full totals differ");
+
     println!(
-        "rows={rows} vlookup={use_lookup} load={load}ms first_calc={calc}ms edit_recalc={edit}ms total={total} after_edit={total2}"
+        "rows={rows} vlookup={use_lookup} load={load}ms first_calc={calc}ms          edit_rate={edit:.1}ms edit_price={edit_row:.1}ms full_recalc={full}ms          total={total} after_rate={total2} after_price={total3}"
     );
 }

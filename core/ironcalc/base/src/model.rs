@@ -222,6 +222,8 @@ pub struct Model<'a> {
     pub(crate) last_lambda_id: usize,
     /// Everything the evaluation algorithm needs besides the workbook. See `evaluation.rs`.
     pub(crate) evaluation: Evaluation,
+    /// ENS-Office: dependency graph for incremental recalculation. See `incremental.rs`.
+    pub(crate) deps: crate::incremental::DepGraph,
     /// Evaluated CF results per cell, keyed by (sheet_index, row, column).
     /// Rebuilt from scratch on every call to evaluate_conditional_formatting().
     pub(crate) cf_cache: HashMap<(u32, i32, i32), Vec<CfCellResult>>,
@@ -1570,6 +1572,8 @@ impl<'a> Model<'a> {
         left: CellReferenceIndex,
         right: CellReferenceIndex,
     ) -> Vec<Vec<ArrayNode>> {
+        // ENS-Office: constants are read straight from the sheet below.
+        self.record_read_rect((left.sheet, left.row, left.column, right.row, right.column));
         let width = (right.column - left.column + 1).max(0) as usize;
         let height = (right.row - left.row + 1).max(0) as usize;
         let mut result = Vec::with_capacity(height);
@@ -1597,6 +1601,8 @@ impl<'a> Model<'a> {
         left: CellReferenceIndex,
         right: CellReferenceIndex,
     ) -> Option<Vec<f64>> {
+        // ENS-Office: numbers are read straight from the sheet below.
+        self.record_read_rect((left.sheet, left.row, left.column, right.row, right.column));
         let width = (right.column - left.column + 1).max(0) as usize;
         let height = (right.row - left.row + 1).max(0) as usize;
         let mut numbers = Vec::with_capacity(width * height);
@@ -1863,6 +1869,7 @@ impl<'a> Model<'a> {
             lambdas: HashMap::new(),
             last_lambda_id: 0,
             evaluation: Evaluation::default(),
+            deps: Default::default(),
             cf_cache: HashMap::new(),
             links: HashMap::new(),
         };

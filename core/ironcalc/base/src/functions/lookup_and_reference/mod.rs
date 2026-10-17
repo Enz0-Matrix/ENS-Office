@@ -244,6 +244,7 @@ impl Model<'_> {
             LookupVector::FirstRow => (left.row, right.column),
         };
         let cache_key = (left.sheet, left.row, left.column, last_row, last_column);
+        self.record_read_rect(cache_key);
         if let Some(index) = self.evaluation.lookup_cache.get(&cache_key) {
             return Some(index.find(&key));
         }
@@ -1300,6 +1301,7 @@ impl<'a> Model<'a> {
                     message: "argument must be a reference to a single cell".to_string(),
                 };
             }
+            self.record_read(left);
             if let Ok(Some(f)) = self.get_english_cell_formula(left.sheet, left.row, left.column) {
                 CalcResult::String(f)
             } else {

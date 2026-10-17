@@ -54,6 +54,8 @@ mod constants;
 mod cut_paste;
 mod evaluation;
 mod functions;
+mod incremental;
+pub use incremental::LastEvaluation;
 mod implicit_intersection;
 pub mod links;
 mod merged_cells;

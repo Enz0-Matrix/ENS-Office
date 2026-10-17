@@ -700,6 +700,7 @@ impl<'a> Model<'a> {
             lambdas: HashMap::new(),
             last_lambda_id: 0,
             evaluation: crate::evaluation::Evaluation::default(),
+            deps: Default::default(),
             cf_cache: HashMap::new(),
             links: HashMap::new(),
         };

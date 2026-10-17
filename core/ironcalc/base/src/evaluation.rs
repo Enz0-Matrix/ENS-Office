@@ -511,6 +511,10 @@ impl<'a> Model<'a> {
     /// `#CIRC!` and keeps no spill cells: its stale cells are dropped when it
     /// is marked, so there is nothing of it to read or to contradict.
     pub fn evaluate(&mut self) {
+        // ENS-Office: record what every formula reads (see `incremental.rs`).
+        self.deps.recording = true;
+        self.deps.only = None;
+        self.deps.clear_recording();
         self.sync_anchor_order();
         // Every pass starts from the same sheet: what an abandoned pass wrote
         // is undone. This is what makes a pass a function of the anchor order.
@@ -537,6 +541,12 @@ impl<'a> Model<'a> {
             self.restore_dynamic_spills(&spills_before);
         }
         self.evaluation.restarts_in_last_evaluation = log.restarts;
+        self.deps.recording = false;
+        let t = std::time::Instant::now();
+        self.finish_full_evaluation();
+        if std::env::var("ENS_PROFILE").is_ok() {
+            eprintln!("ENS full: finish_full_evaluation {:?}", t.elapsed());
+        }
         self.evaluate_conditional_formatting();
     }
 
@@ -704,6 +714,7 @@ impl<'a> Model<'a> {
         state.unwinding = false;
         state.circular = circular_anchors.iter().copied().collect();
         state.in_pass = true;
+        self.deps.clear_recording();
         // dynamic links (HYPERLINK) are rebuilt on every evaluation
         self.links.clear();
         self.clear_variable_stack();
@@ -736,6 +747,7 @@ impl<'a> Model<'a> {
             // on record: a read that was not made is nobody's dependency.
             return CalcResult::EmptyCell;
         }
+        self.record_read(cell_reference);
         // The cell is looked at, not cloned: what is needed of it is copied
         // out, and the sheet is free again before anything else is evaluated.
         enum Found {
@@ -841,7 +853,15 @@ impl<'a> Model<'a> {
                 return circular_reference(cell_reference);
             }
             Some(CellState::Evaluated) => return self.stored_value(cell_reference),
-            None => {}
+            None => {
+                // ENS-Office: in an incremental pass a formula that is not
+                // affected keeps its value.
+                if let Some(only) = &self.deps.only {
+                    if !only.contains(&key) {
+                        return self.stored_value(cell_reference);
+                    }
+                }
+            }
         }
         self.evaluation.cells.insert(key, CellState::Evaluating);
         // Everything above this length is this cell and what it needs.
@@ -926,6 +946,7 @@ impl<'a> Model<'a> {
         if !self.links.is_empty() {
             self.links.remove(&key);
         }
+        self.reset_reads(key);
         self.evaluation.depth += 1;
         let result = if self.evaluation.circular.contains(&key) {
             circular_reference(cell_reference)
@@ -938,6 +959,10 @@ impl<'a> Model<'a> {
         }
         // The cell may have been found on a cycle while it ran.
         let result = if self.evaluation.circular.contains(&key) {
+            // ENS-Office: see `DepGraph::circular`.
+            if self.deps.recording {
+                self.deps.circular.insert(key);
+            }
             circular_reference(cell_reference)
         } else {
             result
@@ -1039,6 +1064,9 @@ impl<'a> Model<'a> {
         row2: i32,
         column2: i32,
     ) {
+        if row1 <= row2 && column1 <= column2 {
+            self.record_read_rect((sheet, row1, column1, row2, column2));
+        }
         if !self.evaluation.in_pass || row1 > row2 || column1 > column2 {
             return;
         }

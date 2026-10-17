@@ -139,6 +139,9 @@ impl<'a> Model<'a> {
                             let row2 = right.row;
                             let column1 = left.column;
                             let column2 = right.column;
+                            // ENS-Office: depends on the whole range, including
+                            // the cells it skips (nested subtotals, hidden rows).
+                            self.record_read_rect((left.sheet, row1, column1, row2, column2));
 
                             for row in row1..=row2 {
                                 let cell_status = self
@@ -387,6 +390,9 @@ impl<'a> Model<'a> {
                             let row2 = right.row;
                             let column1 = left.column;
                             let column2 = right.column;
+                            // ENS-Office: depends on the whole range, including
+                            // the cells it skips (nested subtotals, hidden rows).
+                            self.record_read_rect((left.sheet, row1, column1, row2, column2));
 
                             for row in row1..=row2 {
                                 let cell_status = match self
@@ -470,6 +476,9 @@ impl<'a> Model<'a> {
                             let row2 = right.row;
                             let column1 = left.column;
                             let column2 = right.column;
+                            // ENS-Office: depends on the whole range, including
+                            // the cells it skips (nested subtotals, hidden rows).
+                            self.record_read_rect((left.sheet, row1, column1, row2, column2));
 
                             for row in row1..=row2 {
                                 let cell_status = match self

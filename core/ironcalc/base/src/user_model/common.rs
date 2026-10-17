@@ -383,6 +383,12 @@ impl<'a> UserModel<'a> {
     /// * [Model::evaluate]
     /// * [UserModel::pause_evaluation]
     pub fn evaluate(&mut self) {
+        // ENS-Office: only what changed is recalculated (see incremental.rs).
+        self.model.evaluate_incremental()
+    }
+
+    /// ENS-Office: recalculates every formula, whatever changed.
+    pub fn evaluate_full(&mut self) {
         self.model.evaluate()
     }
 
@@ -1490,6 +1496,8 @@ impl<'a> UserModel<'a> {
             };
         }
         self.push_diff_list(diff_list);
+        // ENS-Office: as in Excel, SUBTOTAL(1xx) follows hidden rows at once.
+        self.evaluate_if_not_paused();
         Ok(())
     }
 
@@ -2312,7 +2320,8 @@ impl<'a> UserModel<'a> {
 
     pub(super) fn evaluate_if_not_paused(&mut self) {
         if !self.pause_evaluation {
-            self.model.evaluate();
+            // ENS-Office: only what changed is recalculated (see incremental.rs).
+            self.model.evaluate_incremental();
         }
     }
 }
