@@ -1,0 +1,12 @@
+[package]
+name = "ens-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "ENS-Office: замеры движка таблиц на синтетическом листе (как в прототипе №1)"
+
+[dependencies]
+ironcalc_base = { path = "../ironcalc/base" }
+
+[profile.release]
+debug = false
