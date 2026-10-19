@@ -5,12 +5,15 @@ import { Grid } from './grid';
 import { icon, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
+import * as desk from './desktop';
+import { isDesktop } from './platform';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 await loadEngine();
 let model: Model = newWorkbook(localeId());
-let fileName = 'Книга1';
+let doc: desk.Doc = desk.newDoc();
+window.__ensDoc = () => doc;
 
 const grid = new Grid($('grid'), () => model);
 const nameBox = $<HTMLInputElement>('name-box');
@@ -221,13 +224,17 @@ formula.addEventListener('keydown', (e) => editKey(e));
 // §3: Ctrl+щелчок по ссылке в строке формул — переход к ячейке.
 const REF = /(?:'([^']+)'|([A-Za-zА-Яа-я_][\wА-Яа-я.]*))?!?\$?([A-Z]{1,3})\$?(\d{1,7})(?::\$?([A-Z]{1,3})\$?(\d{1,7}))?/g;
 
-interface Ref { sheet?: string; row: number; column: number; text: string; start: number; end: number }
+interface Ref { sheet?: string; row: number; column: number; row2?: number; column2?: number; text: string; start: number; end: number }
 
 function refsIn(text: string): Ref[] {
   const out: Ref[] = [];
   for (const m of text.matchAll(REF)) {
     const sheet = m[1] ?? (m[0].includes('!') ? m[2] : undefined);
-    out.push({ sheet, column: columnNumber(m[3]), row: Number(m[4]), text: m[0], start: m.index!, end: m.index! + m[0].length });
+    out.push({
+      sheet, column: columnNumber(m[3]), row: Number(m[4]),
+      column2: m[5] ? columnNumber(m[5]) : undefined, row2: m[6] ? Number(m[6]) : undefined,
+      text: m[0], start: m.index!, end: m.index! + m[0].length,
+    });
   }
   return out;
 }
@@ -240,7 +247,13 @@ function goTo(ref: Ref): void {
     const index = model.getWorksheetsProperties().findIndex((p) => p.name.toLowerCase() === ref.sheet!.toLowerCase());
     if (index >= 0) setSheet(index);
   }
-  grid.select(ref.row, ref.column);
+  if (ref.row2 !== undefined && ref.column2 !== undefined) {
+    // Диапазон (C9:C12) выделяется целиком.
+    grid.selectRange(Math.min(ref.row, ref.row2), Math.min(ref.column, ref.column2),
+      Math.max(ref.row, ref.row2), Math.max(ref.column, ref.column2));
+  } else {
+    grid.select(ref.row, ref.column);
+  }
   focusGrid();
 }
 
@@ -427,25 +440,30 @@ fileInput.addEventListener('change', async () => {
   if (!file) return;
   try {
     const next = openXlsx(new Uint8Array(await file.arrayBuffer()), file.name, localeId());
-    model.free();
-    model = next;
-    fileName = file.name.replace(/\.xlsx$/i, '');
-    document.title = `${fileName} — ENS-Table`;
-    $('doc-name').textContent = fileName;
-    setSheet(0);
+    setModel(next, { ...desk.newDoc(file.name.replace(/\.xlsx$/i, '')) });
   } catch (err) {
     alert(`Не удалось открыть «${file.name}»:\n${err}`);
   }
   fileInput.value = '';
 });
 
-function save(): void {
-  const bytes = model.toXlsx();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-  a.download = `${fileName}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+/** Новая модель в окне (открыт или восстановлен файл). */
+function setModel(next: Model, nextDoc: desk.Doc): void {
+  if (next !== model) model.free();
+  model = next;
+  doc = nextDoc;
+  syncDocTitle();
+  setSheet(0);
+}
+
+function syncDocTitle(): void {
+  const mark = doc.dirty ? ' *' : '';
+  document.title = `${doc.title}${mark} — ENS-Table`;
+  $('doc-name').textContent = `${doc.title}${mark}`;
+  if (isDesktop) {
+    void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
+      getCurrentWindow().setTitle(`${doc.title}${mark} — ENS-Table`)).catch(() => {});
+  }
 }
 
 // --- Буфер обмена: через события браузера (не нужны разрешения) ---
@@ -497,8 +515,11 @@ function toTsv(): string {
 }
 
 register(
-  { id: 'file.open', label: 'Открыть', keywords: ['open', 'файл', 'xlsx'], keys: ['Ctrl+KeyO'], run: () => fileInput.click() },
-  { id: 'file.save', label: 'Сохранить копию (xlsx)', keywords: ['save', 'скачать'], keys: ['Ctrl+KeyS'], run: save },
+  { id: 'file.open', label: 'Открыть', keywords: ['open', 'файл', 'xlsx'], keys: ['Ctrl+KeyO'], run: () => void desk.openDialog() },
+  { id: 'file.save', label: isDesktop ? 'Сохранить' : 'Сохранить копию (xlsx)', keywords: ['save', 'скачать'], keys: ['Ctrl+KeyS'],
+    run: () => void desk.save() },
+  { id: 'file.saveAs', label: 'Сохранить как…', keywords: ['save as', 'сохранить под именем'], keys: ['F12', 'Ctrl+Shift+KeyS'],
+    run: () => void desk.saveAs() },
   { id: 'edit.undo', label: 'Отменить', keywords: ['undo'], keys: ['Ctrl+KeyZ'], run: () => { model.undo(); grid.render(); updateFormulaBar(); } },
   { id: 'edit.redo', label: 'Повторить', keywords: ['redo'], keys: ['Ctrl+KeyY'], run: () => { model.redo(); grid.render(); updateFormulaBar(); } },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
@@ -508,7 +529,7 @@ register(
     const s = grid.sel;
     let top = s.row - 1;
     while (top >= 1 && model.getCellType(grid.sheet, top, s.column) === 1) top--;
-    startEdit(top < s.row - 1 ? `=SUM(${columnName(s.column)}${top + 1}:${columnName(s.column)}${s.row - 1})` : '=SUM()');
+    startEdit(top < s.row - 1 ? `=СУММ(${columnName(s.column)}${top + 1}:${columnName(s.column)}${s.row - 1})` : '=СУММ()');
   } },
   { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], nativeKeys: true,
     run: () => { focusGrid(); document.execCommand('copy'); } },
@@ -622,7 +643,7 @@ function searchResults(q: string) {
   for (const f of FUNCTIONS) {
     const score = Math.max(matchScore(q, f.ru), matchScore(q, f.en), matchScore(q, f.description) * 0.7);
     if (score > 0) {
-      found.push({ score, label: `ƒ ${f.ru} (${f.en}) — ${f.description}`, run: () => startEdit(`=${f.en}(`) });
+      found.push({ score, label: `ƒ ${f.ru} (${f.en}) — ${f.description}`, run: () => startEdit(`=${f.ru}(`) });
     }
   }
   return found.sort((a, b) => b.score - a.score);
@@ -678,7 +699,15 @@ grid.onSelect = () => { updateFormulaBar(); updateStatus(); refreshRibbon(); syn
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
 grid.scroller.addEventListener('focus', () => { if (!editing) focusGrid(); });
-$('doc-name').textContent = fileName;
+syncDocTitle();
 renderSheetTabs();
 grid.select(1, 1);
 focusGrid();
+
+await desk.start({
+  model: () => model,
+  setModel,
+  doc: () => doc,
+  onDocChanged: syncDocTitle,
+  toast: showToast,
+});

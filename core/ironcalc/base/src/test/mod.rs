@@ -131,6 +131,7 @@ mod test_ens_lookup_index;
 mod test_ens_incremental;
 mod test_ens_format_lock;
 mod test_ens_locale_ru;
+mod test_ens_language_ru;
 mod test_fn_scan;
 mod test_fn_tocol_torow;
 mod test_fn_transpose;

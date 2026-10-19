@@ -50,6 +50,10 @@ export interface Model {
   setShowGridLines(sheet: number, show: boolean): void;
   resolveColor(color: Color): string;
   toXlsx(): Uint8Array;
+  toBytes(): Uint8Array;
+  flushSendQueue(): Uint8Array;
+  applyExternalDiffs(diffs: Uint8Array): void;
+  evaluate(): void;
   free(): void;
 }
 
@@ -59,6 +63,7 @@ import init, { Model as EngineModel } from './engine-pkg/engine.js';
 interface EngineStatic {
   new (name: string, locale: string, timezone: string, language: string): Model;
   fromXlsx(bytes: Uint8Array, name: string, locale: string, timezone: string, language: string): Model;
+  fromBytes(bytes: Uint8Array, language: string): Model;
 }
 
 const Engine = EngineModel as unknown as EngineStatic;
@@ -70,13 +75,21 @@ export async function loadEngine(): Promise<void> {
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 // Локаль: 'ru' — запятая в числах, «;» между аргументами, даты дд.мм.гггг;
-// 'en' — точка. Имена функций пока английские (задание 6 для помощников).
+// 'en' — точка. Язык функций — русский (=СУММ); английские имена (=SUM)
+// движок тоже понимает и показывает по-русски, как русский Excel.
+const LANGUAGE = 'ru';
+
 export function newWorkbook(locale: string, name = 'Книга1'): Model {
-  return new Engine(name, locale, TZ, 'en');
+  return new Engine(name, locale, TZ, LANGUAGE);
+}
+
+/** Книга из внутреннего формата движка (снимок для восстановления). */
+export function fromBytes(bytes: Uint8Array): Model {
+  return Engine.fromBytes(bytes, LANGUAGE);
 }
 
 export function openXlsx(bytes: Uint8Array, name: string, locale: string): Model {
-  return Engine.fromXlsx(bytes, name, locale, TZ, 'en');
+  return Engine.fromXlsx(bytes, name, locale, TZ, LANGUAGE);
 }
 
 /** Номер столбца → буквы (1 → A, 27 → AA). */

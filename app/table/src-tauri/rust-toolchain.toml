@@ -1,0 +1,4 @@
+# Оболочка Tauri собирается MSVC-инструментами Windows (WebView2, системные библиотеки).
+# Остальной проект (движок) — набором GNU, см. tools/env.sh.
+[toolchain]
+channel = "stable-x86_64-pc-windows-msvc"

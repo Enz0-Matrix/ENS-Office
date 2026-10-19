@@ -12,7 +12,12 @@
   },
   "devDependencies": {
     "@fluentui/svg-icons": "1.1.343",
+    "@tauri-apps/cli": "^2.12.1",
     "typescript": "7.0.2",
     "vite": "8.3.2"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-dialog": "^2.8.1"
   }
 }

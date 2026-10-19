@@ -76,6 +76,21 @@ footer { display: flex; flex-direction: column; }
 .stat.cnt { background: #def3e3; }
 .stat.sum { background: #fbeccc; }
 .toast { position: fixed; z-index: 40; left: 50%; bottom: 40px; transform: translateX(-50%); background: #323130; color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; max-width: 520px; }
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
+.overlay[hidden] { display: none; }
+.modal { background: #fff; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.3); padding: 18px 20px; width: min(640px, 92vw); max-height: 86vh; overflow: auto; }
+.modal.small { width: min(440px, 92vw); }
+.modal h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
+.modal p { margin: 0 0 12px; color: var(--muted); }
+.rec-item { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+.rec-title { font-weight: 600; }
+.rec-meta { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+.rec-buttons, .rec-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rec-actions { justify-content: flex-end; margin-top: 12px; }
+.modal button { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 12px; font: inherit; cursor: pointer; }
+.modal button:hover { background: #ececec; }
+.modal button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.modal button.danger { color: #a4262c; }
 .picker { position: fixed; z-index: 20; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: 4px; max-width: 560px; }
 .pick { display: flex; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: none; padding: 6px 10px; text-align: left; font: inherit; cursor: pointer; border-radius: 4px; }
 .pick:hover, .pick.active { background: #e8f3ec; }

@@ -5,10 +5,12 @@ export interface Settings {
   decimal: 'comma' | 'point';
   /** Поле ввода расширяется вправо по мере набора, закрывая соседние ячейки. */
   expandEditor: boolean;
+  /** Как часто сохранять снимок книги для восстановления после сбоя, минут. */
+  autosaveMinutes: number;
 }
 
 const KEY = 'ens-table.settings';
-const defaults: Settings = { decimal: 'comma', expandEditor: false };
+const defaults: Settings = { decimal: 'comma', expandEditor: false, autosaveMinutes: 10 };
 
 export const settings: Settings = (() => {
   try {
