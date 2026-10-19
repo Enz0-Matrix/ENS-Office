@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Книга1 — ENS-Table</title>
+</head>
+<body>
+  <header class="titlebar">
+    <span class="app-mark">ENS</span>
+    <span id="doc-name" class="doc-name"></span>
+    <label class="search"><input id="search" placeholder="Поиск (Alt+Q)" autocomplete="off"></label>
+  </header>
+  <nav id="tabs" class="tabs"></nav>
+  <section id="ribbon" class="ribbon"></section>
+  <div class="formula-bar">
+    <input id="name-box" class="name-box" title="Поле имени: адрес ячейки">
+    <span class="fx">ƒx</span>
+    <input id="formula" class="formula" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке" autocomplete="off" spellcheck="false">
+  </div>
+  <main id="grid" class="grid"></main>
+  <footer>
+    <div id="sheet-tabs" class="sheet-tabs"></div>
+    <div class="statusbar"><span>Готово</span><span id="status-stats"></span></div>
+  </footer>
+  <textarea id="cell-editor" class="cell-editor" spellcheck="false" aria-label="Ввод в ячейку"></textarea>
+  <div id="picker" class="picker" hidden></div>
+  <input id="file-input" type="file" accept=".xlsx" hidden>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

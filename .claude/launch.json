@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "ens-table",
+      "runtimeExecutable": "C:\\Users\\nedre\\AppData\\Local\\Programs\\node-portable\\node-v24.22.0-win-x64\\node.exe",
+      "runtimeArgs": ["app/table/node_modules/vite/bin/vite.js", "app/table", "--port", "5173", "--strictPort", "--host", "127.0.0.1"],
+      "port": 5173
+    },
+    {
       "name": "grid-bench",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8731", "--directory", "prototypes/grid-bench"],
