@@ -175,7 +175,7 @@ export class Grid {
   // --- Выделение и навигация ---
 
   /** Подвижный угол выделения (активная ячейка — неподвижный якорь). */
-  private corner = { row: 1, column: 1 };
+  corner = { row: 1, column: 1 };
 
   select(row: number, column: number, extend = false): void {
     row = Math.min(LAST_ROW, Math.max(1, row));

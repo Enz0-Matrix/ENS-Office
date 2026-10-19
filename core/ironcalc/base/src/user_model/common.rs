@@ -387,6 +387,16 @@ impl<'a> UserModel<'a> {
         self.model.evaluate_incremental()
     }
 
+    /// ENS-Office: see [`Model::set_recognize_dates`].
+    pub fn set_recognize_dates(&mut self, on: bool) {
+        self.model.set_recognize_dates(on);
+    }
+
+    /// ENS-Office: whether dates typed into General cells are recognized.
+    pub fn get_recognize_dates(&self) -> bool {
+        self.model.get_recognize_dates()
+    }
+
     /// ENS-Office: recalculates every formula, whatever changed.
     pub fn evaluate_full(&mut self) {
         self.model.evaluate()

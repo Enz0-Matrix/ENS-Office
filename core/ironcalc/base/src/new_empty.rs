@@ -701,6 +701,7 @@ impl<'a> Model<'a> {
             last_lambda_id: 0,
             evaluation: crate::evaluation::Evaluation::default(),
             deps: Default::default(),
+            ens_recognize_dates: true,
             cf_cache: HashMap::new(),
             links: HashMap::new(),
         };

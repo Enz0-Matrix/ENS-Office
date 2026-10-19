@@ -40,6 +40,10 @@ export interface Model {
   canRedo(): boolean;
   newSheet(): void;
   setSelectedSheet(sheet: number): void;
+  getRowsWithData(sheet: number, column: number): Int32Array;
+  getColumnsWithData(sheet: number, row: number): Int32Array;
+  setRecognizeDates(on: boolean): void;
+  getRecognizeDates(): boolean;
   getWorksheetsProperties(): SheetProps[];
   getShowGridLines(sheet: number): boolean;
   setShowGridLines(sheet: number, show: boolean): void;

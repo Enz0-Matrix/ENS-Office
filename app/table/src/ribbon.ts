@@ -108,6 +108,10 @@ export const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.gridlines', icon: 'grid', label: 'Сетка' },
         ],
       },
+      {
+        name: 'Ввод',
+        items: [{ type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' }],
+      },
     ],
   },
 ];

@@ -59,11 +59,14 @@ function commitEdit(dRow: number, dCol: number): void {
   editing = false;
   editor.classList.remove('editing');
   const s = grid.sel;
+  const before = model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt;
   try {
     model.setUserInput(grid.sheet, s.row, s.column, editor.value);
   } catch (err) {
     alert(`Не удалось записать значение: ${err}`);
   }
+  const after = model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt;
+  if (after !== before) offerFormatUndo(s.row, s.column, before, after);
   editor.value = '';
   grid.render();
   grid.move(dRow, dCol, false);
@@ -134,6 +137,62 @@ formula.addEventListener('click', (e) => {
   if (ref) { e.preventDefault(); cancelEdit(); goTo(ref); }
 });
 
+// --- §4: формат, изменённый вводом, можно сразу вернуть ---
+
+const chip = $('format-chip');
+let chipTimer = 0;
+
+function formatName(fmt: string): string {
+  if (/[dmy]/i.test(fmt) && !/[#0]/.test(fmt)) return 'Дата';
+  if (fmt.includes('%')) return 'Процентный';
+  if (/[$€₽]/.test(fmt)) return 'Денежный';
+  if (fmt === '@') return 'Текстовый';
+  return fmt === 'general' ? 'Общий' : 'Числовой';
+}
+
+function offerFormatUndo(row: number, column: number, before: string, after: string): void {
+  const sheet = grid.sheet;
+  const r = grid.cellRect(row, column);
+  const host = grid.scroller.getBoundingClientRect();
+  chip.innerHTML = `Формат изменён на «${formatName(after)}» <button>Вернуть «${formatName(before)}»</button>`;
+  chip.style.left = `${host.left + r.x}px`;
+  chip.style.top = `${host.top + r.y + r.h + 4}px`;
+  chip.hidden = false;
+  chip.querySelector('button')!.onclick = () => {
+    model.updateRangeStyle({ sheet, row, column, width: 1, height: 1 }, 'num_fmt', before);
+    chip.hidden = true;
+    grid.render();
+    focusGrid();
+  };
+  clearTimeout(chipTimer);
+  chipTimer = window.setTimeout(() => (chip.hidden = true), 8000);
+}
+
+// --- Ctrl+стрелки: к краю области данных, как в Excel ---
+
+const LAST_ROW = 1_048_576;
+const LAST_COLUMN = 16_384;
+
+function dataEdge(row: number, column: number, dRow: number, dCol: number): { row: number; column: number } {
+  const vertical = dRow !== 0;
+  const dir = vertical ? dRow : dCol;
+  const pos = vertical ? row : column;
+  const limit = dir > 0 ? (vertical ? LAST_ROW : LAST_COLUMN) : 1;
+  const filled = new Set(vertical ? model.getRowsWithData(grid.sheet, column) : model.getColumnsWithData(grid.sheet, row));
+  const has = (p: number) => filled.has(p);
+  let target: number;
+  if (has(pos) && has(pos + dir)) {
+    // Внутри блока данных — к его концу.
+    target = pos;
+    while (target !== limit && has(target + dir)) target += dir;
+  } else {
+    // К ближайшей заполненной ячейке, иначе к краю листа.
+    const next = [...filled].filter((p) => (dir > 0 ? p > pos : p < pos));
+    target = next.length ? (dir > 0 ? Math.min(...next) : Math.max(...next)) : limit;
+  }
+  return vertical ? { row: target, column } : { row, column: target };
+}
+
 // --- Поле имени: ввод адреса (B12, Лист2!A1) ---
 
 nameBox.addEventListener('keydown', (e) => {
@@ -182,6 +241,14 @@ function gridKey(e: KeyboardEvent): void {
   if (handleKey(e)) return;
   const shift = e.shiftKey;
   const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && e.key.startsWith('Arrow')) {
+    e.preventDefault();
+    const d = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key]!;
+    const from = shift ? grid.corner : { row: grid.sel.row, column: grid.sel.column };
+    const to = dataEdge(from.row, from.column, d[0], d[1]);
+    grid.select(to.row, to.column, shift);
+    return;
+  }
   switch (e.key) {
     case 'ArrowUp': e.preventDefault(); grid.move(-1, 0, shift); return;
     case 'ArrowDown': e.preventDefault(); grid.move(1, 0, shift); return;
@@ -266,6 +333,7 @@ function style(path: string, value: (current: boolean) => string, flag?: (s: Ret
   model.updateRangeStyle(selectionArea(), path, value(current));
   grid.render();
   refreshRibbon();
+  syncNumberFormat();
 }
 
 function toTsv(): string {
@@ -335,6 +403,9 @@ register(
     grid.select(prev.row, prev.column);
   } },
   { id: 'search.focus', label: 'Поиск команд и функций', keys: ['Alt+KeyQ'], run: () => search.focus() },
+  { id: 'options.recognizeDates', label: 'Распознавать даты при вводе', keywords: ['даты', 'автоформат', 'dates', 'autoformat', 'параметры'],
+    checked: () => model.getRecognizeDates(),
+    run: () => { model.setRecognizeDates(!model.getRecognizeDates()); refreshRibbon(); } },
 );
 
 // --- Выпадающий список (выбор ссылки, результаты поиска) ---
@@ -404,7 +475,22 @@ window.addEventListener('keydown', (e) => {
 // --- Запуск ---
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => run('file.open'));
-grid.onSelect = () => { updateFormulaBar(); updateStatus(); refreshRibbon(); if (!editing) placeEditor(); };
+/** Список «Числовой формат» показывает формат активной ячейки. */
+function syncNumberFormat(): void {
+  const select = document.querySelector<HTMLSelectElement>('select[data-command="format.number"]');
+  if (!select) return;
+  const fmt = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.num_fmt;
+  const known = [...select.options].some((o) => o.value === fmt);
+  if (!known) {
+    select.querySelector('option[data-custom]')?.remove();
+    const custom = new Option(formatName(fmt), fmt);
+    custom.dataset.custom = '1';
+    select.add(custom);
+  }
+  select.value = fmt;
+}
+
+grid.onSelect = () => { updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
 grid.scroller.addEventListener('focus', () => { if (!editing) focusGrid(); });

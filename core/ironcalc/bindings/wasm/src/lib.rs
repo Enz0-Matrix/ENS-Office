@@ -581,6 +581,17 @@ impl Model {
             .columns_in_row(row))
     }
 
+    /// ENS-Office: recognize dates typed into General cells.
+    #[wasm_bindgen(js_name = "setRecognizeDates")]
+    pub fn set_recognize_dates(&mut self, on: bool) {
+        self.model.set_recognize_dates(on);
+    }
+
+    #[wasm_bindgen(js_name = "getRecognizeDates")]
+    pub fn get_recognize_dates(&self) -> bool {
+        self.model.get_recognize_dates()
+    }
+
     #[wasm_bindgen(js_name = "updateRangeStyle")]
     pub fn update_range_style(
         &mut self,
