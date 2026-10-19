@@ -1,0 +1,18 @@
+{
+  "name": "ens-table",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ENS-Table — редактор таблиц ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
+  "type": "module",
+  "scripts": {
+    "engine": "bash scripts/build-engine.sh",
+    "dev": "vite --port 5173 --strictPort",
+    "build": "vite build",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@fluentui/svg-icons": "1.1.343",
+    "typescript": "7.0.2",
+    "vite": "8.3.2"
+  }
+}

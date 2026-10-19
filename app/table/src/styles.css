@@ -1,0 +1,65 @@
+:root {
+  --accent: #107c41;          /* зелёный, как у таблиц Office */
+  --accent-dark: #0b5a2f;
+  --bg: #f3f3f3;
+  --panel: #ffffff;
+  --border: #d6d6d6;
+  --text: #242424;
+  --muted: #616161;
+  font-family: "Segoe UI", Carlito, "Liberation Sans", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+body { display: flex; flex-direction: column; }
+
+.titlebar { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; background: var(--accent); color: #fff; }
+.app-mark { font-weight: 700; letter-spacing: .5px; }
+.doc-name { font-weight: 600; }
+.search { margin: 0 auto; display: flex; align-items: center; gap: 6px; background: #fff; border-radius: 4px; padding: 0 8px; width: min(460px, 50vw); height: 26px; color: var(--muted); }
+.search svg { width: 16px; height: 16px; fill: currentColor; }
+.search input { border: 0; outline: 0; flex: 1; font: inherit; }
+
+.tabs { display: flex; gap: 2px; padding: 4px 8px 0; background: var(--bg); }
+.tab { border: 0; background: none; padding: 6px 12px; font: inherit; color: var(--text); cursor: pointer; border-bottom: 3px solid transparent; }
+.tab:hover { background: #e6e6e6; }
+.tab.active { border-bottom-color: var(--accent); font-weight: 600; }
+.tab.file { color: var(--accent); font-weight: 600; }
+
+.ribbon { display: flex; min-height: 92px; margin: 0 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; overflow-x: auto; }
+.group { display: flex; flex-direction: column; padding: 0 8px; border-right: 1px solid var(--border); }
+.group .items { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 2px; flex: 1; max-width: 220px; }
+.group-name { text-align: center; color: var(--muted); font-size: 11px; padding-top: 2px; }
+.btn { border: 1px solid transparent; background: none; border-radius: 4px; cursor: pointer; color: var(--text); display: inline-flex; align-items: center; justify-content: center; font: inherit; }
+.btn svg { fill: currentColor; }
+.btn:hover { background: #ececec; border-color: #dcdcdc; }
+.btn.on { background: #cfe8d9; border-color: #9fd0b4; }
+.btn.small { width: 28px; height: 28px; }
+.btn.large { flex-direction: column; width: 64px; height: 66px; gap: 4px; font-size: 12px; line-height: 1.1; text-align: center; }
+.btn.large svg { width: 28px; height: 28px; }
+.ribbon-select { height: 26px; font: inherit; margin-top: 2px; }
+
+.formula-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.name-box { width: 90px; height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font: inherit; }
+.fx { color: var(--muted); font-style: italic; }
+.formula { flex: 1; height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 8px; font: 14px Consolas, "Liberation Mono", monospace; }
+
+.grid { flex: 1; min-height: 0; margin: 0 8px; background: #fff; border: 1px solid var(--border); position: relative; }
+.grid-scroller { position: absolute; inset: 0; overflow: auto; outline: none; }
+.grid-spacer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; }
+.grid-canvas { position: sticky; top: 0; left: 0; display: block; }
+
+footer { display: flex; flex-direction: column; }
+.sheet-tabs { display: flex; gap: 2px; padding: 2px 8px; }
+.sheet-tab { border: 1px solid transparent; background: none; padding: 4px 14px; font: inherit; cursor: pointer; border-radius: 0 0 4px 4px; }
+.sheet-tab.active { background: #fff; border-color: var(--border); border-top-color: #fff; color: var(--accent-dark); font-weight: 600; box-shadow: inset 0 -2px var(--accent); }
+.sheet-add { border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; padding: 0 10px; }
+.statusbar { display: flex; justify-content: space-between; height: 24px; padding: 0 12px; align-items: center; color: var(--muted); background: #e9e9e9; font-size: 12px; }
+
+.cell-editor { position: fixed; z-index: 10; opacity: 0; pointer-events: none; caret-color: transparent; resize: none; border: 2px solid var(--accent); padding: 2px 3px; font: 15px Calibri, Carlito, "Segoe UI", sans-serif; outline: none; overflow: hidden; white-space: pre; background: #fff; }
+.picker { position: fixed; z-index: 20; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: 4px; max-width: 560px; }
+.pick { display: flex; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: none; padding: 6px 10px; text-align: left; font: inherit; cursor: pointer; border-radius: 4px; }
+.pick:hover, .pick.active { background: #e8f3ec; }
+.pick kbd { color: var(--muted); font: 11px "Segoe UI", sans-serif; }
+.cell-editor.editing { opacity: 1; pointer-events: auto; caret-color: auto; }

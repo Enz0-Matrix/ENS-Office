@@ -368,16 +368,12 @@ impl Model<'_> {
             self.evaluate();
             return;
         }
-        let profile = std::env::var("ENS_PROFILE").is_ok();
-        let t0 = std::time::Instant::now();
         let scan = self.scan_cells(false);
-        let t_scan = t0.elapsed();
         if scan.has_arrays {
             self.evaluate();
             return;
         }
         self.deps.index_edges();
-        let t_index = t0.elapsed();
 
         let mut volatile = std::mem::take(&mut self.deps.volatile);
         let mut circular = std::mem::take(&mut self.deps.circular);
@@ -416,7 +412,6 @@ impl Model<'_> {
                 }
             }
         }
-        let t_dirty = t0.elapsed();
 
         let mut roots: Vec<CellKey> = dirty.iter().copied().collect();
         roots.sort_unstable();
@@ -431,18 +426,9 @@ impl Model<'_> {
             self.evaluate();
             return;
         }
-        let t_pass = t0.elapsed();
         self.deps.index_edges();
         self.deps.last = LastEvaluation::Incremental(run);
-        let t_update = t0.elapsed();
         self.evaluate_conditional_formatting();
-        if profile {
-            eprintln!(
-                "ENS incremental: run={run} scan={t_scan:?} index={t_index:?} dirty={t_dirty:?} \
-                 pass={t_pass:?} update={t_update:?} total={:?}",
-                t0.elapsed()
-            );
-        }
         #[cfg(test)]
         self.verify_incremental();
     }
