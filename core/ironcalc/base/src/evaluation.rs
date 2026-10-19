@@ -542,11 +542,7 @@ impl<'a> Model<'a> {
         }
         self.evaluation.restarts_in_last_evaluation = log.restarts;
         self.deps.recording = false;
-        let t = std::time::Instant::now();
         self.finish_full_evaluation();
-        if std::env::var("ENS_PROFILE").is_ok() {
-            eprintln!("ENS full: finish_full_evaluation {:?}", t.elapsed());
-        }
         self.evaluate_conditional_formatting();
     }
 
