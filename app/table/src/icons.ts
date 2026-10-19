@@ -21,6 +21,7 @@ import arrowPrevious24 from '@fluentui/svg-icons/icons/arrow_previous_24_regular
 import arrowUndo24 from '@fluentui/svg-icons/icons/arrow_undo_24_regular.svg?raw';
 import target24 from '@fluentui/svg-icons/icons/target_24_regular.svg?raw';
 import calendarLtr24 from '@fluentui/svg-icons/icons/calendar_ltr_24_regular.svg?raw';
+import arrowAutofitWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
 import grid24 from '@fluentui/svg-icons/icons/grid_24_regular.svg?raw';
 
 export const ICONS: Record<string, string> = {
@@ -44,5 +45,6 @@ export const ICONS: Record<string, string> = {
   'arrow_undo_24': arrowUndo24,
   'target_24': target24,
   'grid_24': grid24,
+  'arrow_autofit_width_24': arrowAutofitWidth24,
   'calendar_ltr_24': calendarLtr24,
 };

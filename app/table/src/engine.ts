@@ -44,6 +44,7 @@ export interface Model {
   getColumnsWithData(sheet: number, row: number): Int32Array;
   setRecognizeDates(on: boolean): void;
   getRecognizeDates(): boolean;
+  setLocale(locale: string): void;
   getWorksheetsProperties(): SheetProps[];
   getShowGridLines(sheet: number): boolean;
   setShowGridLines(sheet: number, show: boolean): void;
@@ -68,14 +69,14 @@ export async function loadEngine(): Promise<void> {
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-// Русский язык функций и русская локаль в движке ещё не добавлены
-// (docs/01-tasks-for-assistants.md, задание 6): пока английские имена функций.
-export function newWorkbook(name = 'Книга1'): Model {
-  return new Engine(name, 'en', TZ, 'en');
+// Локаль: 'ru' — запятая в числах, «;» между аргументами, даты дд.мм.гггг;
+// 'en' — точка. Имена функций пока английские (задание 6 для помощников).
+export function newWorkbook(locale: string, name = 'Книга1'): Model {
+  return new Engine(name, locale, TZ, 'en');
 }
 
-export function openXlsx(bytes: Uint8Array, name: string): Model {
-  return Engine.fromXlsx(bytes, name, 'en', TZ, 'en');
+export function openXlsx(bytes: Uint8Array, name: string, locale: string): Model {
+  return Engine.fromXlsx(bytes, name, locale, TZ, 'en');
 }
 
 /** Номер столбца → буквы (1 → A, 27 → AA). */

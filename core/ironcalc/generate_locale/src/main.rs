@@ -26,7 +26,12 @@ pub struct Opt {
 
     /// Folder with the cldr data
     #[clap(long, value_parser)]
-    cldr_dir: String,
+    cldr_dir: Option<String>,
+
+    /// ENS-Office: build locales.bin from an existing locales json (as written
+    /// by --output) instead of the cldr data. Used to add locales by hand.
+    #[clap(long, value_parser)]
+    from_json: Option<PathBuf>,
 
     /// output json file with all locale info
     #[clap(long, value_parser)]
@@ -35,7 +40,16 @@ pub struct Opt {
 
 fn main() -> Result<(), String> {
     let opt = Opt::from_args();
-    let cldr_dir = opt.cldr_dir;
+    if let Some(json_path) = opt.from_json {
+        let contents = fs::read_to_string(&json_path)
+            .or(Err(format!("Failed reading file: {}", json_path.display())))?;
+        let locales: HashMap<String, Locale> =
+            serde_json::from_str(&contents).map_err(|e| format!("Failed parsing locales: {e}"))?;
+        let bytes = bitcode::encode(&locales);
+        fs::write(&opt.output, bytes).or(Err("Failed writing output"))?;
+        return Ok(());
+    }
+    let cldr_dir = opt.cldr_dir.ok_or("--cldr-dir or --from-json is required")?;
     let locales_list: Vec<String> = if let Some(locales_path) = opt.locales {
         let locales_path_str = locales_path.display().to_string();
         let contents = fs::read_to_string(locales_path)

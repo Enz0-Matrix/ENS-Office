@@ -55,6 +55,12 @@ export class Grid {
   /** Окно приложения в фокусе (влияет только на яркость выделения). */
   windowActive = true;
   onSelect: (sel: Selection) => void = () => {};
+  /** Диапазон, выбираемый для формулы (пунктирная рамка, как в Excel). */
+  pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null;
+  /** Щелчок или протяжка по ячейке во время ввода формулы. Вернуть true,
+   *  если щелчок обработан (тогда выделение листа не меняется). */
+  onPointer: (row: number, column: number, phase: 'down' | 'drag', shift: boolean) => boolean = () => false;
+  private pointing = false;
   /** Двойной щелчок или F2: начать редактирование. */
   onEditRequest: (initial?: string) => void = () => {};
 
@@ -85,7 +91,7 @@ export class Grid {
     new ResizeObserver(() => this.resize()).observe(this.scroller);
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
-    window.addEventListener('mouseup', () => (this.dragging = false));
+    window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; });
     this.canvas.addEventListener('dblclick', () => this.onEditRequest());
     window.addEventListener('focus', () => { this.windowActive = true; this.render(); });
     window.addEventListener('blur', () => { this.windowActive = false; this.render(); });
@@ -238,8 +244,13 @@ export class Grid {
   }
 
   private mouseDown(e: MouseEvent): void {
-    this.scroller.focus();
     const h = this.hit(e);
+    if (!h.header && h.row >= 1 && h.column >= 1 && this.onPointer(h.row, h.column, 'down', e.shiftKey)) {
+      e.preventDefault(); // фокус остаётся в поле ввода формулы
+      this.pointing = true;
+      return;
+    }
+    this.scroller.focus();
     if (h.header === 'column') this.selectRange(1, h.column, LAST_ROW, h.column);
     else if (h.header === 'row') this.selectRange(h.row, 1, h.row, LAST_COLUMN);
     else if (h.header === 'corner') this.selectRange(1, 1, LAST_ROW, LAST_COLUMN);
@@ -250,6 +261,11 @@ export class Grid {
   }
 
   private mouseMove(e: MouseEvent): void {
+    if (this.pointing) {
+      const p = this.hit(e);
+      if (p.row >= 1 && p.column >= 1) this.onPointer(p.row, p.column, 'drag', true);
+      return;
+    }
     if (!this.dragging) return;
     const h = this.hit(e);
     if (h.row >= 1 && h.column >= 1) this.select(h.row, h.column, true);
@@ -337,7 +353,7 @@ export class Grid {
         let style;
         try { style = model.getCellStyle(this.sheet, r, c).style; } catch { style = undefined; }
         const f = style?.font;
-        ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${Math.round((f?.sz ?? 11) * 1.33)}px Calibri, Carlito, "Segoe UI", sans-serif`;
+        ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${Math.round((f?.sz ?? 11) * 1.33)}px ${f?.name ? `"${f.name}", ` : ""}Calibri, Carlito, "Segoe UI", sans-serif`;
         ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
         let align = style?.alignment?.horizontal ?? 'general';
         if (align === 'general') {
@@ -375,6 +391,18 @@ export class Grid {
       ctx.strokeStyle = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
+    }
+    if (this.pointRange) {
+      const p = this.pointRange;
+      const a = this.cellRect(p.r1, p.c1), b = this.cellRect(p.r2, p.c2);
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#2f6fd1';
+      ctx.strokeRect(a.x + 1, a.y + 1, b.x + b.w - a.x - 2, b.y + b.h - a.y - 2);
+      ctx.fillStyle = 'rgba(47,111,209,0.08)';
+      ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
+      ctx.restore();
     }
     ctx.restore();
 

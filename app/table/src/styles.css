@@ -60,6 +60,22 @@ footer { display: flex; flex-direction: column; }
 .cell-editor { position: fixed; z-index: 10; opacity: 0; pointer-events: none; caret-color: transparent; resize: none; border: 2px solid var(--accent); padding: 2px 3px; font: 15px Calibri, Carlito, "Segoe UI", sans-serif; outline: none; overflow: hidden; white-space: pre; background: #fff; }
 .format-chip { position: fixed; z-index: 15; background: #fffbe6; border: 1px solid #e6c200; border-radius: 4px; padding: 4px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
 .format-chip button { margin-left: 8px; border: 1px solid #c9a800; background: #fff; border-radius: 3px; font: inherit; cursor: pointer; }
+.split { display: inline-flex; align-items: stretch; }
+.split .split-arrow { width: 14px; height: 28px; font-size: 10px; padding: 0; }
+.color-main { position: relative; }
+.color-bar { position: absolute; left: 5px; right: 5px; bottom: 3px; height: 4px; border-radius: 1px; }
+.palette { position: fixed; z-index: 30; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 8px; width: 236px; }
+.palette-title { font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
+.palette-grid { display: grid; grid-template-columns: repeat(10, 18px); gap: 4px 4px; }
+.swatch { width: 18px; height: 18px; border: 1px solid #d0d0d0; border-radius: 2px; cursor: pointer; padding: 0; }
+.swatch:hover { outline: 2px solid #f0a000; }
+.palette-none { width: 100%; text-align: left; border: 1px solid transparent; background: none; padding: 4px 6px; font: inherit; cursor: pointer; border-radius: 4px; }
+.palette-none:hover { background: #ececec; }
+.stat { padding: 1px 8px; border-radius: 10px; margin-left: 8px; color: #333; }
+.stat.avg { background: #dbe9f9; }
+.stat.cnt { background: #def3e3; }
+.stat.sum { background: #fbeccc; }
+.toast { position: fixed; z-index: 40; left: 50%; bottom: 40px; transform: translateX(-50%); background: #323130; color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; max-width: 520px; }
 .picker { position: fixed; z-index: 20; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: 4px; max-width: 560px; }
 .pick { display: flex; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: none; padding: 6px 10px; text-align: left; font: inherit; cursor: pointer; border-radius: 4px; }
 .pick:hover, .pick.active { background: #e8f3ec; }

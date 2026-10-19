@@ -10,6 +10,8 @@ export function icon(name: string, size: 20 | 24 = 20): string {
 
 export type RibbonItem =
   | { type: 'large' | 'small'; command: string; icon: string; label?: string; module?: string }
+  /** Кнопка с палитрой: основная часть применяет последний цвет, стрелка открывает палитру. */
+  | { type: 'color'; command: string; icon: string; kind: 'fill' | 'font' }
   | { type: 'select'; command: string; options: { value: string; label: string }[]; width?: number }
   | { type: 'separator' };
 
@@ -33,6 +35,65 @@ export const NUMBER_FORMATS = [
   { value: '@', label: 'Текстовый' },
 ];
 
+export const FONTS = ['Calibri', 'Carlito', 'Arial', 'Liberation Sans', 'Times New Roman', 'Liberation Serif',
+  'Cambria', 'Caladea', 'Courier New', 'Liberation Mono', 'Segoe UI', 'Verdana', 'Tahoma']
+  .map((f) => ({ value: f, label: f }));
+
+export const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]
+  .map((n) => ({ value: String(n), label: String(n) }));
+
+/** Цвета темы Office (основной ряд) — оттенки строятся от них, как в палитре Excel. */
+const THEME = ['#FFFFFF', '#000000', '#E7E6E6', '#44546A', '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
+const STANDARD = ['#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#002060', '#7030A0'];
+
+function mixColor(hex: string, toward: number, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c + (toward - c) * amount));
+  return '#' + ch.map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/** Последний выбранный цвет: основная часть кнопки применяет его. */
+export const lastColor = { fill: '#FFFF00', font: '#FF0000' };
+
+const palette = document.createElement('div');
+palette.className = 'palette';
+palette.hidden = true;
+document.body.append(palette);
+document.addEventListener('mousedown', (e) => {
+  const t = e.target as HTMLElement;
+  if (!palette.hidden && !palette.contains(t) && !t.closest('.split-arrow')) palette.hidden = true;
+});
+
+function openPalette(anchor: HTMLElement, kind: 'fill' | 'font', pick: (color: string) => void): void {
+  const swatch = (color: string) => {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.style.background = color;
+    b.title = color;
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); palette.hidden = true; pick(color); });
+    return b;
+  };
+  palette.replaceChildren();
+  const none = document.createElement('button');
+  none.className = 'palette-none';
+  none.textContent = kind === 'fill' ? 'Нет заливки' : 'Авто';
+  none.addEventListener('mousedown', (e) => { e.preventDefault(); palette.hidden = true; pick(''); });
+  const title = (t: string) => { const d = document.createElement('div'); d.className = 'palette-title'; d.textContent = t; return d; };
+  const grid = document.createElement('div');
+  grid.className = 'palette-grid';
+  for (const c of THEME) grid.append(swatch(c));
+  for (const amount of [0.8, 0.6, 0.4]) for (const c of THEME) grid.append(swatch(mixColor(c, 255, amount)));
+  for (const amount of [0.25, 0.5]) for (const c of THEME) grid.append(swatch(mixColor(c, 0, amount)));
+  const std = document.createElement('div');
+  std.className = 'palette-grid';
+  for (const c of STANDARD) std.append(swatch(c));
+  palette.append(none, title('Цвета темы'), grid, title('Стандартные цвета'), std);
+  const r = anchor.getBoundingClientRect();
+  palette.style.left = `${r.left}px`;
+  palette.style.top = `${r.bottom + 2}px`;
+  palette.hidden = false;
+}
+
 export const TABS: RibbonTab[] = [
   {
     id: 'home',
@@ -49,11 +110,13 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Шрифт',
         items: [
+          { type: 'select', command: 'format.fontName', options: FONTS, width: 140 },
+          { type: 'select', command: 'format.fontSize', options: FONT_SIZES, width: 56 },
           { type: 'small', command: 'format.bold', icon: 'text_bold' },
           { type: 'small', command: 'format.italic', icon: 'text_italic' },
           { type: 'small', command: 'format.underline', icon: 'text_underline' },
-          { type: 'small', command: 'format.fill', icon: 'paint_bucket' },
-          { type: 'small', command: 'format.fontColor', icon: 'text_color' },
+          { type: 'color', command: 'format.fill', icon: 'paint_bucket', kind: 'fill' },
+          { type: 'color', command: 'format.fontColor', icon: 'text_color', kind: 'font' },
         ],
       },
       {
@@ -110,7 +173,14 @@ export const TABS: RibbonTab[] = [
       },
       {
         name: 'Ввод',
-        items: [{ type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' }],
+        items: [
+          { type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' },
+          { type: 'large', command: 'options.expandEditor', icon: 'arrow_autofit_width', label: 'Расширять поле ввода' },
+          {
+            type: 'select', command: 'options.decimal', width: 150,
+            options: [{ value: 'comma', label: 'Дробная часть: 0,5' }, { value: 'point', label: 'Дробная часть: 0.5' }],
+          },
+        ],
       },
     ],
   },
@@ -162,6 +232,31 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       return s;
     }
     const cmd = command(item.command);
+    if (item.type === 'color') {
+      const wrap = document.createElement('div');
+      wrap.className = 'split';
+      const main = document.createElement('button');
+      main.className = 'btn small color-main';
+      main.title = cmd?.label ?? '';
+      main.innerHTML = `${icon(item.icon, 20)}<i class="color-bar"></i>`;
+      const bar = main.querySelector<HTMLElement>('.color-bar')!;
+      bar.style.background = lastColor[item.kind];
+      main.addEventListener('mousedown', (e) => e.preventDefault());
+      main.addEventListener('click', () => run(item.command, lastColor[item.kind]));
+      const arrow = document.createElement('button');
+      arrow.className = 'btn split-arrow';
+      arrow.title = `${cmd?.label ?? ''}: выбрать цвет`;
+      arrow.textContent = '▾';
+      arrow.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        openPalette(wrap, item.kind, (color) => {
+          if (color) { lastColor[item.kind] = color; bar.style.background = color; }
+          run(item.command, color);
+        });
+      });
+      wrap.append(main, arrow);
+      return wrap;
+    }
     if (item.type === 'select') {
       const sel = document.createElement('select');
       sel.className = 'ribbon-select';

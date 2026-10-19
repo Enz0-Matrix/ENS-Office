@@ -115,6 +115,13 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
         "font.color" => {
             style.font.color = Color::from_param(value)?;
         }
+        // ENS-Office: font family ("Calibri", "Times New Roman"...).
+        "font.name" => {
+            if value.trim().is_empty() {
+                return Err("Invalid value for font name: ''.".to_string());
+            }
+            style.font.name = value.trim().to_string();
+        }
         "font.size" => {
             let new_size: i32 = value
                 .parse()

@@ -13,6 +13,9 @@ export interface Command {
   run: (arg?: string) => void;
   /** Включено ли (для переключателей — нажато ли). */
   checked?: () => boolean;
+  /** Сочетание обрабатывает сам браузер (Ctrl+C/X/V — события буфера обмена);
+   *  keys тогда только для подсказок. */
+  nativeKeys?: boolean;
 }
 
 const commands = new Map<string, Command>();
@@ -58,7 +61,7 @@ export function keyLabel(key: string): string {
 export function handleKey(e: KeyboardEvent): boolean {
   const key = keyOf(e);
   for (const c of commands.values()) {
-    if (c.keys?.includes(key)) {
+    if (!c.nativeKeys && c.keys?.includes(key)) {
       e.preventDefault();
       c.run();
       return true;

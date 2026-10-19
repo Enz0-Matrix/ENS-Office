@@ -4,11 +4,12 @@ import { columnName, columnNumber, loadEngine, newWorkbook, openXlsx, type Area,
 import { Grid } from './grid';
 import { icon, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
+import { localeId, saveSettings, settings } from './settings';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 await loadEngine();
-let model: Model = newWorkbook();
+let model: Model = newWorkbook(localeId());
 let fileName = 'Книга1';
 
 const grid = new Grid($('grid'), () => model);
@@ -35,9 +36,25 @@ function placeEditor(): void {
   const host = grid.scroller.getBoundingClientRect();
   editor.style.left = `${host.left + r.x}px`;
   editor.style.top = `${host.top + r.y}px`;
-  editor.style.minWidth = `${r.w}px`;
+  editor.style.width = `${r.w}px`;
   editor.style.height = `${r.h}px`;
+  if (editing && settings.expandEditor) growEditor();
 }
+
+/** Настройка «Расширять поле ввода»: поле растёт вправо по мере набора.
+ *  По умолчанию выключено — текст прокручивается внутри ячейки. */
+const measure = document.createElement('canvas').getContext('2d')!;
+function growEditor(): void {
+  const r = grid.cellRect(grid.sel.row, grid.sel.column);
+  measure.font = getComputedStyle(editor).font;
+  const need = measure.measureText(editor.value).width + 14;
+  const max = grid.scroller.clientWidth - r.x - 4;
+  editor.style.width = `${Math.min(Math.max(r.w, need), Math.max(r.w, max))}px`;
+}
+
+/** Режим ввода, как в Excel: «ввод» (начали печатать — стрелки завершают ввод)
+ *  или «правка» (F2, двойной щелчок, строка формул — стрелки двигают курсор). */
+let editMode: 'enter' | 'edit' = 'enter';
 
 function focusGrid(): void {
   placeEditor();
@@ -45,6 +62,7 @@ function focusGrid(): void {
 }
 
 function startEdit(initial?: string): void {
+  editMode = initial === undefined ? 'edit' : 'enter';
   placeEditor();
   editor.value = initial ?? model.getCellContent(grid.sheet, grid.sel.row, grid.sel.column);
   formula.value = editor.value;
@@ -56,6 +74,7 @@ function startEdit(initial?: string): void {
 
 function commitEdit(dRow: number, dCol: number): void {
   if (!editing) return;
+  endPoint();
   editing = false;
   editor.classList.remove('editing');
   const s = grid.sel;
@@ -74,6 +93,7 @@ function commitEdit(dRow: number, dCol: number): void {
 }
 
 function cancelEdit(): void {
+  endPoint();
   editing = false;
   editor.classList.remove('editing');
   editor.value = '';
@@ -85,24 +105,118 @@ editor.addEventListener('input', () => {
   if (!editing) {
     // Первый введённый символ начинает редактирование, как в Excel.
     editing = true;
+    editMode = 'enter';
     editor.classList.add('editing');
   }
+  endPoint();
   formula.value = editor.value;
+  if (settings.expandEditor) growEditor();
 });
-editor.addEventListener('keydown', (e) => {
-  if (!editing) { gridKey(e); return; }
+
+// --- Выбор ячеек для формулы стрелками и мышью (как в Excel) ---
+// После «=», оператора, «(» или «;» стрелка или щелчок вставляют ссылку на
+// ячейку; Shift+стрелка или протяжка мышью — диапазон. Следующий набранный
+// символ закрепляет ссылку. Работает и в ячейке, и в строке формул.
+
+interface Point { start: number; end: number; anchorRow: number; anchorCol: number; row: number; col: number }
+let point: Point | null = null;
+
+function activeInput(): HTMLInputElement | HTMLTextAreaElement {
+  return document.activeElement === formula ? formula : editor;
+}
+
+function canPoint(inp: HTMLInputElement | HTMLTextAreaElement): boolean {
+  const v = inp.value;
+  if (!v.startsWith('=')) return false;
+  const caret = inp.selectionStart ?? v.length;
+  if (point && caret === point.end) return true;
+  if (inp.selectionStart !== inp.selectionEnd) return false;
+  return /[=+\-*/^&(;,:<>]\s*$/.test(v.slice(0, caret));
+}
+
+function pointText(p: Point): string {
+  const r1 = Math.min(p.anchorRow, p.row), r2 = Math.max(p.anchorRow, p.row);
+  const c1 = Math.min(p.anchorCol, p.col), c2 = Math.max(p.anchorCol, p.col);
+  const a = `${columnName(c1)}${r1}`;
+  return r1 === r2 && c1 === c2 ? a : `${a}:${columnName(c2)}${r2}`;
+}
+
+function applyPoint(inp: HTMLInputElement | HTMLTextAreaElement, row: number, col: number, extend: boolean): void {
+  row = Math.max(1, row); col = Math.max(1, col);
+  if (!point) {
+    const caret = inp.selectionStart ?? inp.value.length;
+    point = { start: caret, end: caret, anchorRow: row, anchorCol: col, row, col };
+  } else if (extend) {
+    point.row = row; point.col = col;
+  } else {
+    point.anchorRow = point.row = row; point.anchorCol = point.col = col;
+  }
+  const text = pointText(point);
+  inp.value = inp.value.slice(0, point.start) + text + inp.value.slice(point.end);
+  point.end = point.start + text.length;
+  inp.setSelectionRange(point.end, point.end);
+  (inp === editor ? formula : editor).value = inp.value;
+  grid.pointRange = {
+    r1: Math.min(point.anchorRow, point.row), c1: Math.min(point.anchorCol, point.col),
+    r2: Math.max(point.anchorRow, point.row), c2: Math.max(point.anchorCol, point.col),
+  };
+  grid.ensureVisible(row, col);
+  grid.render();
+}
+
+function endPoint(): void {
+  if (!point) return;
+  point = null;
+  grid.pointRange = null;
+  grid.render();
+}
+
+const ARROWS: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+
+/** Клавиши во время редактирования (в ячейке или в строке формул). */
+function editKey(e: KeyboardEvent): void {
+  const inp = activeInput();
+  const d = ARROWS[e.key];
+  if (d && !e.ctrlKey && !e.altKey && canPoint(inp)) {
+    e.preventDefault();
+    const from = point ? { row: point.row, col: point.col } : { row: grid.sel.row, col: grid.sel.column };
+    applyPoint(inp, from.row + d[0], from.col + d[1], e.shiftKey && point !== null);
+    return;
+  }
+  if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) endPoint();
   if (e.key === 'Enter' && !e.altKey) { e.preventDefault(); commitEdit(e.shiftKey ? -1 : 1, 0); }
   else if (e.key === 'Tab') { e.preventDefault(); commitEdit(0, e.shiftKey ? -1 : 1); }
   else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+  else if (e.key === 'F2') { e.preventDefault(); editMode = editMode === 'enter' ? 'edit' : 'enter'; }
+  else if (d && editMode === 'enter' && inp === editor) {
+    // Режим «ввод»: стрелка завершает ввод и переходит к соседней ячейке.
+    e.preventDefault();
+    commitEdit(d[0], d[1]);
+  }
+}
+
+grid.onPointer = (row, column, phase, shift) => {
+  if (!editing) return false;
+  const inp = activeInput();
+  if (phase === 'down') {
+    if (!canPoint(inp)) return false;
+    applyPoint(inp, row, column, shift && point !== null);
+    return true;
+  }
+  if (!point) return false;
+  applyPoint(inp, row, column, true);
+  return true;
+};
+
+editor.addEventListener('keydown', (e) => {
+  if (!editing) { gridKey(e); return; }
+  editKey(e);
 });
 editor.addEventListener('blur', () => { if (editing && document.activeElement !== formula) commitEdit(0, 0); });
 
 formula.addEventListener('focus', () => { if (!editing) { startEdit(); formula.focus(); } });
-formula.addEventListener('input', () => (editor.value = formula.value));
-formula.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); commitEdit(1, 0); }
-  else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
-});
+formula.addEventListener('input', () => { endPoint(); editor.value = formula.value; });
+formula.addEventListener('keydown', (e) => editKey(e));
 
 // §3: Ctrl+щелчок по ссылке в строке формул — переход к ячейке.
 const REF = /(?:'([^']+)'|([A-Za-zА-Яа-я_][\wА-Яа-я.]*))?!?\$?([A-Z]{1,3})\$?(\d{1,7})(?::\$?([A-Z]{1,3})\$?(\d{1,7}))?/g;
@@ -210,6 +324,13 @@ function updateFormulaBar(): void {
   if (!editing) formula.value = model.getCellContent(grid.sheet, s.row, s.column);
 }
 
+/** Число из отображаемого значения с учётом разделителей локали. */
+function parseShown(text: string): number {
+  let t = text.replace(/[\s ]/g, '');
+  t = settings.decimal === 'comma' ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  return Number(t.replace(/[^\d.\-E]/g, ''));
+}
+
 function updateStatus(): void {
   const s = grid.sel;
   let count = 0, numbers = 0, sum = 0;
@@ -221,15 +342,17 @@ function updateStatus(): void {
         if (!text) continue;
         count++;
         if (model.getCellType(grid.sheet, r, c) === 1) {
-          const v = Number(text.replace(/[^\d.,\-E]/g, '').replace(',', '.'));
+          const v = parseShown(text);
           if (Number.isFinite(v)) { numbers++; sum += v; }
         }
       }
     }
   }
   const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 10 });
-  status.textContent = count > 1
-    ? `Среднее: ${numbers ? fmt(sum / numbers) : '—'}    Количество: ${count}    Сумма: ${fmt(sum)}`
+  status.innerHTML = count > 1
+    ? `<span class="stat avg">Среднее: ${numbers ? fmt(sum / numbers) : '—'}</span>` +
+      `<span class="stat cnt">Количество: ${count}</span>` +
+      `<span class="stat sum">Сумма: ${fmt(sum)}</span>`
     : '';
 }
 
@@ -303,7 +426,7 @@ fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
   try {
-    const next = openXlsx(new Uint8Array(await file.arrayBuffer()), file.name);
+    const next = openXlsx(new Uint8Array(await file.arrayBuffer()), file.name, localeId());
     model.free();
     model = next;
     fileName = file.name.replace(/\.xlsx$/i, '');
@@ -323,6 +446,33 @@ function save(): void {
   a.download = `${fileName}.xlsx`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// --- Буфер обмена: через события браузера (не нужны разрешения) ---
+
+editor.addEventListener('copy', (e) => {
+  if (editing) return;
+  e.preventDefault();
+  e.clipboardData?.setData('text/plain', toTsv());
+});
+editor.addEventListener('cut', (e) => {
+  if (editing) return;
+  e.preventDefault();
+  e.clipboardData?.setData('text/plain', toTsv());
+  run('edit.clear');
+});
+editor.addEventListener('paste', (e) => {
+  if (editing) return; // в режиме ввода — обычная вставка текста
+  e.preventDefault();
+  pasteText(e.clipboardData?.getData('text/plain') ?? '');
+});
+
+function pasteText(text: string): void {
+  if (!text) return;
+  model.pasteCsvText(selectionArea(), text.replace(/\r\n?/g, '\n').replace(/\n$/, ''));
+  grid.render();
+  updateFormulaBar();
+  updateStatus();
 }
 
 // --- Команды ---
@@ -360,14 +510,17 @@ register(
     while (top >= 1 && model.getCellType(grid.sheet, top, s.column) === 1) top--;
     startEdit(top < s.row - 1 ? `=SUM(${columnName(s.column)}${top + 1}:${columnName(s.column)}${s.row - 1})` : '=SUM()');
   } },
-  { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], run: () => void navigator.clipboard.writeText(toTsv()) },
-  { id: 'clipboard.cut', label: 'Вырезать', keywords: ['cut'], keys: ['Ctrl+KeyX'], run: () => {
-    void navigator.clipboard.writeText(toTsv()).then(() => run('edit.clear'));
-  } },
-  { id: 'clipboard.paste', label: 'Вставить', keywords: ['paste'], keys: ['Ctrl+KeyV'], run: async () => {
-    const text = await navigator.clipboard.readText();
-    model.pasteCsvText(selectionArea(), text);
-    grid.render(); updateFormulaBar();
+  { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], nativeKeys: true,
+    run: () => { focusGrid(); document.execCommand('copy'); } },
+  { id: 'clipboard.cut', label: 'Вырезать', keywords: ['cut'], keys: ['Ctrl+KeyX'], nativeKeys: true,
+    run: () => { focusGrid(); document.execCommand('cut'); } },
+  { id: 'clipboard.paste', label: 'Вставить', keywords: ['paste'], keys: ['Ctrl+KeyV'], nativeKeys: true, run: async () => {
+    try {
+      pasteText(await navigator.clipboard.readText());
+    } catch {
+      showToast('Браузер не дал прочитать буфер обмена с кнопки. Нажмите Ctrl+V — так вставка работает всегда.');
+    }
+    focusGrid();
   } },
   { id: 'format.bold', label: 'Полужирный', keywords: ['bold', 'жирный'], keys: ['Ctrl+KeyB'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.b,
     run: () => style('font.b', (cur) => String(!cur), (st) => st.font.b) },
@@ -375,8 +528,10 @@ register(
     run: () => style('font.i', (cur) => String(!cur), (st) => st.font.i) },
   { id: 'format.underline', label: 'Подчёркнутый', keywords: ['underline'], keys: ['Ctrl+KeyU'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.u,
     run: () => style('font.u', (cur) => String(!cur), (st) => st.font.u) },
-  { id: 'format.fill', label: 'Цвет заливки (жёлтый)', keywords: ['fill', 'заливка', 'цвет'], run: () => style('fill.fg_color', () => '#FFF2CC') },
-  { id: 'format.fontColor', label: 'Цвет шрифта (красный)', keywords: ['font color'], run: () => style('font.color', () => '#C00000') },
+  { id: 'format.fill', label: 'Цвет заливки', keywords: ['fill', 'заливка', 'цвет', 'фон'], run: (c) => style('fill.fg_color', () => c ?? '') },
+  { id: 'format.fontColor', label: 'Цвет шрифта', keywords: ['font color', 'цвет текста'], run: (c) => style('font.color', () => c ?? '') },
+  { id: 'format.fontName', label: 'Шрифт', keywords: ['font', 'гарнитура', 'начертание'], run: (f) => { if (f) style('font.name', () => f); } },
+  { id: 'format.fontSize', label: 'Размер шрифта', keywords: ['font size', 'кегль'], run: (n) => { if (n) style('font.size', () => n); } },
   { id: 'align.left', label: 'По левому краю', keywords: ['align left'], run: () => style('alignment.horizontal', () => 'left') },
   { id: 'align.center', label: 'По центру', keywords: ['align center', 'центр'], run: () => style('alignment.horizontal', () => 'center') },
   { id: 'align.right', label: 'По правому краю', keywords: ['align right'], run: () => style('alignment.horizontal', () => 'right') },
@@ -403,6 +558,16 @@ register(
     grid.select(prev.row, prev.column);
   } },
   { id: 'search.focus', label: 'Поиск команд и функций', keys: ['Alt+KeyQ'], run: () => search.focus() },
+  { id: 'options.expandEditor', label: 'Расширять поле ввода вправо', keywords: ['поле ввода', 'редактор', 'expand'],
+    checked: () => settings.expandEditor,
+    run: () => { settings.expandEditor = !settings.expandEditor; saveSettings(); refreshRibbon(); } },
+  { id: 'options.decimal', label: 'Разделитель дробной части', keywords: ['запятая', 'точка', 'разделитель', 'decimal'],
+    run: (value) => {
+      if (value !== 'comma' && value !== 'point') return;
+      settings.decimal = value; saveSettings();
+      model.setLocale(localeId());
+      grid.render(); updateFormulaBar(); updateStatus();
+    } },
   { id: 'options.recognizeDates', label: 'Распознавать даты при вводе', keywords: ['даты', 'автоформат', 'dates', 'autoformat', 'параметры'],
     checked: () => model.getRecognizeDates(),
     run: () => { model.setRecognizeDates(!model.getRecognizeDates()); refreshRibbon(); } },
@@ -427,6 +592,15 @@ function showPicker(items: { label: string; hint?: string; run: () => void }[], 
   picker.style.top = `${anchor ? r.bottom + 2 : r.top + cell!.y + cell!.h + 2}px`;
   picker.style.minWidth = `${anchor ? r.width : 160}px`;
   picker.hidden = items.length === 0;
+}
+
+let toastTimer = 0;
+function showToast(text: string): void {
+  const t = $('toast');
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (t.hidden = true), 6000);
 }
 
 function hidePicker(): void {
@@ -475,11 +649,21 @@ window.addEventListener('keydown', (e) => {
 // --- Запуск ---
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => run('file.open'));
-/** Список «Числовой формат» показывает формат активной ячейки. */
+/** Списки ленты (формат, шрифт, размер) показывают значения активной ячейки. */
 function syncNumberFormat(): void {
+  const st = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style;
+  const setSelect = (cmd: string, value: string) => {
+    const el = document.querySelector<HTMLSelectElement>(`select[data-command="${cmd}"]`);
+    if (!el) return;
+    if (![...el.options].some((o) => o.value === value)) el.add(new Option(value, value));
+    el.value = value;
+  };
+  setSelect('format.fontName', st.font.name);
+  setSelect('format.fontSize', String(st.font.sz));
+  setSelect('options.decimal', settings.decimal);
   const select = document.querySelector<HTMLSelectElement>('select[data-command="format.number"]');
   if (!select) return;
-  const fmt = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.num_fmt;
+  const fmt = st.num_fmt;
   const known = [...select.options].some((o) => o.value === fmt);
   if (!known) {
     select.querySelector('option[data-custom]')?.remove();
