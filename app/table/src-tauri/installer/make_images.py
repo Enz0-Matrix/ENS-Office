@@ -18,7 +18,10 @@ LIGHT = (0xf4, 0xfa, 0xf8)   # светлый фон шапки
 
 def read_png(path):
     """RGBA 8 бит без чересстрочности (так сохраняет tauri icon)."""
-    data = path.read_bytes()
+    return decode_png(path.read_bytes())
+
+
+def decode_png(data):
     pos, idat, w, h, ctype = 8, b'', 0, 0, 0
     while pos < len(data):
         n = struct.unpack('>I', data[pos:pos + 4])[0]
@@ -96,6 +99,42 @@ def jade(w, h):
     return canvas(w, h, fill)
 
 
+def fix_ico(path):
+    """Значки 16–64 — в классическом формате BMP: установщик NSIS и часть
+    Windows не показывают маленькие значки, сжатые в PNG (как их пишет
+    tauri icon). 256×256 остаётся в PNG."""
+    data = path.read_bytes()
+    count = struct.unpack('<HHH', data[:6])[2]
+    images = []
+    for i in range(count):
+        w, h, _, _, _, _, size, off = struct.unpack('<BBBBHHII', data[6 + 16 * i:22 + 16 * i])
+        blob = data[off:off + size]
+        w, h = w or 256, h or 256
+        if blob[1:4] == b'PNG' and w < 256:
+            _, _, px = decode_png(blob)
+            dib = bytearray(struct.pack('<IiiHHIIiiII', 40, w, h * 2, 1, 32, 0, 0, 0, 0, 0, 0))
+            for row in reversed(px):
+                for r, g, b, a in row:
+                    dib += bytes((b, g, r, a))
+            mask_stride = ((w + 31) // 32) * 4
+            for row in reversed(px):
+                bits = bytearray(mask_stride)
+                for x, (_, _, _, a) in enumerate(row):
+                    if a == 0:
+                        bits[x // 8] |= 0x80 >> (x % 8)
+                dib += bits
+            blob = bytes(dib)
+        images.append((w, h, blob))
+    out = bytearray(struct.pack('<HHH', 0, 1, len(images)))
+    off = 6 + 16 * len(images)
+    for w, h, blob in images:
+        out += struct.pack('<BBBBHHII', w % 256, h % 256, 0, 0, 1, 32, len(blob), off)
+        off += len(blob)
+    for _, _, blob in images:
+        out += blob
+    path.write_bytes(bytes(out))
+
+
 def main():
     icon = read_png(ICON)
     side = jade(164, 314)
@@ -111,6 +150,7 @@ def main():
     small = (icon[0] // 4 * 3, icon[1] // 4 * 3, [[icon[2][y * 4 // 3][x * 4 // 3] for x in range(48)] for y in range(48)])
     paste(header, small, 150 - 48 - 6, 4)
     write_bmp(HERE / 'header.bmp', header)
+    fix_ico(HERE.parent / 'icons' / 'icon.ico')
     print('готово:', HERE / 'sidebar.bmp', HERE / 'header.bmp')
 
 

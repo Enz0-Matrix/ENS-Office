@@ -20,6 +20,7 @@ import tableAdd24 from '@fluentui/svg-icons/icons/table_add_24_regular.svg?raw';
 import arrowPrevious24 from '@fluentui/svg-icons/icons/arrow_previous_24_regular.svg?raw';
 import arrowUndo24 from '@fluentui/svg-icons/icons/arrow_undo_24_regular.svg?raw';
 import target24 from '@fluentui/svg-icons/icons/target_24_regular.svg?raw';
+import freeze24 from '@fluentui/svg-icons/icons/table_freeze_column_and_row_24_regular.svg?raw';
 import calendarLtr24 from '@fluentui/svg-icons/icons/calendar_ltr_24_regular.svg?raw';
 import arrowAutofitWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
 import autosum20 from '@fluentui/svg-icons/icons/autosum_20_regular.svg?raw';
@@ -59,6 +60,7 @@ export const ICONS: Record<string, string> = {
   'arrow_previous_24': arrowPrevious24,
   'arrow_undo_24': arrowUndo24,
   'target_24': target24,
+  'table_freeze_24': freeze24,
   'grid_24': grid24,
   'autosum_20': autosum20,
   'autosum_24': autosum24,

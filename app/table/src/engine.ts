@@ -24,6 +24,14 @@ export interface SheetProps {
   color?: string;
 }
 
+/** Скопированные ячейки во внутреннем виде движка: формулы, стили, ссылки. */
+export interface EngineClipboard {
+  csv: string;
+  data: unknown;
+  sheet: number;
+  range: [number, number, number, number];
+}
+
 /** Методы движка, которыми пользуется интерфейс. */
 export interface Model {
   setUserInput(sheet: number, row: number, column: number, input: string): void;
@@ -32,6 +40,16 @@ export interface Model {
   getCellType(sheet: number, row: number, column: number): number;
   getColumnWidth(sheet: number, column: number): number;
   getRowHeight(sheet: number, row: number): number;
+  setSelectedCell(row: number, column: number): void;
+  setSelectedRange(startRow: number, startColumn: number, endRow: number, endColumn: number): void;
+  copyToClipboard(): EngineClipboard;
+  pasteFromClipboard(sourceSheet: number, sourceRange: [number, number, number, number], data: unknown, isCut: boolean): void;
+  autoFillRows(source: Area, toRow: number): void;
+  autoFillColumns(source: Area, toColumn: number): void;
+  getFrozenRowsCount(sheet: number): number;
+  getFrozenColumnsCount(sheet: number): number;
+  setFrozenRowsCount(sheet: number, count: number): void;
+  setFrozenColumnsCount(sheet: number, count: number): void;
   setColumnsWidth(sheet: number, columnStart: number, columnEnd: number, width: number): void;
   setRowsHeight(sheet: number, rowStart: number, rowEnd: number, height: number): void;
   insertRows(sheet: number, row: number, count: number): void;

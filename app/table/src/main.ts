@@ -147,6 +147,7 @@ editor.addEventListener('input', () => {
     editor.classList.add('editing');
   }
   endPoint();
+  if (clip?.cut) dropClip();
   formula.value = editor.value;
   showRefs();
   if (settings.expandEditor) growEditor();
@@ -496,6 +497,7 @@ function gridKey(e: KeyboardEvent): void {
     case 'Enter': e.preventDefault(); grid.move(shift ? -1 : 1, 0, false); return;
     case 'Tab': e.preventDefault(); grid.move(0, shift ? -1 : 1, false); return;
     case 'F2': e.preventDefault(); startEdit(); return;
+    case 'Escape': if (clip) { e.preventDefault(); dropClip(); } return;
   }
   // Печатные символы не перехватываем: они попадают в поле ввода
   // и начинают редактирование через событие input.
@@ -738,6 +740,36 @@ grid.onResize = (kind, index, px) => {
   for (let i = from; i <= Math.min(to, from + 500); i++) setSize(kind, i, i, kind === 'column' ? fitColumn(i) : fitRow(i));
 };
 
+// Маркер заполнения: формулы протягиваются со сдвигом ссылок, ряды
+// продолжаются (1, 2 → 3, 4…; январь → февраль…), как в Excel.
+grid.onFill = (t) => {
+  const s = grid.sel;
+  const area = selectionArea();
+  try {
+    if (t.r1 !== s.r1 || t.r2 !== s.r2) model.autoFillRows(area, t.r1 < s.r1 ? t.r1 : t.r2);
+    else model.autoFillColumns(area, t.c1 < s.c1 ? t.c1 : t.c2);
+  } catch (e) {
+    showToast(`Не получилось протянуть: ${e}`);
+  }
+  grid.selectRange(t.r1, t.c1, t.r2, t.c2);
+  updateFormulaBar();
+  updateStatus();
+};
+
+/** Закрепить области: строки выше и столбцы левее активной ячейки. */
+function freezeMenu(x: number, y: number): void {
+  const s = grid.sel, f = grid.frozen;
+  showMenu([
+    { label: f.rows || f.columns ? 'Снять закрепление областей' : `Закрепить области (выше и левее ${columnName(s.column)}${s.row})`,
+      run: () => (f.rows || f.columns ? grid.setFrozen(0, 0) : grid.setFrozen(s.row - 1, s.column - 1)) },
+    { label: 'Закрепить верхнюю строку', run: () => grid.setFrozen(1, 0) },
+    { label: 'Закрепить первый столбец', run: () => grid.setFrozen(0, 1) },
+  ], x, y);
+}
+
+let lastPointer = { x: 200, y: 160 };
+document.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, y: e.clientY }; }, true);
+
 grid.onContextMenu = (x, y, header) => {
   if (editing) commitEdit(0, 0);
   cellMenu(x, y, header);
@@ -799,23 +831,81 @@ function syncDocTitle(): void {
   }
 }
 
-// --- Буфер обмена: через события браузера (не нужны разрешения) ---
+// --- Буфер обмена ---
+// Как в Excel: внутри программы копируются формулы (ссылки сдвигаются),
+// стили и ссылки; «Вырезать» переносит ячейки при вставке, а формулы,
+// которые на них ссылались, начинают ссылаться на новое место. Другим
+// программам уходит текст (значения через табуляцию).
+
+interface Clip { data: unknown; sheet: number; range: [number, number, number, number]; text: string; cut: boolean }
+let clip: Clip | null = null;
+
+/** Скопировать выделение: во внутренний буфер и текстом — в системный. */
+function takeClip(cut: boolean): string {
+  const s = grid.sel;
+  model.setSelectedCell(s.r1, s.c1);
+  model.setSelectedRange(s.r1, s.c1, s.r2, s.c2);
+  const c = model.copyToClipboard();
+  const text = toTsv();
+  clip = { data: c.data, sheet: grid.sheet, range: c.range, text, cut };
+  grid.clipRange = { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, c.range[2]), c2: Math.min(s.c2, c.range[3]), sheet: grid.sheet };
+  grid.render();
+  return text;
+}
+
+function dropClip(): void {
+  clip = null;
+  grid.clipRange = null;
+  grid.render();
+}
+
+const sameText = (a: string, b: string) => a.replace(/\r\n?/g, '\n').trim() === b.replace(/\r\n?/g, '\n').trim();
+
+/** Вставка: своё — через движок (формулы, форматы), чужое — как текст. */
+function paste(text: string): void {
+  if (clip && sameText(text, clip.text)) {
+    const c = clip;
+    const [r1, c1, r2, c2] = c.range;
+    const h = r2 - r1 + 1, w = c2 - c1 + 1;
+    const area = selectionArea();
+    // Скопированное повторяется на всё выделение, если оно кратно (как в Excel).
+    const tilesY = !c.cut && area.height > h && area.height % h === 0 ? area.height / h : 1;
+    const tilesX = !c.cut && area.width > w && area.width % w === 0 ? area.width / w : 1;
+    try {
+      for (let ty = 0; ty < tilesY; ty++) {
+        for (let tx = 0; tx < tilesX; tx++) {
+          model.setSelectedCell(area.row + ty * h, area.column + tx * w);
+          model.pasteFromClipboard(c.sheet, c.range, c.data, c.cut);
+        }
+      }
+    } catch (e) {
+      showToast(`Не удалось вставить: ${e}`);
+    }
+    grid.selectRange(area.row, area.column, area.row + Math.max(h * tilesY, 1) - 1, area.column + Math.max(w * tilesX, 1) - 1);
+    if (c.cut) dropClip(); // вырезанное вставляется один раз
+  } else {
+    if (clip) dropClip();
+    pasteText(text);
+  }
+  grid.render();
+  updateFormulaBar();
+  updateStatus();
+}
 
 editor.addEventListener('copy', (e) => {
   if (editing) return;
   e.preventDefault();
-  e.clipboardData?.setData('text/plain', toTsv());
+  e.clipboardData?.setData('text/plain', takeClip(false));
 });
 editor.addEventListener('cut', (e) => {
   if (editing) return;
   e.preventDefault();
-  e.clipboardData?.setData('text/plain', toTsv());
-  run('edit.clear');
+  e.clipboardData?.setData('text/plain', takeClip(true));
 });
 editor.addEventListener('paste', (e) => {
   if (editing) return; // в режиме ввода — обычная вставка текста
   e.preventDefault();
-  pasteText(e.clipboardData?.getData('text/plain') ?? '');
+  paste(e.clipboardData?.getData('text/plain') ?? '');
 });
 
 /** Вставка, как в Excel: если выделено несколько ячеек, а скопировано меньше —
@@ -875,12 +965,12 @@ register(
   { id: 'edit.insertFunction', label: 'Вставить функцию', keywords: ['insert function', 'функция', 'fx', 'мастер функций'], keys: ['Shift+F3'],
     run: () => { search.value = 'ƒ '; search.focus(); showPicker(functionList(''), search); } },
   { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], nativeKeys: true,
-    run: async () => { await copyText(toTsv()).catch((e) => showToast(String(e))); focusGrid(); } },
+    run: async () => { await copyText(takeClip(false)).catch((e) => showToast(String(e))); focusGrid(); } },
   { id: 'clipboard.cut', label: 'Вырезать', keywords: ['cut'], keys: ['Ctrl+KeyX'], nativeKeys: true,
-    run: async () => { try { await copyText(toTsv()); run('edit.clear'); } catch (e) { showToast(String(e)); } focusGrid(); } },
+    run: async () => { await copyText(takeClip(true)).catch((e) => showToast(String(e))); focusGrid(); } },
   { id: 'clipboard.paste', label: 'Вставить', keywords: ['paste'], keys: ['Ctrl+KeyV'], nativeKeys: true, run: async () => {
     try {
-      pasteText(await readText());
+      paste(await readText());
     } catch {
       showToast('Не удалось прочитать буфер обмена с кнопки. Нажмите Ctrl+V — так вставка работает всегда.');
     }
@@ -911,6 +1001,8 @@ register(
   { id: 'view.focusCell', label: 'Фокус ячейки (перекрестие)', keywords: ['focus cell', 'подсветка строки', 'перекрестие', 'crosshair'],
     keys: ['Ctrl+Shift+KeyK'], checked: () => grid.focusCell.enabled,
     run: () => { grid.focusCell.enabled = !grid.focusCell.enabled; grid.render(); refreshRibbon(); } },
+  { id: 'view.freeze', label: 'Закрепить области', keywords: ['freeze panes', 'закрепить', 'заморозить', 'шапка', 'фиксировать'],
+    run: () => freezeMenu(lastPointer.x, lastPointer.y + 8) },
   { id: 'view.gridlines', label: 'Сетка', keywords: ['gridlines', 'линии сетки'], checked: () => model.getShowGridLines(grid.sheet),
     run: () => { model.setShowGridLines(grid.sheet, !model.getShowGridLines(grid.sheet)); grid.render(); refreshRibbon(); } },
   { id: 'nav.precedents', label: 'Перейти к влияющим ячейкам', keywords: ['trace precedents', 'ссылки формулы'], keys: ['Ctrl+BracketLeft'],

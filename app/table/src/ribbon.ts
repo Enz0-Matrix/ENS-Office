@@ -179,6 +179,10 @@ export const TABS: RibbonTab[] = [
         ],
       },
       {
+        name: 'Окно',
+        items: [{ type: 'large', command: 'view.freeze', icon: 'table_freeze', label: 'Закрепить области' }],
+      },
+      {
         name: 'Ввод',
         items: [
           { type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' },
