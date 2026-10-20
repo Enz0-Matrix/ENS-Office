@@ -3,7 +3,7 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type BorderItem, type CellBorder, type CellStyle, type MergedCell, type Model } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type MergedCell, type Model } from './engine';
 import { fontStack } from './fonts';
 
 export interface Selection {
@@ -79,6 +79,10 @@ export class Grid {
   onFill: (target: { r1: number; c1: number; r2: number; c2: number }) => void = () => {};
   /** Скопированный или вырезанный диапазон — пунктирная рамка, как в Excel. */
   clipRange: { r1: number; c1: number; r2: number; c2: number; sheet: number } | null = null;
+  /** Автофильтр листа: строка заголовков r1, столбцы c1..c2; active — где выбран отбор. */
+  filter: { r1: number; c1: number; r2: number; c2: number; active: Set<number> } | null = null;
+  /** Щелчок по кнопке фильтра в заголовке столбца. */
+  onFilterButton: (column: number, x: number, y: number) => void = () => {};
   private filling: { r1: number; c1: number; r2: number; c2: number } | null = null;
   private handle = { x: -100, y: -100 };
   /** Закреплённые строки и столбцы (из книги). */
@@ -348,6 +352,9 @@ export class Grid {
       if (dRow > 0) row = m.row + m.height; else if (dRow < 0) row = m.row - 1; else row = m.row;
       if (dCol > 0) column = m.column + m.width; else if (dCol < 0) column = m.column - 1; else column = m.column;
     }
+    // Скрытые (отфильтрованные) строки и столбцы пропускаем, как Excel.
+    for (let i = 0; i < 100_000 && dRow && row > 1 && row < LAST_ROW && this.height(row) === 0; i++) row += Math.sign(dRow);
+    for (let i = 0; i < 20_000 && dCol && column > 1 && column < LAST_COLUMN && this.width(column) === 0; i++) column += Math.sign(dCol);
     this.select(row, column, extend);
   }
 
@@ -442,6 +449,18 @@ export class Grid {
       return;
     }
     const cr = this.canvas.getBoundingClientRect();
+    const f = this.filter;
+    if (f) {
+      const h0 = this.hit(e);
+      if (h0.row === f.r1 && h0.column >= f.c1 && h0.column <= f.c2) {
+        const rect = this.cellRect(h0.row, h0.column);
+        if (e.clientX - cr.left >= rect.x + rect.w - 18) {
+          e.preventDefault();
+          this.onFilterButton(h0.column, cr.left + rect.x + rect.w - 18, cr.top + rect.y + rect.h);
+          return;
+        }
+      }
+    }
     if (Math.abs(e.clientX - cr.left - this.handle.x) <= 5 && Math.abs(e.clientY - cr.top - this.handle.y) <= 5) {
       // Маркер заполнения: протянуть формулу или ряд (1, 2 → 3, 4…).
       e.preventDefault();
@@ -546,16 +565,17 @@ export class Grid {
     ctx.clip();
 
     // Стили и объединения читаем один раз за кадр.
-    const styles = new Map<number, CellStyle | null>();
-    const styleOf = (r: number, c: number): CellStyle | null => {
+    const styles = new Map<number, ExtendedStyle | null>();
+    const extOf = (r: number, c: number): ExtendedStyle | null => {
       const key = r * 16_385 + c;
       let st = styles.get(key);
       if (st === undefined) {
-        try { st = model.getCellStyle(this.sheet, r, c).style; } catch { st = null; }
+        try { st = model.getCellStyle(this.sheet, r, c); } catch { st = null; }
         styles.set(key, st);
       }
       return st;
     };
+    const styleOf = (r: number, c: number): CellStyle | null => extOf(r, c)?.style ?? null;
     let merges: MergedCell[] = [];
     try { merges = model.getMergedCells(this.sheet) ?? []; } catch { merges = []; }
     const mergeAt = (r: number, c: number) =>
@@ -617,8 +637,15 @@ export class Grid {
       ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
 
+    // Гистограммы условного форматирования — под текстом.
+    for (const cell of cells) {
+      const bar = extOf(cell.r, cell.c)?.data_bar;
+      if (bar) this.drawDataBar(bar, cell);
+    }
+
     // Текст.
     for (const cell of cells) {
+      if (extOf(cell.r, cell.c)?.data_bar?.show_value === false) continue;
       const text = textOf(cell.r, cell.c);
       if (!text) continue;
       const style = styleOf(cell.r, cell.c);
@@ -645,6 +672,29 @@ export class Grid {
     for (const cell of cells) {
       const b = styleOf(cell.r, cell.c)?.border;
       if (b) this.drawBorders(b, cell);
+    }
+    // Кнопки автофильтра в строке заголовков.
+    const flt = this.filter;
+    if (flt && flt.r1 >= ra && flt.r1 <= rb) {
+      for (let c = Math.max(ca, flt.c1); c <= Math.min(cb, flt.c2); c++) {
+        const r = this.cellRect(flt.r1, c);
+        const bx = r.x + r.w - 17, by = r.y + r.h - 17;
+        ctx.fillStyle = flt.active.has(c) ? '#d3ebe5' : '#f3f3f3';
+        ctx.strokeStyle = '#9a9a9a';
+        ctx.lineWidth = 1;
+        ctx.fillRect(bx, by, 16, 16);
+        ctx.strokeRect(bx + 0.5, by + 0.5, 15, 15);
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        if (flt.active.has(c)) {
+          // воронка: отбор включён
+          ctx.moveTo(bx + 3, by + 4); ctx.lineTo(bx + 13, by + 4); ctx.lineTo(bx + 9, by + 9);
+          ctx.lineTo(bx + 9, by + 13); ctx.lineTo(bx + 7, by + 12); ctx.lineTo(bx + 7, by + 9); ctx.closePath();
+        } else {
+          ctx.moveTo(bx + 4, by + 6); ctx.lineTo(bx + 12, by + 6); ctx.lineTo(bx + 8, by + 11); ctx.closePath();
+        }
+        ctx.fill();
+      }
     }
     ctx.restore();
     }
@@ -769,6 +819,30 @@ export class Grid {
     ctx.restore();
   }
 
+  /** Гистограмма условного форматирования (как в Excel: от оси, градиентом). */
+  private drawDataBar(bar: NonNullable<ExtendedStyle['data_bar']>, cell: { x: number; y: number; w: number; h: number }): void {
+    const ctx = this.ctx, model = this.model();
+    const inner = cell.w - 4;
+    const axis = cell.x + 2 + inner * (bar.axis_position ?? 0);
+    const len = inner * Math.min(1, Math.abs(bar.value));
+    const negative = bar.value < 0;
+    const color = model.resolveColor((negative ? bar.negative_color : bar.positive_color) ?? '#638EC6') || '#638EC6';
+    const x0 = negative ? axis - len : axis;
+    const y0 = cell.y + 2, h = cell.h - 4;
+    if (bar.is_gradient) {
+      const g = ctx.createLinearGradient(x0, 0, x0 + len, 0);
+      g.addColorStop(negative ? 1 : 0, color);
+      g.addColorStop(negative ? 0 : 1, '#ffffff');
+      ctx.fillStyle = g;
+    } else {
+      ctx.fillStyle = color;
+    }
+    ctx.fillRect(x0, y0, len, h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(0, Math.round(len) - 1), h - 1);
+  }
+
   /** Границы ячейки из файла: тонкая, средняя, толстая, двойная, пунктир. */
   private drawBorders(b: CellBorder, cell: { x: number; y: number; w: number; h: number }): void {
     const ctx = this.ctx, model = this.model();
@@ -858,6 +932,7 @@ export class Grid {
     ctx.save(); ctx.beginPath(); ctx.rect(left, 0, W - left, HEADER_H); ctx.clip();
     for (let c = c0; c <= cN; c++) {
       const { x, w } = this.cellRect(1, c);
+      if (w === 0) continue; // скрытый столбец
       const inSel = c >= s.c1 && c <= s.c2;
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
@@ -877,6 +952,7 @@ export class Grid {
     ctx.save(); ctx.beginPath(); ctx.rect(0, top, this.headerW, H - top); ctx.clip();
     for (let r = r0; r <= rN; r++) {
       const { y, h } = this.cellRect(r, 1);
+      if (h === 0) continue; // скрытая (отфильтрованная) строка
       const inSel = r >= s.r1 && r <= s.r2;
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
@@ -884,7 +960,9 @@ export class Grid {
         ctx.fillStyle = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
         ctx.fillRect(this.headerW - 2, y, 2, h);
       }
-      ctx.fillStyle = inSel ? this.theme.headerActiveText : '#444';
+      // Как в Excel: номера строк под действующим фильтром — синие.
+      const filtered = this.filter && this.filter.active.size > 0 && r > this.filter.r1 && r <= this.filter.r2;
+      ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : '#444';
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.headerW / 2, y + h / 2);
       ctx.beginPath(); ctx.moveTo(0, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();

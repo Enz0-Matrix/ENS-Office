@@ -22,6 +22,13 @@ export interface CellStyle {
   border?: CellBorder;
 }
 
+/** Стиль ячейки с учётом условного форматирования. */
+export interface ExtendedStyle {
+  style: CellStyle;
+  data_bar?: { positive_color?: Color; negative_color?: Color; is_gradient: boolean; value: number; axis_position: number; show_value: boolean } | null;
+  icon?: unknown;
+}
+
 export interface MergedCell { row: number; column: number; width: number; height: number }
 
 /** Какие границы ставить на выделение. */
@@ -51,6 +58,12 @@ export interface Model {
   getColumnWidth(sheet: number, column: number): number;
   getRowHeight(sheet: number, row: number): number;
   getMergedCells(sheet: number): MergedCell[];
+  sortRange(area: Area, keyColumn: number, descending: boolean): void;
+  findAll(text: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean, sheet: number): { sheet: number; row: number; column: number }[];
+  replaceAll(text: string, replacement: string, matchCase: boolean, wholeCell: boolean, sheet: number, onlyRow: number, onlyColumn: number): number;
+  pasteValues(sourceSheet: number, source: [number, number, number, number], transpose: boolean): void;
+  onPasteStyles(styles: CellStyle[][]): void;
+  setRowsHidden(sheet: number, rowStart: number, rowEnd: number, hidden: boolean): void;
   mergeCells(range: Area): void;
   mergeCellsCenter(range: Area): void;
   mergeCellsAcross(range: Area): void;
@@ -72,7 +85,7 @@ export interface Model {
   deleteRows(sheet: number, row: number, count: number): void;
   insertColumns(sheet: number, column: number, count: number): void;
   deleteColumns(sheet: number, column: number, count: number): void;
-  getCellStyle(sheet: number, row: number, column: number): { style: CellStyle };
+  getCellStyle(sheet: number, row: number, column: number): ExtendedStyle;
   updateRangeStyle(range: Area, path: string, value: string): void;
   rangeClearContents(sheet: number, r1: number, c1: number, r2: number, c2: number): void;
   pasteCsvText(area: Area, csv: string): void;

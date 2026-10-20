@@ -1,6 +1,6 @@
 [package]
 name = "ens-table"
-version = "0.1.4"
+version = "0.1.5"
 description = "ENS-Table — редактор таблиц ENS-Office"
 edition = "2021"
 publish = false

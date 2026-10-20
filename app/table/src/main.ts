@@ -2,6 +2,8 @@ import './styles.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
+import { initFind, showFind } from './findreplace';
+import { filterOf, initFilter, openFilterPopup, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid } from './grid';
@@ -465,6 +467,13 @@ function updateStatus(): void {
     }
   }
   const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 10 });
+  const f = filterOf(grid.sheet);
+  if (f && f.criteria.size && count <= 1) {
+    let shown = 0;
+    for (let r = f.r1 + 1; r <= f.r2; r++) if (model.getRowHeight(grid.sheet, r) > 0) shown++;
+    status.innerHTML = `<span class="stat cnt">Найдено записей: ${shown} из ${f.r2 - f.r1}</span>`;
+    return;
+  }
   status.innerHTML = count > 1
     ? `<span class="stat avg">Среднее: ${numbers ? fmt(sum / numbers) : '—'}</span>` +
       `<span class="stat cnt">Количество: ${count}</span>` +
@@ -514,6 +523,13 @@ function setSheet(index: number, reset = true): void {
   if (reset) grid.select(1, 1);
   renderSheetTabs();
   showRefs();
+  syncFilter();
+}
+
+function syncFilter(): void {
+  const f = filterOf(grid.sheet);
+  grid.filter = f ? { r1: f.r1, c1: f.c1, r2: f.r2, c2: f.c2, active: new Set(f.criteria.keys()) } : null;
+  grid.invalidateLayout();
 }
 
 /** Щелчок по ярлычку во время ввода формулы — выбор ячеек на другом листе. */
@@ -665,7 +681,13 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     { label: 'Вырезать', keys: keysOf('clipboard.cut'), run: () => run('clipboard.cut') },
     { label: 'Копировать', keys: keysOf('clipboard.copy'), run: () => run('clipboard.copy') },
     { label: 'Вставить', keys: keysOf('clipboard.paste'), run: () => run('clipboard.paste') },
+    { label: 'Специальная вставка…', keys: 'Ctrl+Alt+V', run: () => pasteSpecialMenu(x, y) },
   ];
+  if (!header) {
+    items.push({ label: 'Сортировка от А до Я', separator: true, run: () => sortBy(s.column, false) });
+    items.push({ label: 'Сортировка от Я до А', run: () => sortBy(s.column, true) });
+    items.push({ label: filterOf(grid.sheet) ? 'Снять фильтр' : 'Фильтр', run: toggleFilter });
+  }
   if (header !== 'column' && !fullCols) {
     items.push({ label: rows > 1 ? `Вставить строки (${rows})` : 'Вставить строку', separator: true, run: () => structure(() => model.insertRows(grid.sheet, s.r1, rows)) });
   }
@@ -850,6 +872,124 @@ function freezeMenu(x: number, y: number): void {
 
 let lastPointer = { x: 200, y: 160 };
 document.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, y: e.clientY }; }, true);
+
+// --- Данные: сортировка, фильтр, поиск ---
+
+/** «Текущая область», как Ctrl+A в Excel: сплошной блок данных вокруг ячейки. */
+function currentRegion(row: number, column: number): { r1: number; c1: number; r2: number; c2: number } {
+  let r1 = row, r2 = row, c1 = column, c2 = column;
+  const filled = (r: number, c: number) => r >= 1 && c >= 1 && model.getFormattedCellValue(grid.sheet, r, c) !== '';
+  for (let grow = true, guard = 0; grow && guard < 10_000; guard++) {
+    grow = false;
+    for (let c = c1 - 1; c <= c2 + 1; c++) {
+      if (filled(r1 - 1, c)) { r1--; grow = true; break; }
+      if (filled(r2 + 1, c)) { r2++; grow = true; break; }
+    }
+    for (let r = r1 - 1; r <= r2 + 1; r++) {
+      if (filled(r, c1 - 1)) { c1--; grow = true; break; }
+      if (filled(r, c2 + 1)) { c2++; grow = true; break; }
+    }
+  }
+  return { r1, c1, r2, c2 };
+}
+
+/** Похоже ли, что первая строка — заголовки (текст над числами), как угадывает Excel. */
+function hasHeader(r: { r1: number; c1: number; r2: number; c2: number }): boolean {
+  if (r.r2 <= r.r1) return false;
+  let text = true, numberBelow = false;
+  for (let c = r.c1; c <= r.c2; c++) {
+    const t = model.getCellType(grid.sheet, r.r1, c);
+    if (t !== 2 && model.getFormattedCellValue(grid.sheet, r.r1, c) !== '') text = false;
+    if (model.getCellType(grid.sheet, r.r1 + 1, c) !== 2) numberBelow = true;
+  }
+  return text && numberBelow;
+}
+
+function sortBy(column: number, descending: boolean): void {
+  const s = grid.sel;
+  const f = filterOf(grid.sheet);
+  let area;
+  if (f) {
+    area = { sheet: grid.sheet, row: f.r1 + 1, column: f.c1, width: f.c2 - f.c1 + 1, height: f.r2 - f.r1 };
+  } else {
+    const single = s.r1 === s.r2 && s.c1 === s.c2;
+    const r = single ? currentRegion(s.row, s.column) : { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, 1_048_576), c2: s.c2 };
+    const top = single && hasHeader(r) ? r.r1 + 1 : r.r1;
+    area = { sheet: grid.sheet, row: top, column: r.c1, width: r.c2 - r.c1 + 1, height: r.r2 - top + 1 };
+  }
+  if (area.height < 2) return;
+  try {
+    model.sortRange(area, Math.min(Math.max(column, area.column), area.column + area.width - 1), descending);
+  } catch (e) {
+    showToast(`Не удалось отсортировать: ${e}`);
+  }
+  grid.render();
+  updateFormulaBar();
+}
+
+function toggleFilter(): void {
+  if (filterOf(grid.sheet)) { setFilter(grid.sheet, null); return; }
+  const s = grid.sel;
+  const r = s.r1 === s.r2 && s.c1 === s.c2 ? currentRegion(s.row, s.column) : { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 };
+  setFilter(grid.sheet, { r1: r.r1, c1: r.c1, r2: r.r2, c2: r.c2, criteria: new Map() });
+}
+
+initFilter({
+  model: () => model,
+  sheet: () => grid.sheet,
+  sort: (column, descending) => sortBy(column, descending),
+  changed: () => { syncFilter(); updateStatus(); },
+});
+// После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
+grid.onFilterButton = (column, x, y) => setTimeout(() => openFilterPopup(column, x, y));
+
+initFind({
+  model: () => model,
+  sheet: () => grid.sheet,
+  active: () => ({ row: grid.sel.row, column: grid.sel.column }),
+  goTo: (sheet, row, column) => { if (sheet !== grid.sheet) setSheet(sheet, false); grid.select(row, column); },
+  changed: () => { grid.render(); updateFormulaBar(); updateStatus(); },
+  toast: showToast,
+});
+
+/** Специальная вставка (Ctrl+Alt+V): значения, форматы, транспонировать. */
+function pasteSpecialMenu(x: number, y: number): void {
+  const c = clip;
+  if (!c) {
+    showToast('Сначала скопируйте ячейки в ENS-Table (Ctrl+C): специальная вставка работает с ними.');
+    return;
+  }
+  const [r1, c1, r2, c2] = c.range;
+  const at = () => { model.setSelectedCell(grid.sel.r1, grid.sel.c1); };
+  const done = (h: number, w: number) => {
+    grid.selectRange(grid.sel.r1, grid.sel.c1, grid.sel.r1 + h - 1, grid.sel.c1 + w - 1);
+    grid.render(); updateFormulaBar(); updateStatus(); focusGrid();
+  };
+  const styles = () => {
+    const out = [];
+    for (let r = r1; r <= r2; r++) {
+      const row = [];
+      for (let col = c1; col <= c2; col++) row.push(model.getCellStyle(c.sheet, r, col).style);
+      out.push(row);
+    }
+    return out;
+  };
+  const run2 = (f: () => void, h: number, w: number) => { try { f(); } catch (e) { showToast(`Не удалось вставить: ${e}`); } done(h, w); };
+  showMenu([
+    { label: 'Вставить всё', keys: 'Ctrl+V', run: () => paste(c.text) },
+    { label: 'Значения', run: () => run2(() => { at(); model.pasteValues(c.sheet, c.range, false); }, r2 - r1 + 1, c2 - c1 + 1) },
+    { label: 'Значения и форматы', run: () => run2(() => {
+      at(); model.pasteValues(c.sheet, c.range, false);
+      model.setSelectedRange(grid.sel.r1, grid.sel.c1, grid.sel.r1, grid.sel.c1); model.onPasteStyles(styles());
+    }, r2 - r1 + 1, c2 - c1 + 1) },
+    { label: 'Форматы', run: () => run2(() => {
+      model.setSelectedCell(grid.sel.r1, grid.sel.c1);
+      model.setSelectedRange(grid.sel.r1, grid.sel.c1, grid.sel.r2, grid.sel.c2);
+      model.onPasteStyles(styles());
+    }, Math.max(r2 - r1 + 1, grid.sel.r2 - grid.sel.r1 + 1), Math.max(c2 - c1 + 1, grid.sel.c2 - grid.sel.c1 + 1)) },
+    { label: 'Транспонировать (значения)', separator: true, run: () => run2(() => { at(); model.pasteValues(c.sheet, c.range, true); }, c2 - c1 + 1, r2 - r1 + 1) },
+  ], x, y);
+}
 
 grid.onContextMenu = (x, y, header) => {
   if (editing) commitEdit(0, 0);
@@ -1093,6 +1233,17 @@ register(
   { id: 'view.focusCell', label: 'Фокус ячейки (перекрестие)', keywords: ['focus cell', 'подсветка строки', 'перекрестие', 'crosshair'],
     keys: ['Ctrl+Shift+KeyK'], checked: () => grid.focusCell.enabled,
     run: () => { grid.focusCell.enabled = !grid.focusCell.enabled; grid.render(); refreshRibbon(); } },
+  { id: 'edit.find', label: 'Найти', keywords: ['find', 'поиск', 'найти'], keys: ['Ctrl+KeyF'],
+    run: () => showFind('find') },
+  { id: 'edit.replace', label: 'Заменить', keywords: ['replace', 'замена', 'заменить'], keys: ['Ctrl+KeyH'], run: () => showFind('replace') },
+  { id: 'data.sortAsc', label: 'Сортировка от А до Я (по возрастанию)', keywords: ['sort', 'сортировка', 'по возрастанию', 'упорядочить'],
+    run: () => sortBy(grid.sel.column, false) },
+  { id: 'data.sortDesc', label: 'Сортировка от Я до А (по убыванию)', keywords: ['sort descending', 'по убыванию'],
+    run: () => sortBy(grid.sel.column, true) },
+  { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
+    checked: () => !!filterOf(grid.sheet), run: toggleFilter },
+  { id: 'clipboard.pasteSpecial', label: 'Специальная вставка', keywords: ['paste special', 'вставить значения', 'транспонировать'],
+    keys: ['Ctrl+Alt+KeyV'], run: () => pasteSpecialMenu(lastPointer.x, lastPointer.y) },
   { id: 'view.freeze', label: 'Закрепить области', keywords: ['freeze panes', 'закрепить', 'заморозить', 'шапка', 'фиксировать'],
     run: () => freezeMenu(lastPointer.x, lastPointer.y + 8) },
   { id: 'view.gridlines', label: 'Сетка', keywords: ['gridlines', 'линии сетки'], checked: () => model.getShowGridLines(grid.sheet),

@@ -1,0 +1,349 @@
+//! ENS-Office: sort a range, find and replace. Each change is one undo step.
+
+use std::borrow::Cow;
+use std::cmp::Ordering;
+
+use serde::Serialize;
+
+use crate::cell::CellValue;
+use crate::expressions::types::{Area, CellReferenceIndex};
+
+use super::{common::UserModel, history::Diff};
+
+/// A cell found by [UserModel::find_all].
+#[derive(Serialize, Debug, PartialEq)]
+pub struct FoundCell {
+    /// Sheet index.
+    pub sheet: u32,
+    /// Row (1-based).
+    pub row: i32,
+    /// Column (1-based).
+    pub column: i32,
+}
+
+/// Options of find / replace (as in Excel's dialog).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FindOptions {
+    /// Match upper/lower case exactly.
+    pub match_case: bool,
+    /// The whole cell must equal the text.
+    pub whole_cell: bool,
+    /// Look in formulas (cell content) instead of shown values.
+    pub in_formulas: bool,
+    /// Only this sheet (None: the whole workbook).
+    pub sheet: Option<u32>,
+}
+
+fn matches(haystack: &str, needle: &str, o: FindOptions) -> bool {
+    if o.match_case {
+        if o.whole_cell { haystack == needle } else { haystack.contains(needle) }
+    } else {
+        let (h, n) = (haystack.to_lowercase(), needle.to_lowercase());
+        if o.whole_cell { h == n } else { h.contains(&n) }
+    }
+}
+
+/// Replaces every occurrence of `needle` (case-insensitively unless `match_case`).
+fn replace_text(text: &str, needle: &str, with: &str, match_case: bool) -> String {
+    if needle.is_empty() {
+        return text.to_string();
+    }
+    if match_case {
+        return text.replace(needle, with);
+    }
+    let lower: Vec<char> = text.to_lowercase().chars().collect();
+    let chars: Vec<char> = text.chars().collect();
+    let pat: Vec<char> = needle.to_lowercase().chars().collect();
+    // Lowercasing may change length for a few exotic letters: fall back to exact.
+    if lower.len() != chars.len() {
+        return text.replace(needle, with);
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + pat.len() <= lower.len() && lower[i..i + pat.len()] == pat[..] {
+            out.push_str(with);
+            i += pat.len();
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Excel's sort order: numbers < text < FALSE < TRUE; blanks always last.
+fn compare(a: &CellValue, b: &CellValue) -> Ordering {
+    fn rank(v: &CellValue) -> u8 {
+        match v {
+            CellValue::Number(_) => 0,
+            CellValue::String(_) => 1,
+            CellValue::Boolean(_) => 2,
+            CellValue::None => 3,
+        }
+    }
+    match (a, b) {
+        (CellValue::Number(x), CellValue::Number(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (CellValue::String(x), CellValue::String(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+        (CellValue::Boolean(x), CellValue::Boolean(y)) => x.cmp(y),
+        _ => rank(a).cmp(&rank(b)),
+    }
+}
+
+impl UserModel<'_> {
+    /// Sorts the rows of `area` by the values in `key_column` (a column of the
+    /// sheet inside the area). Formulas move with their rows and their relative
+    /// references are adjusted, as in Excel. Blank keys stay at the end.
+    pub fn sort_range(&mut self, area: &Area, key_column: i32, descending: bool) -> Result<(), String> {
+        let sheet = area.sheet;
+        if key_column < area.column || key_column >= area.column + area.width {
+            return Err("Столбец сортировки вне диапазона".to_string());
+        }
+        let (r1, c1) = (area.row, area.column);
+        let (r2, c2) = (area.row + area.height - 1, area.column + area.width - 1);
+        if self.model.get_merged_cells(sheet)?.iter().any(|m| m.intersects(r1, c1, area.width, area.height)) {
+            return Err("Нельзя сортировать диапазон с объединёнными ячейками".to_string());
+        }
+        let mut rows: Vec<i32> = (r1..=r2).collect();
+        let keys: Vec<CellValue> = rows
+            .iter()
+            .map(|&r| self.model.get_cell_value_by_index(sheet, r, key_column).unwrap_or(CellValue::None))
+            .collect();
+        rows.sort_by(|&a, &b| {
+            let (ka, kb) = (&keys[(a - r1) as usize], &keys[(b - r1) as usize]);
+            match (ka, kb) {
+                (CellValue::None, CellValue::None) => Ordering::Equal,
+                (CellValue::None, _) => Ordering::Greater,
+                (_, CellValue::None) => Ordering::Less,
+                _ if descending => compare(kb, ka),
+                _ => compare(ka, kb),
+            }
+        });
+        if rows.iter().enumerate().all(|(i, &r)| r == r1 + i as i32) {
+            return Ok(()); // already sorted
+        }
+        // Read everything first: the target rows are also sources.
+        let mut planned = Vec::new();
+        for (i, &source_row) in rows.iter().enumerate() {
+            let target_row = r1 + i as i32;
+            for column in c1..=c2 {
+                let content = self.model.get_localized_cell_content(sheet, source_row, column)?;
+                let source = CellReferenceIndex { sheet, row: source_row, column };
+                let target = CellReferenceIndex { sheet, row: target_row, column };
+                let value = if content.is_empty() {
+                    String::new()
+                } else {
+                    self.model.extend_copied_value(&content, &source, &target)?
+                };
+                let style = self.model.get_cell_style_or_none(sheet, source_row, column)?;
+                planned.push((target_row, column, value, style));
+            }
+        }
+        let mut diff_list = Vec::new();
+        for (row, column, value, style) in planned {
+            let old_value = self.model.workbook.worksheet(sheet)?.cell(row, column).map(Cow::into_owned);
+            let old_style = self.model.get_cell_style_or_none(sheet, row, column)?;
+            if value.is_empty() {
+                if old_value.is_some() {
+                    self.model.range_clear_contents(&Area { sheet, row, column, width: 1, height: 1 })?;
+                    diff_list.push(Diff::RangeClearContents {
+                        sheet, row, column, width: 1, height: 1, old_value: vec![vec![old_value]],
+                    });
+                }
+            } else {
+                self.model.set_user_input(sheet, row, column, value.clone())?;
+                diff_list.push(Diff::SetCellValue { sheet, row, column, new_value: value, old_value: Box::new(old_value) });
+            }
+            let new_style = style.unwrap_or_default();
+            if old_style.as_ref() != Some(&new_style) {
+                self.model.set_cell_style(sheet, row, column, &new_style)?;
+                diff_list.push(Diff::SetCellStyle {
+                    sheet, row, column, old_value: Box::new(old_style), new_value: Box::new(new_style),
+                });
+            }
+        }
+        self.push_diff_list(diff_list);
+        self.evaluate_if_not_paused();
+        Ok(())
+    }
+
+    /// All cells whose shown value (or formula) contains `text`, sheet by sheet,
+    /// row by row, as Excel's "Find All".
+    pub fn find_all(&self, text: &str, options: FindOptions) -> Result<Vec<FoundCell>, String> {
+        let mut found = Vec::new();
+        if text.is_empty() {
+            return Ok(found);
+        }
+        for (index, ws) in self.model.workbook.worksheets.iter().enumerate() {
+            let sheet = index as u32;
+            if options.sheet.is_some_and(|s| s != sheet) {
+                continue;
+            }
+            let mut cells: Vec<(i32, i32)> = ws.sheet_data.cells().map(|(r, c, _)| (r, c)).collect();
+            cells.sort();
+            for (row, column) in cells {
+                let hay = if options.in_formulas {
+                    self.model.get_localized_cell_content(sheet, row, column)?
+                } else {
+                    self.model.get_formatted_cell_value(sheet, row, column)?
+                };
+                if !hay.is_empty() && matches(&hay, text, options) {
+                    found.push(FoundCell { sheet, row, column });
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// Replaces `text` with `with` in the content of the given cells (or of
+    /// every match when `cells` is None). Returns how many cells changed.
+    pub fn replace_all(&mut self, text: &str, with: &str, options: FindOptions, cells: Option<Vec<FoundCell>>) -> Result<usize, String> {
+        let targets = match cells {
+            Some(c) => c,
+            None => self.find_all(text, FindOptions { in_formulas: true, ..options })?,
+        };
+        let mut diff_list = Vec::new();
+        for FoundCell { sheet, row, column } in targets {
+            let content = self.model.get_localized_cell_content(sheet, row, column)?;
+            let new_value = if options.whole_cell {
+                if matches(&content, text, options) { with.to_string() } else { continue }
+            } else {
+                replace_text(&content, text, with, options.match_case)
+            };
+            if new_value == content {
+                continue;
+            }
+            let old_value = self.model.workbook.worksheet(sheet)?.cell(row, column).map(Cow::into_owned);
+            self.model.set_user_input(sheet, row, column, new_value.clone())?;
+            diff_list.push(Diff::SetCellValue { sheet, row, column, new_value, old_value: Box::new(old_value) });
+        }
+        let changed = diff_list.len();
+        if changed > 0 {
+            self.push_diff_list(diff_list);
+            self.evaluate_if_not_paused();
+        }
+        Ok(changed)
+    }
+}
+
+impl UserModel<'_> {
+    /// "Paste values": the values (not formulas) of the source range, at the
+    /// selected cell, optionally transposed. Numbers keep full precision.
+    pub fn paste_values(&mut self, source_sheet: u32, source: (i32, i32, i32, i32), transpose: bool) -> Result<(), String> {
+        let view = self.get_selected_view();
+        let (sheet, row0, column0) = (view.sheet, view.row, view.column);
+        let (r1, c1, r2, c2) = source;
+        let decimal = self.model.locale.numbers.symbols.decimal.clone();
+        let (yes, no) = (self.model.language.booleans.r#true.clone(), self.model.language.booleans.r#false.clone());
+        let mut planned = Vec::new();
+        for r in r1..=r2 {
+            for c in c1..=c2 {
+                let (dr, dc) = if transpose { (c - c1, r - r1) } else { (r - r1, c - c1) };
+                let text = match self.model.get_cell_value_by_index(source_sheet, r, c)? {
+                    CellValue::Number(n) => n.to_string().replace('.', &decimal),
+                    // A text that would be read as a number or formula stays text.
+                    CellValue::String(t) => {
+                        if t.starts_with('=') || t.parse::<f64>().is_ok() || t.replace(&decimal, ".").parse::<f64>().is_ok() {
+                            format!("'{t}")
+                        } else {
+                            t
+                        }
+                    }
+                    CellValue::Boolean(b) => if b { yes.clone() } else { no.clone() },
+                    CellValue::None => String::new(),
+                };
+                planned.push((row0 + dr, column0 + dc, text));
+            }
+        }
+        let mut diff_list = Vec::new();
+        for (row, column, value) in planned {
+            let old_value = self.model.workbook.worksheet(sheet)?.cell(row, column).map(Cow::into_owned);
+            if value.is_empty() {
+                if old_value.is_some() {
+                    self.model.range_clear_contents(&Area { sheet, row, column, width: 1, height: 1 })?;
+                    diff_list.push(Diff::RangeClearContents { sheet, row, column, width: 1, height: 1, old_value: vec![vec![old_value]] });
+                }
+                continue;
+            }
+            self.model.set_user_input(sheet, row, column, value.clone())?;
+            diff_list.push(Diff::SetCellValue { sheet, row, column, new_value: value, old_value: Box::new(old_value) });
+        }
+        if !diff_list.is_empty() {
+            self.push_diff_list(diff_list);
+            self.evaluate_if_not_paused();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn model() -> UserModel<'static> {
+        UserModel::new_empty("model", "ru", "UTC", "ru").unwrap()
+    }
+
+    #[test]
+    fn ens_sort_moves_rows_with_formulas() {
+        let mut m = model();
+        for (r, name, n) in [(1, "груша", "3"), (2, "", "1"), (3, "Яблоко", "2"), (4, "арбуз", "5")] {
+            m.set_user_input(0, r, 1, name).unwrap();
+            m.set_user_input(0, r, 2, n).unwrap();
+            m.set_user_input(0, r, 3, &format!("=B{r}*10")).unwrap();
+        }
+        let area = Area { sheet: 0, row: 1, column: 1, width: 3, height: 4 };
+        m.sort_range(&area, 1, false).unwrap();
+        let col = |m: &UserModel, c| (1..=4).map(|r| m.get_formatted_cell_value(0, r, c).unwrap()).collect::<Vec<_>>();
+        assert_eq!(col(&m, 1), ["арбуз", "груша", "Яблоко", ""]); // blank last
+        assert_eq!(col(&m, 3), ["50", "30", "20", "10"]); // formulas follow their rows
+        assert_eq!(m.get_cell_content(0, 1, 3).unwrap(), "=B1*10");
+        m.sort_range(&area, 2, false).unwrap();
+        assert_eq!(col(&m, 2), ["1", "2", "3", "5"]);
+        m.undo().unwrap();
+        assert_eq!(col(&m, 1), ["арбуз", "груша", "Яблоко", ""]);
+    }
+
+    #[test]
+    fn ens_paste_values_keeps_precision() {
+        let mut m = model();
+        m.set_user_input(0, 1, 1, "1,23456789012345").unwrap();
+        m.set_user_input(0, 2, 1, "=A1*2").unwrap();
+        m.set_user_input(0, 3, 1, "007").unwrap();
+        m.update_range_style(&Area { sheet: 0, row: 1, column: 1, width: 1, height: 2 }, "num_fmt", "0,00").unwrap();
+        m.set_selected_cell(1, 3).unwrap();
+        m.paste_values(0, (1, 1, 3, 1), false).unwrap();
+        assert_eq!(m.get_cell_content(0, 2, 3).unwrap(), "2,4691357802469");
+        m.set_selected_cell(5, 1).unwrap();
+        m.paste_values(0, (1, 1, 2, 1), true).unwrap();
+        assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "2,4691357802469");
+        assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
+        m.undo().unwrap();
+        assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_find_and_replace() {
+        let mut m = model();
+        m.new_sheet().unwrap();
+        m.set_user_input(0, 1, 1, "Москва").unwrap();
+        m.set_user_input(0, 2, 1, "москва-сити").unwrap();
+        m.set_user_input(1, 3, 2, "Казань").unwrap();
+        m.set_user_input(0, 3, 1, "=ДЛСТР(\"москва\")").unwrap();
+        let o = FindOptions::default();
+        assert_eq!(m.find_all("москва", o).unwrap().len(), 2);
+        assert_eq!(m.find_all("москва", FindOptions { in_formulas: true, ..o }).unwrap().len(), 3);
+        assert_eq!(m.find_all("Москва", FindOptions { match_case: true, ..o }).unwrap().len(), 1);
+        assert_eq!(m.find_all("москва", FindOptions { whole_cell: true, ..o }).unwrap().len(), 1);
+        assert_eq!(m.find_all("каз", o).unwrap(), vec![FoundCell { sheet: 1, row: 3, column: 2 }]);
+        let n = m.replace_all("москва", "Тверь", o, None).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(m.get_formatted_cell_value(0, 1, 1).unwrap(), "Тверь");
+        assert_eq!(m.get_formatted_cell_value(0, 2, 1).unwrap(), "Тверь-сити");
+        assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "5");
+        m.undo().unwrap();
+        assert_eq!(m.get_formatted_cell_value(0, 1, 1).unwrap(), "Москва");
+        assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "6");
+    }
+}

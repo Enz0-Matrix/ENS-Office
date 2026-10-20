@@ -15,6 +15,10 @@ import textAlignRight20 from '@fluentui/svg-icons/icons/text_align_right_20_regu
 import mathFormula20 from '@fluentui/svg-icons/icons/math_formula_20_regular.svg?raw';
 import eraser20 from '@fluentui/svg-icons/icons/eraser_20_regular.svg?raw';
 import search20 from '@fluentui/svg-icons/icons/search_20_regular.svg?raw';
+import sortAsc20 from '@fluentui/svg-icons/icons/text_sort_ascending_20_regular.svg?raw';
+import sortDesc20 from '@fluentui/svg-icons/icons/text_sort_descending_20_regular.svg?raw';
+import filter20 from '@fluentui/svg-icons/icons/filter_20_regular.svg?raw';
+import arrowSort20 from '@fluentui/svg-icons/icons/arrow_sort_20_regular.svg?raw';
 import clipboardPaste24 from '@fluentui/svg-icons/icons/clipboard_paste_24_regular.svg?raw';
 import tableAdd24 from '@fluentui/svg-icons/icons/table_add_24_regular.svg?raw';
 import arrowPrevious24 from '@fluentui/svg-icons/icons/arrow_previous_24_regular.svg?raw';
@@ -61,6 +65,10 @@ export const ICONS: Record<string, string> = {
   'math_formula_20': mathFormula20,
   'eraser_20': eraser20,
   'search_20': search20,
+  'sort_asc_20': sortAsc20,
+  'sort_desc_20': sortDesc20,
+  'filter_20': filter20,
+  'arrow_sort_20': arrowSort20,
   'clipboard_paste_24': clipboardPaste24,
   'table_add_24': tableAdd24,
   'arrow_previous_24': arrowPrevious24,

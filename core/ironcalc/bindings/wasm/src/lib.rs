@@ -14,7 +14,7 @@ use ironcalc_base::{
     },
     types::{CellType, Color, Link, Style, StyleIncludes},
     worksheet::NavigationDirection,
-    BorderArea, ClipboardData, UserModel as BaseModel,
+    BorderArea, ClipboardData, FindOptions, FoundCell, UserModel as BaseModel,
 };
 
 fn to_js_error(error: String) -> JsError {
@@ -585,6 +585,69 @@ impl Model {
     #[wasm_bindgen(js_name = "setRecognizeDates")]
     pub fn set_recognize_dates(&mut self, on: bool) {
         self.model.set_recognize_dates(on);
+    }
+
+    /// ENS-Office: paste the values of the source range at the selected cell.
+    #[wasm_bindgen(js_name = "pasteValues")]
+    pub fn paste_values(
+        &mut self,
+        source_sheet: u32,
+        #[wasm_bindgen(unchecked_param_type = "[number, number, number, number]")] source_range: JsValue,
+        transpose: bool,
+    ) -> Result<(), JsError> {
+        let range: (i32, i32, i32, i32) =
+            serde_wasm_bindgen::from_value(source_range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.paste_values(source_sheet, range, transpose).map_err(to_js_error)
+    }
+
+    /// ENS-Office: sort the rows of `area` by `key_column` (one undo step).
+    #[wasm_bindgen(js_name = "sortRange")]
+    pub fn sort_range(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] area: JsValue,
+        key_column: i32,
+        descending: bool,
+    ) -> Result<(), JsError> {
+        let area: Area = serde_wasm_bindgen::from_value(area).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.sort_range(&area, key_column, descending).map_err(to_js_error)
+    }
+
+    /// ENS-Office: cells containing `text` (shown value, or formula when `in_formulas`).
+    /// `sheet` < 0 searches the whole workbook.
+    #[wasm_bindgen(js_name = "findAll", unchecked_return_type = "{ sheet: number; row: number; column: number }[]")]
+    pub fn find_all(
+        &self,
+        text: &str,
+        match_case: bool,
+        whole_cell: bool,
+        in_formulas: bool,
+        sheet: i32,
+    ) -> Result<JsValue, JsError> {
+        let options = FindOptions { match_case, whole_cell, in_formulas, sheet: u32::try_from(sheet).ok() };
+        let found = self.model.find_all(text, options).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&found).map_err(|e| to_js_error(e.to_string()))
+    }
+
+    /// ENS-Office: replace in the content of every match (one undo step);
+    /// with `only_row` > 0 — only in that cell of `sheet` ("Заменить").
+    /// Returns how many cells changed.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = "replaceAll")]
+    pub fn replace_all(
+        &mut self,
+        text: &str,
+        with: &str,
+        match_case: bool,
+        whole_cell: bool,
+        sheet: i32,
+        only_row: i32,
+        only_column: i32,
+    ) -> Result<u32, JsError> {
+        let options = FindOptions { match_case, whole_cell, in_formulas: true, sheet: u32::try_from(sheet).ok() };
+        let cells = (only_row > 0 && sheet >= 0)
+            .then(|| vec![FoundCell { sheet: sheet as u32, row: only_row, column: only_column }]);
+        let n = self.model.replace_all(text, with, options, cells).map_err(to_js_error)?;
+        Ok(n as u32)
     }
 
     #[wasm_bindgen(js_name = "getRecognizeDates")]

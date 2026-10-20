@@ -156,3 +156,50 @@ footer { display: flex; flex-direction: column; }
 
 .bs-donate { display: block; margin: 8px 12px; padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,.14); color: #fff; text-decoration: none; text-align: center; }
 .bs-donate:hover { background: rgba(255,255,255,.24); }
+
+/* --- Найти и заменить: плавающее окно, не закрывает работу с листом --- */
+.find-panel { position: fixed; top: 150px; right: 24px; z-index: 40; width: 420px; background: var(--panel); border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); padding: 0 14px 12px; animation: ens-pop .14s ease-out; }
+.find-panel[hidden] { display: none; }
+.find-head { display: flex; align-items: center; gap: 4px; margin: 0 -14px 10px; padding: 6px 8px 0; border-radius: 10px 10px 0 0;
+  background: var(--brand-bg); cursor: move; }
+.find-tab { border: 0; background: transparent; color: rgba(255,255,255,.8); padding: 6px 12px 7px; border-radius: 6px 6px 0 0; font: inherit; cursor: pointer; }
+.find-tab.active { background: var(--panel); color: var(--text); }
+.find-close { margin-left: auto; border: 0; background: transparent; color: #fff; width: 28px; height: 26px; border-radius: 6px; cursor: pointer; }
+.find-close:hover { background: rgba(255,255,255,.18); }
+.find-row { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
+.find-row input { flex: 1; height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; }
+.find-row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(43,122,107,.15); }
+.find-panel:not(.replace) .find-repl { display: none; }
+.find-panel.replace .find-only { display: none; }
+.find-opts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; color: var(--muted); }
+.find-buttons { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.find-buttons button, .filter-buttons button { border: 1px solid var(--border); background: #fafafa; border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer; }
+.find-buttons button:hover, .filter-buttons button:hover { background: #eef6f3; }
+.find-buttons .primary, .filter-buttons .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.find-buttons .primary:hover, .filter-buttons .primary:hover { background: var(--accent-dark); }
+.find-status { color: var(--muted); margin-top: 8px; min-height: 1em; }
+.find-list { max-height: 220px; overflow: auto; margin-top: 6px; display: flex; flex-direction: column; }
+.find-list button { display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px; text-align: left; border: 0; background: none; padding: 4px 6px;
+  border-radius: 4px; font: inherit; cursor: pointer; }
+.find-list button:hover { background: #e6f3ef; }
+.find-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- Фильтр столбца --- */
+.filter-popup { position: fixed; z-index: 45; width: 260px; background: var(--panel); border-radius: 8px; padding: 6px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.2), 0 0 0 1px rgba(0,0,0,.06); display: flex; flex-direction: column; animation: ens-pop .12s ease-out; }
+.filter-popup[hidden] { display: none; }
+.filter-popup > button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 4px; font: inherit; cursor: pointer; }
+.filter-popup > button:hover:not(:disabled) { background: #e6f3ef; }
+.filter-popup > button:disabled { color: #aaa; }
+.filter-popup hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.filter-search { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; margin: 4px; font: inherit; }
+.filter-all, .filter-values label { display: flex; align-items: center; gap: 6px; padding: 2px 8px; white-space: nowrap; }
+.filter-values { max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin: 2px 4px 8px; padding: 4px 0; }
+.filter-values label[hidden] { display: none; }
+.filter-buttons { display: flex; justify-content: flex-end; gap: 6px; padding: 0 4px 2px; }
+
+/* Мягкое появление всплывающих окон и меню. */
+@keyframes ens-pop { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: none; } }
+.context-menu:not([hidden]) { animation: ens-pop .1s ease-out; }
+@media (prefers-reduced-motion: reduce) { .find-panel, .filter-popup, .context-menu { animation: none !important; } }

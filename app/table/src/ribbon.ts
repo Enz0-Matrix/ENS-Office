@@ -142,6 +142,9 @@ export const TABS: RibbonTab[] = [
           { type: 'small', command: 'edit.autosum', icon: 'autosum' },
           { type: 'small', command: 'edit.insertFunction', icon: 'math_formula' },
           { type: 'small', command: 'edit.clear', icon: 'eraser' },
+          { type: 'small', command: 'data.sortAsc', icon: 'sort_asc' },
+          { type: 'small', command: 'data.filter', icon: 'filter' },
+          { type: 'small', command: 'edit.find', icon: 'search' },
         ],
       },
     ],
@@ -151,6 +154,27 @@ export const TABS: RibbonTab[] = [
     label: 'Вставка',
     groups: [
       { name: 'Листы', items: [{ type: 'large', command: 'sheet.new', icon: 'table_add', label: 'Новый лист' }] },
+    ],
+  },
+  {
+    id: 'data',
+    label: 'Данные',
+    groups: [
+      {
+        name: 'Сортировка и фильтр',
+        items: [
+          { type: 'large', command: 'data.sortAsc', icon: 'sort_asc', label: 'От А до Я' },
+          { type: 'large', command: 'data.sortDesc', icon: 'sort_desc', label: 'От Я до А' },
+          { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
+        ],
+      },
+      {
+        name: 'Поиск',
+        items: [
+          { type: 'large', command: 'edit.find', icon: 'search', label: 'Найти' },
+          { type: 'large', command: 'edit.replace', icon: 'arrow_sort', label: 'Заменить' },
+        ],
+      },
     ],
   },
   {
