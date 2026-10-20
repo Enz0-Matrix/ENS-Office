@@ -3,6 +3,7 @@
 import { icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
+import { DONATE_URL } from './modules';
 
 export interface BackstageHost {
   docInfo(): { title: string; path: string; dirty: boolean };
@@ -20,7 +21,7 @@ export interface BackstageHost {
 
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
-const APP_VERSION = '0.1.3';
+const APP_VERSION = '0.1.4';
 
 const root = document.createElement('div');
 root.className = 'backstage';
@@ -54,6 +55,7 @@ export function showBackstage(section: Section = 'info'): void {
       <button data-go="close">${icon('dismiss', 20)}Закрыть</button>
       <div class="bs-spacer"></div>
       <button data-go="options">${icon('settings', 20)}Параметры</button>
+      ${DONATE_URL ? `<a class="bs-donate" href="${DONATE_URL}" target="_blank" rel="noopener">♥ Поддержать проект</a>` : ''}
       <div class="bs-about">
         ENS-Office · ENS-Table ${APP_VERSION}<br>
         Автор: Н. Едренников<br>

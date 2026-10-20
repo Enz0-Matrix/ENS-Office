@@ -1,6 +1,6 @@
 import './styles.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -22,6 +22,8 @@ let doc: desk.Doc = desk.newDoc();
 window.__ensDoc = () => doc;
 
 const grid = new Grid($('grid'), () => model);
+// Для проверок в режиме разработки (в сборку не попадает).
+if (import.meta.env.DEV) Object.assign(window, { __ens: { model: () => model, grid } });
 const nameBox = $<HTMLInputElement>('name-box');
 const formula = $<HTMLInputElement>('formula');
 const editor = $<HTMLTextAreaElement>('cell-editor');
@@ -40,8 +42,7 @@ function selectionArea(): Area {
  *  невидимо и только принимает ввод: так работают любые способы набора текста
  *  (клавиатура в любой раскладке, IME, экранная клавиатура, вставка). */
 function placeEditor(): void {
-  const s = grid.sel;
-  const r = grid.cellRect(s.row, s.column);
+  const r = grid.activeRect();
   const host = grid.scroller.getBoundingClientRect();
   editor.style.left = `${host.left + r.x}px`;
   editor.style.top = `${host.top + r.y}px`;
@@ -114,6 +115,7 @@ function commitEdit(dRow: number, dCol: number): void {
   const after = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   editor.value = '';
   if (grid.sheet !== s.sheet) setSheet(s.sheet, false);
+  fitRows(s.row, s.row);
   grid.select(s.row, s.column);
   if (after !== before) offerFormatUndo(s.row, s.column, before, after);
   grid.render();
@@ -678,6 +680,14 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => structure(() => model.deleteColumns(grid.sheet, s.c1, cols)) });
   }
   items.push({ label: 'Очистить содержимое', keys: keysOf('edit.clear'), run: () => run('edit.clear') });
+  if (!header && (rows > 1 || cols > 1)) {
+    items.push({ label: 'Объединить и поместить в центр', separator: true, run: () => merge('center') });
+    items.push({ label: 'Объединить ячейки', run: () => merge('plain') });
+    if (rows > 1) items.push({ label: 'Объединить по строкам', run: () => merge('across') });
+  }
+  if (!header && model.getMergedCells(grid.sheet).some((m) => m.row <= s.r2 && m.row + m.height - 1 >= s.r1 && m.column <= s.c2 && m.column + m.width - 1 >= s.c1)) {
+    items.push({ label: 'Отменить объединение ячеек', run: () => merge('undo') });
+  }
   if (header !== 'row') items.push({ label: 'Ширина столбца…', separator: true, run: () => askSize('column') });
   if (header !== 'column') items.push({ label: 'Высота строки…', separator: header === 'row', run: () => askSize('row') });
   if (!header) items.push({ label: 'Перейти к влияющим ячейкам', separator: true, keys: keysOf('nav.precedents'), run: () => run('nav.precedents') });
@@ -725,9 +735,80 @@ function fitColumn(column: number): number {
 }
 
 function fitRow(row: number): number {
-  let sz = 11;
-  for (const c of model.getColumnsWithData(grid.sheet, row)) sz = Math.max(sz, model.getCellStyle(grid.sheet, row, c).style.font.sz ?? 11);
-  return Math.max(22, Math.round(sz * 1.33 + 8));
+  let need = 22;
+  for (const c of model.getColumnsWithData(grid.sheet, row)) {
+    const st = model.getCellStyle(grid.sheet, row, c).style;
+    const text = model.getFormattedCellValue(grid.sheet, row, c);
+    need = Math.max(need, st.alignment?.wrap_text && text
+      ? grid.measureWrapped(text, st, grid.columnPx(c))
+      : Math.round((st.font.sz ?? 11) * 1.33 + 8));
+  }
+  return need;
+}
+
+/** Высота строк с переносом текста — по содержимому, как в Excel (только увеличиваем). */
+function fitRows(r1: number, r2: number): void {
+  if (r2 - r1 > 500) return;
+  for (let r = r1; r <= r2; r++) {
+    const wrapped = [...model.getColumnsWithData(grid.sheet, r)].some((c) => model.getCellStyle(grid.sheet, r, c).style.alignment?.wrap_text);
+    if (!wrapped) continue;
+    const need = fitRow(r);
+    const now = Math.round(model.getRowHeight(grid.sheet, r) * 22 / 25);
+    if (need !== now) setSize('row', r, r, need);
+  }
+}
+
+/** Объединение ячеек, как в Excel: если данных несколько — останется левое верхнее значение. */
+function merge(kind: 'center' | 'plain' | 'across' | 'undo'): void {
+  const area = selectionArea();
+  const s = grid.sel;
+  const inside = model.getMergedCells(grid.sheet).filter((m) => m.row <= s.r2 && m.row + m.height - 1 >= s.r1 && m.column <= s.c2 && m.column + m.width - 1 >= s.c1);
+  try {
+    if (kind === 'undo' || (kind === 'center' && inside.length)) {
+      model.unmergeCells(area);
+    } else {
+      const filled: [number, number][] = [];
+      for (let r = s.r1; r <= Math.min(s.r2, s.r1 + 2000); r++) {
+        for (const c of model.getColumnsWithData(grid.sheet, r)) if (c >= s.c1 && c <= s.c2) filled.push([r, c]);
+      }
+      const perRow = kind === 'across';
+      const extra = perRow
+        ? filled.filter(([r, c]) => filled.some(([r2, c2]) => r2 === r && c2 < c))
+        : filled.slice(1);
+      if (extra.length) {
+        if (!confirm('В объединённой ячейке сохранится только значение из левой верхней заполненной ячейки, остальные значения будут удалены. Продолжить?')) return;
+        for (const [r, c] of extra) model.rangeClearContents(grid.sheet, r, c, r, c);
+      }
+      if (kind === 'center') model.mergeCellsCenter(area);
+      else if (kind === 'across') model.mergeCellsAcross(area);
+      else model.mergeCells(area);
+    }
+  } catch (e) {
+    showToast(`Не получилось: ${e}`);
+  }
+  grid.invalidateLayout();
+  updateFormulaBar();
+  focusGrid();
+}
+
+/** Кнопка «Границы»: меню, как в Excel. */
+function bordersMenu(x: number, y: number): void {
+  const set = (type: BorderType, st = 'thin') => {
+    try { model.setAreaWithBorder(selectionArea(), { item: { style: st, color: '#000000' }, type }); } catch (e) { showToast(String(e)); }
+    grid.render();
+    focusGrid();
+  };
+  showMenu([
+    { label: 'Нижняя граница', run: () => set('Bottom') },
+    { label: 'Верхняя граница', run: () => set('Top') },
+    { label: 'Левая граница', run: () => set('Left') },
+    { label: 'Правая граница', run: () => set('Right') },
+    { label: 'Нет границы', separator: true, run: () => set('None') },
+    { label: 'Все границы', run: () => set('All') },
+    { label: 'Внешние границы', run: () => set('Outer') },
+    { label: 'Толстая внешняя граница', run: () => set('Outer', 'thick') },
+    { label: 'Внутренние границы', run: () => set('Inner') },
+  ], x, y);
 }
 
 grid.onResize = (kind, index, px) => {
@@ -989,6 +1070,17 @@ register(
   { id: 'align.left', label: 'По левому краю', keywords: ['align left'], run: () => style('alignment.horizontal', () => 'left') },
   { id: 'align.center', label: 'По центру', keywords: ['align center', 'центр'], run: () => style('alignment.horizontal', () => 'center') },
   { id: 'align.right', label: 'По правому краю', keywords: ['align right'], run: () => style('alignment.horizontal', () => 'right') },
+  { id: 'align.top', label: 'По верхнему краю', keywords: ['align top', 'вверху'], run: () => style('alignment.vertical', () => 'top') },
+  { id: 'align.middle', label: 'По середине (по вертикали)', keywords: ['middle', 'по вертикали'], run: () => style('alignment.vertical', () => 'center') },
+  { id: 'align.bottom', label: 'По нижнему краю', keywords: ['align bottom', 'внизу'], run: () => style('alignment.vertical', () => 'bottom') },
+  { id: 'format.wrap', label: 'Перенос текста', keywords: ['wrap text', 'перенос', 'переносить по словам'],
+    checked: () => !!model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.wrap_text,
+    run: () => { style('alignment.wrap_text', (cur) => String(!cur), (st) => !!st.alignment?.wrap_text); fitRows(grid.sel.r1, grid.sel.r2); } },
+  { id: 'format.merge', label: 'Объединить и поместить в центр', keywords: ['merge', 'объединить ячейки', 'объединение'],
+    run: () => merge('center') },
+  { id: 'format.unmerge', label: 'Отменить объединение ячеек', keywords: ['unmerge', 'разъединить'], run: () => merge('undo') },
+  { id: 'format.borders', label: 'Границы', keywords: ['borders', 'рамка', 'границы', 'обрамление'],
+    run: () => bordersMenu(lastPointer.x, lastPointer.y + 8) },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => { if (fmt) style('num_fmt', () => fmt); } },
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
     const name = nextSheetName(model);

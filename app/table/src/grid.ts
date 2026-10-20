@@ -3,7 +3,7 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type Model } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type MergedCell, type Model } from './engine';
 import { fontStack } from './fonts';
 
 export interface Selection {
@@ -317,7 +317,12 @@ export class Grid {
         c1: Math.min(s.column, column), c2: Math.max(s.column, column),
       };
     } else {
-      this.sel = { row, column, r1: row, c1: column, r2: row, c2: column };
+      // Щелчок в объединённую ячейку выделяет её целиком.
+      const m = this.mergeOf(row, column);
+      this.sel = m
+        ? { row: m.row, column: m.column, r1: m.row, c1: m.column, r2: m.row + m.height - 1, c2: m.column + m.width - 1 }
+        : { row, column, r1: row, c1: column, r2: row, c2: column };
+      if (m) { row = m.row; column = m.column; }
     }
     this.ensureVisible(row, column);
     this.updateExtent();
@@ -336,7 +341,29 @@ export class Grid {
 
   move(dRow: number, dCol: number, extend: boolean): void {
     const from = extend ? this.corner : { row: this.sel.row, column: this.sel.column };
-    this.select(from.row + dRow, from.column + dCol, extend);
+    let row = from.row + dRow, column = from.column + dCol;
+    // Из объединённой ячейки — сразу за её край, как в Excel.
+    const m = extend ? undefined : this.mergeOf(from.row, from.column);
+    if (m) {
+      if (dRow > 0) row = m.row + m.height; else if (dRow < 0) row = m.row - 1; else row = m.row;
+      if (dCol > 0) column = m.column + m.width; else if (dCol < 0) column = m.column - 1; else column = m.column;
+    }
+    this.select(row, column, extend);
+  }
+
+  /** Объединённая ячейка, в которую входит (row, column). */
+  mergeOf(row: number, column: number): MergedCell | undefined {
+    let merges: MergedCell[] = [];
+    try { merges = this.model().getMergedCells(this.sheet) ?? []; } catch { /* нет листа */ }
+    return merges.find((m) => row >= m.row && row < m.row + m.height && column >= m.column && column < m.column + m.width);
+  }
+
+  /** Прямоугольник активной ячейки (объединённой — целиком). */
+  activeRect(): { x: number; y: number; w: number; h: number } {
+    const m = this.mergeOf(this.sel.row, this.sel.column);
+    if (!m) return this.cellRect(this.sel.row, this.sel.column);
+    const a = this.cellRect(m.row, m.column), b = this.cellRect(m.row + m.height - 1, m.column + m.width - 1);
+    return { x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y };
   }
 
   pageRows(): number {
@@ -518,6 +545,23 @@ export class Grid {
     ctx.rect(this.headerW, HEADER_H, W - this.headerW, H - HEADER_H);
     ctx.clip();
 
+    // Стили и объединения читаем один раз за кадр.
+    const styles = new Map<number, CellStyle | null>();
+    const styleOf = (r: number, c: number): CellStyle | null => {
+      const key = r * 16_385 + c;
+      let st = styles.get(key);
+      if (st === undefined) {
+        try { st = model.getCellStyle(this.sheet, r, c).style; } catch { st = null; }
+        styles.set(key, st);
+      }
+      return st;
+    };
+    let merges: MergedCell[] = [];
+    try { merges = model.getMergedCells(this.sheet) ?? []; } catch { merges = []; }
+    const mergeAt = (r: number, c: number) =>
+      merges.find((m) => r >= m.row && r < m.row + m.height && c >= m.column && c < m.column + m.width);
+    const textOf = (r: number, c: number) => { try { return model.getFormattedCellValue(this.sheet, r, c); } catch { return ''; } };
+
     for (const [ra, rb] of rowBands) for (const [ca, cb] of colBands) {
     ctx.save();
     ctx.beginPath();
@@ -526,28 +570,8 @@ export class Grid {
     const top = ra <= this.fr ? this.sy(ra) : Math.max(this.sy(ra), HEADER_H + this.frozenH);
     ctx.rect(left, top, this.sx(cb) + this.width(cb) - left, this.sy(rb) + this.height(rb) - top);
     ctx.clip();
-    // Заливка ячеек.
-    for (let r = ra; r <= rb; r++) {
-      for (let c = ca; c <= cb; c++) {
-        const { x, y, w, h } = this.cellRect(r, c);
-        let fill: string | undefined;
-        try {
-          const color = model.getCellStyle(this.sheet, r, c).style.fill.color;
-          if (color) fill = model.resolveColor(color);
-        } catch { /* пустая ячейка */ }
-        if (fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); }
-      }
-    }
 
-    // Выделенный диапазон (кроме активной ячейки).
-    if ((s.r1 !== s.r2 || s.c1 !== s.c2) && s.r2 >= ra && s.r1 <= rb && s.c2 >= ca && s.c1 <= cb) {
-      const a = this.cellRect(Math.max(s.r1, ra), Math.max(s.c1, ca));
-      const b = this.cellRect(Math.min(s.r2, rb), Math.min(s.c2, cb));
-      ctx.fillStyle = this.theme.selectionFill;
-      ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
-    }
-
-    // Линии сетки.
+    // Линии сетки — под заливкой: залитые ячейки их скрывают, как в Excel.
     if (gridLines) {
       ctx.strokeStyle = '#e1e1e1';
       ctx.lineWidth = 1;
@@ -563,36 +587,64 @@ export class Grid {
       ctx.stroke();
     }
 
-    // Текст.
-    ctx.textBaseline = 'middle';
+    // Ячейки: обычные и объединённые (одна большая клетка с данными левой верхней).
+    const cells: { r: number; c: number; x: number; y: number; w: number; h: number; merged: boolean }[] = [];
     for (let r = ra; r <= rb; r++) {
       for (let c = ca; c <= cb; c++) {
-        let text: string;
-        try { text = model.getFormattedCellValue(this.sheet, r, c); } catch { continue; }
-        if (!text) continue;
-        const { x, y, w, h } = this.cellRect(r, c);
-        let style;
-        try { style = model.getCellStyle(this.sheet, r, c).style; } catch { style = undefined; }
-        const f = style?.font;
-        ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${Math.round((f?.sz ?? 11) * 1.33)}px ${fontStack(f?.name)}`;
-        ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
-        let align = style?.alignment?.horizontal ?? 'general';
-        if (align === 'general') {
-          const type = model.getCellType(this.sheet, r, c);
-          align = type === 1 ? 'right' : type === 4 || type === 16 ? 'center' : 'left';
-        }
-        ctx.save();
-        ctx.beginPath(); ctx.rect(x + 1, y, w - 2, h); ctx.clip();
-        const tx = align === 'right' ? x + w - 3 : align === 'center' ? x + w / 2 : x + 3;
-        ctx.textAlign = align === 'right' ? 'right' : align === 'center' ? 'center' : 'left';
-        ctx.fillText(text, tx, y + h / 2 + 1);
-        if (f?.u) {
-          const tw = ctx.measureText(text).width;
-          const ux = ctx.textAlign === 'right' ? tx - tw : ctx.textAlign === 'center' ? tx - tw / 2 : tx;
-          ctx.fillRect(ux, y + h - 5, tw, 1);
-        }
-        ctx.restore();
+        if (mergeAt(r, c)) continue;
+        cells.push({ r, c, ...this.cellRect(r, c), merged: false });
       }
+    }
+    for (const m of merges) {
+      const r2 = m.row + m.height - 1, c2 = m.column + m.width - 1;
+      if (r2 < ra || m.row > rb || c2 < ca || m.column > cb) continue;
+      const a = this.cellRect(m.row, m.column), b = this.cellRect(r2, c2);
+      cells.push({ r: m.row, c: m.column, x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y, merged: true });
+    }
+
+    // Заливка (объединённая ячейка без заливки — белая: внутри нет линий сетки).
+    for (const cell of cells) {
+      const color = styleOf(cell.r, cell.c)?.fill?.color;
+      const fill = color ? model.resolveColor(color) : cell.merged ? '#ffffff' : '';
+      if (fill) { ctx.fillStyle = fill; ctx.fillRect(cell.x, cell.y, cell.w, cell.h); }
+    }
+
+    // Выделенный диапазон (кроме активной ячейки).
+    if ((s.r1 !== s.r2 || s.c1 !== s.c2) && s.r2 >= ra && s.r1 <= rb && s.c2 >= ca && s.c1 <= cb) {
+      const a = this.cellRect(Math.max(s.r1, ra), Math.max(s.c1, ca));
+      const b = this.cellRect(Math.min(s.r2, rb), Math.min(s.c2, cb));
+      ctx.fillStyle = this.theme.selectionFill;
+      ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
+    }
+
+    // Текст.
+    for (const cell of cells) {
+      const text = textOf(cell.r, cell.c);
+      if (!text) continue;
+      const style = styleOf(cell.r, cell.c);
+      // Длинный текст без переноса заходит на пустые соседние ячейки.
+      let spillL = cell.x, spillR = cell.x + cell.w;
+      const al = style?.alignment;
+      let align = al?.horizontal ?? 'general';
+      if (align === 'general') {
+        const type = model.getCellType(this.sheet, cell.r, cell.c);
+        align = type === 1 ? 'right' : type === 4 || type === 16 ? 'center' : 'left';
+      }
+      if (!al?.wrap_text && !cell.merged && align !== 'fill') {
+        if (align === 'left' || align === 'center') {
+          for (let c = cell.c + 1; c <= cb && !textOf(cell.r, c) && !mergeAt(cell.r, c); c++) spillR = this.sx(c) + this.width(c);
+        }
+        if (align === 'right' || align === 'center') {
+          for (let c = cell.c - 1; c >= ca && !textOf(cell.r, c) && !mergeAt(cell.r, c); c--) spillL = this.sx(c);
+        }
+      }
+      this.drawText(text, style, align, cell, spillL, spillR);
+    }
+
+    // Границы — поверх всего.
+    for (const cell of cells) {
+      const b = styleOf(cell.r, cell.c)?.border;
+      if (b) this.drawBorders(b, cell);
     }
     ctx.restore();
     }
@@ -601,14 +653,16 @@ export class Grid {
     // Активная ячейка: толстая рамка; в неактивном окне — бледнее.
     const border = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
     if (shown(s.row, s.column)) {
-      const { x, y, w, h } = this.cellRect(s.row, s.column);
+      const { x, y, w, h } = this.activeRect();
       const lw = this.theme.activeWidth;
       ctx.strokeStyle = border;
       ctx.lineWidth = lw;
       ctx.strokeRect(x + lw / 2 - 1, y + lw / 2 - 1, w - lw + 2, h - lw + 2);
     }
-    // Рамка диапазона.
-    if (s.r1 !== s.r2 || s.c1 !== s.c2) {
+    // Рамка диапазона (не для одной объединённой ячейки).
+    const am = this.mergeOf(s.row, s.column);
+    const onlyMerge = am && s.r1 === am.row && s.c1 === am.column && s.r2 === am.row + am.height - 1 && s.c2 === am.column + am.width - 1;
+    if ((s.r1 !== s.r2 || s.c1 !== s.c2) && !onlyMerge) {
       const a = this.cellRect(s.r1, s.c1), b = this.cellRect(Math.min(s.r2, LAST_ROW), Math.min(s.c2, LAST_COLUMN));
       ctx.strokeStyle = border;
       ctx.lineWidth = 1.5;
@@ -672,6 +726,93 @@ export class Grid {
 
     this.drawHeaders(rowBands, colBands, W, H);
   }
+
+  /** Текст ячейки: шрифт, выравнивание по горизонтали и вертикали, перенос по словам. */
+  private drawText(text: string, style: CellStyle | null, align: string,
+    cell: { x: number; y: number; w: number; h: number }, spillL: number, spillR: number): void {
+    const ctx = this.ctx, model = this.model();
+    const f = style?.font;
+    const px = Math.round((f?.sz ?? 11) * 1.33);
+    ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${px}px ${fontStack(f?.name)}`;
+    ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
+    const wrap = !!style?.alignment?.wrap_text;
+    const lines = wrap ? wrapLines(ctx, text, cell.w - 6) : [text];
+    const lineH = Math.round(px * 1.22);
+    const vertical = style?.alignment?.vertical ?? 'bottom';
+    const blockH = lines.length * lineH;
+    let y0 = vertical === 'top' ? cell.y + 2
+      : vertical === 'center' || vertical === 'justify' || vertical === 'distributed' ? cell.y + (cell.h - blockH) / 2
+      : cell.y + cell.h - blockH - 2;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(spillL + 1, cell.y, spillR - spillL - 2, cell.h); ctx.clip();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = align === 'right' ? 'right' : align === 'center' || align === 'centercontinuous' ? 'center' : 'left';
+    const tx = ctx.textAlign === 'right' ? cell.x + cell.w - 3 : ctx.textAlign === 'center' ? cell.x + cell.w / 2 : cell.x + 3;
+    for (const line of lines) {
+      const ty = y0 + lineH / 2 + 1;
+      if (align === 'fill' && line) {
+        // «С заполнением»: текст повторяется на всю ширину.
+        let t = line;
+        while (ctx.measureText(t + line).width <= cell.w - 6) t += line;
+        ctx.fillText(t, tx, ty);
+      } else {
+        ctx.fillText(line, tx, ty);
+      }
+      if (f?.u || f?.strike) {
+        const tw = ctx.measureText(line).width;
+        const ux = ctx.textAlign === 'right' ? tx - tw : ctx.textAlign === 'center' ? tx - tw / 2 : tx;
+        if (f?.u) ctx.fillRect(ux, ty + px / 2 - 1, tw, 1);
+        if (f?.strike) ctx.fillRect(ux, ty, tw, 1);
+      }
+      y0 += lineH;
+    }
+    ctx.restore();
+  }
+
+  /** Границы ячейки из файла: тонкая, средняя, толстая, двойная, пунктир. */
+  private drawBorders(b: CellBorder, cell: { x: number; y: number; w: number; h: number }): void {
+    const ctx = this.ctx, model = this.model();
+    const x1 = Math.round(cell.x), y1 = Math.round(cell.y);
+    const x2 = Math.round(cell.x + cell.w), y2 = Math.round(cell.y + cell.h);
+    const side = (item: BorderItem | undefined, ax: number, ay: number, bx: number, by: number, vertical: boolean) => {
+      if (!item?.style) return;
+      const st = item.style;
+      const width = st === 'thick' ? 3 : st.startsWith('medium') ? 2 : 1;
+      ctx.save();
+      ctx.strokeStyle = item.color ? model.resolveColor(item.color) || '#000' : '#000';
+      ctx.lineWidth = width;
+      ctx.setLineDash(st === 'dotted' ? [1, 2] : st === 'mediumdashed' ? [5, 2] : st.includes('dashdotdot') ? [5, 2, 1, 2, 1, 2]
+        : st.includes('dashdot') ? [5, 2, 1, 2] : []);
+      const off = width % 2 ? 0.5 : 0;
+      ctx.beginPath();
+      if (st === 'double') {
+        for (const d of [-1, 1]) {
+          ctx.moveTo(vertical ? ax + d + off : ax, vertical ? ay : ay + d + off);
+          ctx.lineTo(vertical ? bx + d + off : bx, vertical ? by : by + d + off);
+        }
+      } else {
+        ctx.moveTo(vertical ? ax + off : ax, vertical ? ay : ay + off);
+        ctx.lineTo(vertical ? bx + off : bx, vertical ? by : by + off);
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+    side(b.top, x1, y1, x2, y1, false);
+    side(b.bottom, x1, y2, x2, y2, false);
+    side(b.left, x1, y1, x1, y2, true);
+    side(b.right, x2, y1, x2, y2, true);
+  }
+
+  /** Сколько строк займёт текст с переносом в ячейке шириной width (для автовысоты). */
+  measureWrapped(text: string, style: CellStyle | null, width: number): number {
+    const f = style?.font;
+    const px = Math.round((f?.sz ?? 11) * 1.33);
+    this.ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${px}px ${fontStack(f?.name)}`;
+    return wrapLines(this.ctx, text, width - 6).length * Math.round(px * 1.22) + 6;
+  }
+
+  /** Ширина столбца на экране, px. */
+  columnPx(column: number): number { return this.width(column); }
 
   /** §2: полосы от заголовков к активной ячейке. */
   private drawFocusCell(r0: number, rN: number, c0: number, cN: number): void {
@@ -776,4 +917,26 @@ export class Grid {
     ctx.moveTo(this.headerW + 0.5, 0); ctx.lineTo(this.headerW + 0.5, H);
     ctx.stroke();
   }
+}
+
+/** Перенос по словам (и по символам, если слово длиннее ячейки); \n — новая строка. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, width: number): string[] {
+  const out: string[] = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(/(\s+)/)) {
+      const next = line + word;
+      if (!line || ctx.measureText(next).width <= width) { line = next; continue; }
+      out.push(line.trimEnd());
+      line = word.trimStart();
+      while (line && ctx.measureText(line).width > width && line.length > 1) {
+        let n = line.length - 1;
+        while (n > 1 && ctx.measureText(line.slice(0, n)).width > width) n--;
+        out.push(line.slice(0, n));
+        line = line.slice(n);
+      }
+    }
+    out.push(line);
+  }
+  return out;
 }

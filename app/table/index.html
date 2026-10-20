@@ -6,10 +6,15 @@
   <title>Книга1 — ENS-Table</title>
 </head>
 <body>
-  <header class="titlebar">
-    <span class="app-mark">ENS</span>
-    <span id="doc-name" class="doc-name"></span>
+  <header class="titlebar" data-tauri-drag-region>
+    <span class="app-mark" data-tauri-drag-region>ENS</span>
+    <span id="doc-name" class="doc-name" data-tauri-drag-region></span>
     <label class="search"><input id="search" placeholder="Поиск (Alt+Q)" autocomplete="off"></label>
+    <div id="window-buttons" class="window-buttons" hidden>
+      <button data-win="minimize" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></button>
+      <button data-win="maximize" title="Развернуть" aria-label="Развернуть"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></button>
+      <button data-win="close" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></button>
+    </div>
   </header>
   <nav id="tabs" class="tabs"></nav>
   <section id="ribbon" class="ribbon"></section>

@@ -1040,7 +1040,12 @@ impl<'a> Model<'a> {
                                 CalcResult::Number(value) => {
                                     values.push(format!("{value}"));
                                 }
-                                CalcResult::String(value) => values.push(value),
+                                // ENS-Office: as in Excel, "" is empty too
+                                CalcResult::String(value) => {
+                                    if !(ignore_empty && value.is_empty()) {
+                                        values.push(value)
+                                    }
+                                }
                                 CalcResult::Boolean(value) => {
                                     if value {
                                         values.push("TRUE".to_string())
@@ -1067,7 +1072,11 @@ impl<'a> Model<'a> {
                     }
                 }
                 error @ CalcResult::Error { .. } => return error,
-                CalcResult::String(value) => values.push(value),
+                CalcResult::String(value) => {
+                    if !(ignore_empty && value.is_empty()) {
+                        values.push(value)
+                    }
+                }
                 CalcResult::Boolean(value) => {
                     if value {
                         values.push("TRUE".to_string())

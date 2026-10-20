@@ -20,6 +20,12 @@ import tableAdd24 from '@fluentui/svg-icons/icons/table_add_24_regular.svg?raw';
 import arrowPrevious24 from '@fluentui/svg-icons/icons/arrow_previous_24_regular.svg?raw';
 import arrowUndo24 from '@fluentui/svg-icons/icons/arrow_undo_24_regular.svg?raw';
 import target24 from '@fluentui/svg-icons/icons/target_24_regular.svg?raw';
+import alignTop20 from '@fluentui/svg-icons/icons/align_top_20_regular.svg?raw';
+import alignMiddle20 from '@fluentui/svg-icons/icons/align_center_vertical_20_regular.svg?raw';
+import alignBottom20 from '@fluentui/svg-icons/icons/align_bottom_20_regular.svg?raw';
+import textWrap20 from '@fluentui/svg-icons/icons/text_wrap_20_regular.svg?raw';
+import merge20 from '@fluentui/svg-icons/icons/table_cells_merge_20_regular.svg?raw';
+import borderAll20 from '@fluentui/svg-icons/icons/border_all_20_regular.svg?raw';
 import freeze24 from '@fluentui/svg-icons/icons/table_freeze_column_and_row_24_regular.svg?raw';
 import calendarLtr24 from '@fluentui/svg-icons/icons/calendar_ltr_24_regular.svg?raw';
 import arrowAutofitWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
@@ -60,6 +66,12 @@ export const ICONS: Record<string, string> = {
   'arrow_previous_24': arrowPrevious24,
   'arrow_undo_24': arrowUndo24,
   'target_24': target24,
+  'align_top_20': alignTop20,
+  'align_middle_20': alignMiddle20,
+  'align_bottom_20': alignBottom20,
+  'text_wrap_20': textWrap20,
+  'merge_20': merge20,
+  'border_all_20': borderAll20,
   'table_freeze_24': freeze24,
   'grid_24': grid24,
   'autosum_20': autosum20,

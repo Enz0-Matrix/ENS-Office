@@ -19,7 +19,14 @@
 html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
 body { display: flex; flex-direction: column; }
 
-.titlebar { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; background: var(--brand-bg); color: #fff; }
+.titlebar { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 0 0 10px; background: var(--brand-bg); color: #fff; user-select: none; }
+/* Свои кнопки окна (системная полоса заголовка убрана), как в Office. */
+.window-buttons { display: flex; align-self: stretch; margin-left: auto; }
+.window-buttons[hidden] { display: none; }
+.window-buttons button { width: 46px; border: 0; background: transparent; color: #fff; display: flex; align-items: center; justify-content: center; cursor: default; }
+.window-buttons button:hover { background: rgba(255, 255, 255, .16); }
+.window-buttons button.close:hover { background: #c42b1c; }
+.window-buttons svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
 .app-mark { font-weight: 700; letter-spacing: .5px; }
 .doc-name { font-weight: 600; }
 .search { margin: 0 auto; display: flex; align-items: center; gap: 6px; background: #fff; border-radius: 4px; padding: 0 8px; width: min(460px, 50vw); height: 28px; color: var(--muted); }
@@ -146,3 +153,6 @@ footer { display: flex; flex-direction: column; }
 .pick:hover, .pick.active { background: #e6f3ef; }
 .pick kbd { color: var(--muted); font: 11px "Segoe UI", sans-serif; }
 .cell-editor.editing { opacity: 1; pointer-events: auto; caret-color: auto; }
+
+.bs-donate { display: block; margin: 8px 12px; padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,.14); color: #fff; text-decoration: none; text-align: center; }
+.bs-donate:hover { background: rgba(255,255,255,.24); }

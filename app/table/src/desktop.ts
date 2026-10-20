@@ -36,6 +36,8 @@ let emptyQueue = 0;
 let lastChange = 0;
 let lastSnapshot = 0;
 let changedSinceSnapshot = false;
+/** Снимок этой книги уже есть: без него восстанавливать нечего. */
+let hasSnapshot = false;
 
 const baseName = (path: string) => path.split(/[\\/]/).pop()!.replace(/\.(xlsx|xlsm)$/i, '');
 
@@ -47,7 +49,9 @@ async function track(): Promise<void> {
   await recovery.begin(doc.id, {
     source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0,
   });
-  await snapshot();
+  hasSnapshot = false;
+  // Новую нетронутую книгу не предлагаем восстанавливать: снимок — с первой правки.
+  if (doc.path || doc.dirty) await snapshot();
 }
 
 async function snapshot(): Promise<void> {
@@ -56,6 +60,7 @@ async function snapshot(): Promise<void> {
   if (pending.length > emptyQueue) markChanged();
   if (!isDesktop) return;
   await recovery.snapshot(host.doc().id, m.toBytes());
+  hasSnapshot = true;
   lastSnapshot = Date.now();
   changedSinceSnapshot = false;
 }
@@ -76,7 +81,9 @@ async function tick(): Promise<void> {
   const diffs = m.flushSendQueue();
   if (diffs.length > emptyQueue) {
     markChanged();
-    if (isDesktop) await recovery.append(host.doc().id, diffs).catch((e) => host.toast(String(e)));
+    // Первая правка новой книги — сразу полный снимок (в нём уже есть эта правка).
+    if (isDesktop && !hasSnapshot) await snapshot().catch((e) => host.toast(String(e)));
+    else if (isDesktop) await recovery.append(host.doc().id, diffs).catch((e) => host.toast(String(e)));
   }
   if (!isDesktop || !changedSinceSnapshot) return;
   const now = Date.now();
@@ -124,6 +131,7 @@ export async function start(h: Host): Promise<void> {
   if (isDesktop) {
     setInterval(() => void recovery.heartbeat().catch(() => {}), 30_000);
     await setupClose();
+    await setupWindowButtons();
   }
   const params = new URLSearchParams(location.search);
   const open = params.get('open');
@@ -352,6 +360,28 @@ const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '
 
 declare global {
   interface Window { __ensDoc?: () => Doc }
+}
+
+// --- Кнопки окна в зелёной строке (системный заголовок убран) ---
+
+async function setupWindowButtons(): Promise<void> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const win = getCurrentWindow();
+  const box = document.getElementById('window-buttons')!;
+  box.hidden = false;
+  const max = box.querySelector<HTMLButtonElement>('[data-win="maximize"]')!;
+  const sync = async () => {
+    const on = await win.isMaximized().catch(() => false);
+    max.title = on ? 'Свернуть в окно' : 'Развернуть';
+    max.innerHTML = on
+      ? '<svg viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="7" height="7"/><path d="M2.5 2.5V0.5h7v7h-2"/></svg>'
+      : '<svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg>';
+  };
+  box.querySelector('[data-win="minimize"]')!.addEventListener('click', () => void win.minimize());
+  max.addEventListener('click', () => void win.toggleMaximize());
+  box.querySelector('[data-win="close"]')!.addEventListener('click', () => void win.close());
+  await win.onResized(() => void sync());
+  await sync();
 }
 
 // --- Закрытие окна ---

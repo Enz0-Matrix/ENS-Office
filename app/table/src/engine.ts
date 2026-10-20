@@ -10,12 +10,22 @@ export interface Area {
 
 export type Color = string | [number, number] | undefined;
 
+export interface BorderItem { style: string; color?: Color }
+
+export interface CellBorder { top?: BorderItem; bottom?: BorderItem; left?: BorderItem; right?: BorderItem; diagonal?: BorderItem }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
   font: { b: boolean; i: boolean; u: boolean; strike: boolean; sz: number; color?: Color; name: string };
   alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean };
+  border?: CellBorder;
 }
+
+export interface MergedCell { row: number; column: number; width: number; height: number }
+
+/** Какие границы ставить на выделение. */
+export type BorderType = 'All' | 'Inner' | 'Outer' | 'Top' | 'Right' | 'Bottom' | 'Left' | 'CenterH' | 'CenterV' | 'None';
 
 export interface SheetProps {
   name: string;
@@ -40,6 +50,12 @@ export interface Model {
   getCellType(sheet: number, row: number, column: number): number;
   getColumnWidth(sheet: number, column: number): number;
   getRowHeight(sheet: number, row: number): number;
+  getMergedCells(sheet: number): MergedCell[];
+  mergeCells(range: Area): void;
+  mergeCellsCenter(range: Area): void;
+  mergeCellsAcross(range: Area): void;
+  unmergeCells(range: Area): void;
+  setAreaWithBorder(area: Area, border: { item: BorderItem; type: BorderType }): void;
   setSelectedCell(row: number, column: number): void;
   setSelectedRange(startRow: number, startColumn: number, endRow: number, endColumn: number): void;
   copyToClipboard(): EngineClipboard;

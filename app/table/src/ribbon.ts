@@ -124,6 +124,12 @@ export const TABS: RibbonTab[] = [
           { type: 'small', command: 'align.left', icon: 'text_align_left' },
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
+          { type: 'small', command: 'align.top', icon: 'align_top' },
+          { type: 'small', command: 'align.middle', icon: 'align_middle' },
+          { type: 'small', command: 'align.bottom', icon: 'align_bottom' },
+          { type: 'small', command: 'format.wrap', icon: 'text_wrap' },
+          { type: 'small', command: 'format.merge', icon: 'merge' },
+          { type: 'small', command: 'format.borders', icon: 'border_all' },
         ],
       },
       {

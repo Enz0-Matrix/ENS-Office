@@ -131,5 +131,5 @@ export async function pickFolder(title: string): Promise<string | null> {
 export async function openWindow(query: string, title: string): Promise<void> {
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
   const label = `doc-${Date.now()}`;
-  new WebviewWindow(label, { url: `index.html?${query}`, title, width: 1200, height: 800 });
+  new WebviewWindow(label, { url: `index.html?${query}`, title, width: 1200, height: 800, minWidth: 640, minHeight: 400, decorations: false, shadow: true });
 }
