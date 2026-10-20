@@ -1,6 +1,11 @@
 :root {
-  --accent: #107c41;          /* зелёный, как у таблиц Office */
-  --accent-dark: #0b5a2f;
+  --accent: #2b7a6b;          /* нефритовый: свой оттенок, не как у Excel и Р7 */
+  /* Заголовок окна и меню «Файл»: мягкий градиент и едва заметная сетка — намёк на таблицу. */
+  --brand-bg:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.045) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.045) 0 1px, transparent 1px 42px),
+    linear-gradient(100deg, #24695c 0%, #2b7a6b 45%, #3a8c79 100%);
+  --accent-dark: #1d5a4f;
   --bg: #f3f3f3;
   --panel: #ffffff;
   --border: #d6d6d6;
@@ -14,7 +19,7 @@
 html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
 body { display: flex; flex-direction: column; }
 
-.titlebar { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; background: var(--accent); color: #fff; }
+.titlebar { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 10px; background: var(--brand-bg); color: #fff; }
 .app-mark { font-weight: 700; letter-spacing: .5px; }
 .doc-name { font-weight: 600; }
 .search { margin: 0 auto; display: flex; align-items: center; gap: 6px; background: #fff; border-radius: 4px; padding: 0 8px; width: min(460px, 50vw); height: 28px; color: var(--muted); }
@@ -34,7 +39,7 @@ body { display: flex; flex-direction: column; }
 .btn { border: 1px solid transparent; background: none; border-radius: 4px; cursor: pointer; color: var(--text); display: inline-flex; align-items: center; justify-content: center; font: inherit; }
 .btn svg { fill: currentColor; }
 .btn:hover { background: #ececec; border-color: #dcdcdc; }
-.btn.on { background: #cfe8d9; border-color: #9fd0b4; }
+.btn.on { background: #cfe9e2; border-color: #9ccfc3; }
 .btn.small { width: 28px; height: 28px; }
 .btn.large { flex-direction: column; width: 64px; height: 66px; gap: 4px; font-size: 12px; line-height: 1.1; text-align: center; }
 .btn.large svg { width: 28px; height: 28px; }
@@ -96,13 +101,13 @@ footer { display: flex; flex-direction: column; }
 .context-menu { position: fixed; z-index: 35; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 4px; min-width: 200px; display: flex; flex-direction: column; }
 .context-menu[hidden] { display: none; }
 .context-menu > button { border: 0; background: none; text-align: left; padding: 6px 12px; font: inherit; cursor: pointer; border-radius: 4px; }
-.context-menu > button:hover:not(:disabled) { background: #e8f3ec; }
+.context-menu > button:hover:not(:disabled) { background: #e6f3ef; }
 .context-menu > button:disabled { color: #aaa; cursor: default; }
 .menu-label { font-size: 11px; color: var(--muted); padding: 6px 12px 2px; border-top: 1px solid var(--border); margin-top: 4px; }
 .menu-colors { display: grid; grid-template-columns: repeat(10, 18px); gap: 3px; padding: 4px 12px 6px; }
 .backstage { position: fixed; inset: 0; z-index: 45; display: flex; background: #fff; }
 .backstage[hidden] { display: none; }
-.bs-nav { width: 210px; background: var(--accent); color: #fff; display: flex; flex-direction: column; padding: 8px 0; }
+.bs-nav { width: 210px; background: var(--brand-bg); color: #fff; display: flex; flex-direction: column; padding: 8px 0; }
 .bs-nav button { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: #fff; text-align: left; padding: 9px 20px; font: 15px "Segoe UI", "Carlito", "Arimo", sans-serif; cursor: pointer; }
 .bs-nav button svg { fill: currentColor; flex: none; }
 .bs-nav button:hover { background: rgba(255,255,255,.15); }
@@ -110,6 +115,8 @@ footer { display: flex; flex-direction: column; }
 .bs-nav .bs-back { padding: 10px 20px 16px; }
 .bs-nav hr { border: 0; border-top: 1px solid rgba(255,255,255,.3); margin: 8px 16px; }
 .bs-spacer { flex: 1; }
+.bs-about { padding: 12px 20px 4px; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,.85); border-top: 1px solid rgba(255,255,255,.25); margin-top: 8px; user-select: text; }
+.bs-about a { color: #fff; }
 .bs-body { flex: 1; padding: 28px 40px; overflow: auto; }
 .bs-body h1 { font-weight: 400; font-size: 30px; margin: 0 0 20px; }
 .bs-body h2 { font-weight: 600; font-size: 15px; margin: 20px 0 8px; }
@@ -121,11 +128,11 @@ footer { display: flex; flex-direction: column; }
 .bs-wide svg, .bs-recent-item svg { fill: var(--accent); }
 .bs-recent { display: flex; flex-direction: column; gap: 2px; max-width: 760px; }
 .bs-recent-item { display: flex; align-items: center; gap: 12px; border: 0; background: none; text-align: left; padding: 8px 10px; font: inherit; cursor: pointer; border-radius: 4px; }
-.bs-recent-item:hover { background: #e8f3ec; }
+.bs-recent-item:hover { background: #e6f3ef; }
 .bs-recent-item small { color: var(--muted); }
 .bs-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .picker { position: fixed; z-index: 20; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: 4px; max-width: 560px; }
 .pick { display: flex; justify-content: space-between; gap: 16px; width: 100%; border: 0; background: none; padding: 6px 10px; text-align: left; font: inherit; cursor: pointer; border-radius: 4px; }
-.pick:hover, .pick.active { background: #e8f3ec; }
+.pick:hover, .pick.active { background: #e6f3ef; }
 .pick kbd { color: var(--muted); font: 11px "Segoe UI", sans-serif; }
 .cell-editor.editing { opacity: 1; pointer-events: auto; caret-color: auto; }

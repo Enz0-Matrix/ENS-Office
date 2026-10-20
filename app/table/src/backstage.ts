@@ -20,6 +20,8 @@ export interface BackstageHost {
 
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
+const APP_VERSION = '0.1.1';
+
 const root = document.createElement('div');
 root.className = 'backstage';
 root.hidden = true;
@@ -52,6 +54,11 @@ export function showBackstage(section: Section = 'info'): void {
       <button data-go="close">${icon('dismiss', 20)}Закрыть</button>
       <div class="bs-spacer"></div>
       <button data-go="options">${icon('settings', 20)}Параметры</button>
+      <div class="bs-about">
+        ENS-Office · ENS-Table ${APP_VERSION}<br>
+        Автор: Н. Едренников<br>
+        Обратная связь: <a href="mailto:n.edrennikov@yandex.ru">n.edrennikov@yandex.ru</a>
+      </div>
     </nav>
     <section class="bs-body"></section>`;
   root.querySelectorAll<HTMLButtonElement>('[data-go]').forEach((b) =>

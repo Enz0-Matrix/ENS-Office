@@ -44,14 +44,14 @@ const LAST_COLUMN = 16_384;
 export class Grid {
   sheet = 0;
   sel: Selection = { row: 1, column: 1, r1: 1, c1: 1, r2: 1, c2: 1 };
-  focusCell: FocusCellOptions = { enabled: false, mode: 'shade', extent: 'toCell', color: '#107c41' };
+  focusCell: FocusCellOptions = { enabled: false, mode: 'shade', extent: 'toCell', color: '#2b7a6b' };
   theme: GridTheme = {
-    activeBorder: '#107c41',
-    activeBorderInactive: '#5fa880',
+    activeBorder: '#2b7a6b',
+    activeBorderInactive: '#6fae9f',
     activeWidth: 3,
-    selectionFill: 'rgba(16,124,65,0.12)',
-    headerActiveFill: '#caead8',
-    headerActiveText: '#0b5a2f',
+    selectionFill: 'rgba(43,122,107,0.12)',
+    headerActiveFill: '#d3ebe5',
+    headerActiveText: '#1d5a4f',
   };
   /** Окно приложения в фокусе (влияет только на яркость выделения). */
   windowActive = true;
