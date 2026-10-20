@@ -15,7 +15,8 @@ npm run dev                    # http://localhost:5173
 ## Настольная версия (Tauri)
 Нужны Microsoft C++ Build Tools (компонент «Разработка классических приложений на C++»)
 и Rust для MSVC: `rustup toolchain install stable-x86_64-pc-windows-msvc`
-(закреплён за папкой `src-tauri` файлом `rust-toolchain.toml`).
+для папки `src-tauri`: `rustup override set stable-x86_64-pc-windows-msvc`
+(на Linux ничего такого не нужно; зависимости — см. `.github/workflows/ci.yml`).
 ```bash
 npm run engine                  # движок в WebAssembly (один раз)
 npx tauri dev                   # запуск с отладкой

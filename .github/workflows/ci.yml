@@ -1,0 +1,97 @@
+# Проверка и сборка ENS-Office на серверах GitHub.
+# Готовые сборки — во вкладке Actions → запуск → Artifacts:
+#   ens-table-linux   — AppImage (без установки), rpm (РЕД ОС, Альт, Fedora), deb
+#   ens-table-windows — установщик NSIS и exe
+name: CI
+
+on:
+  push:
+    branches: [main, 'app/**', 'engine/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Тесты движка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/ironcalc
+      - name: Все тесты IronCalc
+        working-directory: core/ironcalc
+        run: cargo test --lib -p ironcalc_base
+      - name: Частичный пересчёт со сверкой с полным (ENS_VERIFY_INCREMENTAL)
+        working-directory: core/ironcalc
+        run: ENS_VERIFY_INCREMENTAL=1 cargo test --lib -p ironcalc_base
+
+  desktop:
+    name: Сборка ${{ matrix.name }}
+    needs: engine
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            bundles: appimage,rpm,deb
+          - name: windows
+            os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки Linux для окна (WebKitGTK)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.126
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core/ironcalc -> target
+            app/table/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/table/package-lock.json
+      - name: Зависимости интерфейса
+        working-directory: app/table
+        run: npm ci
+      - name: Движок в WebAssembly
+        working-directory: app/table
+        shell: bash
+        run: npm run engine
+      - name: Проверка типов
+        working-directory: app/table
+        run: npm run check
+      - name: Тесты оболочки
+        working-directory: app/table/src-tauri
+        run: cargo test --release
+      - name: Сборка приложения
+        working-directory: app/table
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ens-table-${{ matrix.name }}
+          path: |
+            app/table/src-tauri/target/release/bundle/**/*.AppImage
+            app/table/src-tauri/target/release/bundle/**/*.rpm
+            app/table/src-tauri/target/release/bundle/**/*.deb
+            app/table/src-tauri/target/release/bundle/**/*.exe
+            app/table/src-tauri/target/release/ens-table.exe
+          if-no-files-found: error
+          retention-days: 30
