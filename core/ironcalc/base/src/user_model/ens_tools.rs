@@ -226,7 +226,53 @@ impl UserModel<'_> {
     }
 }
 
+/// Excel keeps the autofilter range of a sheet in this hidden, sheet-scoped name.
+pub const FILTER_DATABASE: &str = "_xlnm._FilterDatabase";
+
+/// "Лист1!$A$1:$C$6" → (row1, column1, row2, column2).
+pub fn parse_filter_range(formula: &str) -> Option<(i32, i32, i32, i32)> {
+    let range = formula.rsplit('!').next()?.trim_start_matches('=');
+    let mut parts = range.split(':');
+    let a = crate::expressions::utils::parse_reference_a1(parts.next()?)?;
+    let b = match parts.next() {
+        Some(p) => crate::expressions::utils::parse_reference_a1(p)?,
+        None => crate::expressions::utils::parse_reference_a1(range)?,
+    };
+    Some((a.row, a.column, b.row, b.column))
+}
+
 impl UserModel<'_> {
+    /// ENS-Office: the autofilter range of the sheet, [row1, column1, row2, column2].
+    pub fn get_auto_filter(&self, sheet: u32) -> Result<Option<[i32; 4]>, String> {
+        let sheet_id = self.model.workbook.worksheet(sheet)?.sheet_id;
+        Ok(self
+            .model
+            .workbook
+            .defined_names
+            .iter()
+            .find(|d| d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(FILTER_DATABASE))
+            .and_then(|d| parse_filter_range(&d.formula))
+            .map(|(r1, c1, r2, c2)| [r1, c1, r2, c2]))
+    }
+
+    /// ENS-Office: set (or remove with None) the autofilter range of the sheet.
+    /// Saved to xlsx as `<autoFilter>`, as Excel does.
+    pub fn set_auto_filter(&mut self, sheet: u32, range: Option<[i32; 4]>) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let (sheet_id, name) = (ws.sheet_id, ws.get_name());
+        let names = &mut self.model.workbook.defined_names;
+        names.retain(|d| !(d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(FILTER_DATABASE)));
+        if let Some([r1, c1, r2, c2]) = range {
+            let col = |c: i32| crate::expressions::utils::number_to_column(c).unwrap_or_default();
+            names.push(crate::types::DefinedName {
+                name: FILTER_DATABASE.to_string(),
+                formula: format!("{}!${}${r1}:${}${r2}", crate::expressions::utils::quote_name(&name), col(c1), col(c2)),
+                sheet_id: Some(sheet_id),
+            });
+        }
+        Ok(())
+    }
+
     /// Used range of the sheet: [min_row, min_column, max_row, max_column]
     /// (all 1 for an empty sheet). For printing.
     pub fn get_sheet_dimension(&self, sheet: u32) -> Result<[i32; 4], String> {
@@ -328,6 +374,19 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_auto_filter_range() {
+        let mut m = model();
+        assert_eq!(m.get_auto_filter(0).unwrap(), None);
+        m.set_auto_filter(0, Some([1, 1, 6, 3])).unwrap();
+        assert_eq!(m.get_auto_filter(0).unwrap(), Some([1, 1, 6, 3]));
+        m.set_auto_filter(0, Some([2, 2, 9, 4])).unwrap();
+        assert_eq!(m.get_auto_filter(0).unwrap(), Some([2, 2, 9, 4]));
+        m.set_auto_filter(0, None).unwrap();
+        assert_eq!(m.get_auto_filter(0).unwrap(), None);
+        assert_eq!(parse_filter_range("'Мой лист'!$A$1:$C$6"), Some((1, 1, 6, 3)));
     }
 
     #[test]

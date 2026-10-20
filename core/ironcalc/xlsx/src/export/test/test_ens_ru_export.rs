@@ -39,3 +39,26 @@ fn test_ens_ru_formulas_export() {
         assert!(!xml.contains(f), "в xlsx попало {f}: {xml}");
     }
 }
+
+// ENS-Office: the autofilter is saved as Excel does it.
+#[test]
+fn test_ens_autofilter_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Книга1", "ru", "UTC", "ru").unwrap();
+    model.set_user_input(0, 1, 1, "Город").unwrap();
+    model.set_user_input(0, 2, 1, "Москва").unwrap();
+    model.set_auto_filter(0, Some([1, 1, 2, 2])).unwrap();
+    let name = "temp_ens_autofilter.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let mut wb = String::new();
+    zip.by_name("xl/workbook.xml").unwrap().read_to_string(&mut wb).unwrap();
+    let back = load_from_xlsx(name, "ru", "UTC", "ru").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(xml.contains("<autoFilter ref=\"A1:B2\"/>"), "{xml}");
+    assert!(wb.contains("_xlnm._FilterDatabase"), "{wb}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_auto_filter(0).unwrap(), Some([1, 1, 2, 2]));
+}

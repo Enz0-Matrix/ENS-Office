@@ -4,7 +4,7 @@ import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nex
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { printSheet, renderPreview } from './print';
-import { filterOf, initFilter, openFilterPopup, setFilter } from './filter';
+import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid } from './grid';
@@ -1035,6 +1035,7 @@ function setModel(next: Model, nextDoc: desk.Doc): void {
   if (next !== model) model.free();
   model = next;
   doc = nextDoc;
+  resetFilters();
   model.setRecognizeDates(settings.recognizeDates);
   syncDocTitle();
   setSheet(0);

@@ -191,6 +191,7 @@ fn excel_error_name(name: &str) -> &str {
 }
 
 pub(crate) fn get_worksheet_xml(
+    auto_filter: &str,
     worksheet: &Worksheet,
     parsed_formulas: &[(std::sync::Arc<Node>, StaticResult)],
     dimension: &str,
@@ -711,6 +712,7 @@ pub(crate) fn get_worksheet_xml(
         get_conditional_formatting_xml(&worksheet.conditional_formatting);
 
     let hyperlinks_section = get_hyperlinks_section(worksheet);
+    let auto_filter_section = auto_filter;
 
     format!(
         "{XML_DECLARATION}\
@@ -725,6 +727,7 @@ pub(crate) fn get_worksheet_xml(
   <sheetData>\
   {sheet_data}\
   </sheetData>\
+  {auto_filter_section}\
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\

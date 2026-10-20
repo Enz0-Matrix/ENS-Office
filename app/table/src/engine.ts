@@ -60,6 +60,8 @@ export interface Model {
   getMergedCells(sheet: number): MergedCell[];
   /** Занятая часть листа: [первая строка, первый столбец, последняя строка, последний столбец]. */
   getSheetDimension(sheet: number): number[];
+  getAutoFilter(sheet: number): number[];
+  setAutoFilter(sheet: number, range: number[]): void;
   sortRange(area: Area, keyColumn: number, descending: boolean): void;
   findAll(text: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean, sheet: number): { sheet: number; row: number; column: number }[];
   replaceAll(text: string, replacement: string, matchCase: boolean, wholeCell: boolean, sheet: number, onlyRow: number, onlyColumn: number): number;

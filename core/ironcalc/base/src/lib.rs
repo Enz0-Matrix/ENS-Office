@@ -81,5 +81,5 @@ pub use model::Model;
 pub use user_model::BorderArea;
 pub use user_model::ClipboardData;
 pub use user_model::UserModel;
-pub use user_model::{FindOptions, FoundCell};
+pub use user_model::{parse_filter_range, FindOptions, FoundCell, FILTER_DATABASE};
 pub use utils::get_all_timezones;

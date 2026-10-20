@@ -587,6 +587,19 @@ impl Model {
         self.model.set_recognize_dates(on);
     }
 
+    /// ENS-Office: autofilter range of the sheet [row1, column1, row2, column2] (empty: none).
+    #[wasm_bindgen(js_name = "getAutoFilter")]
+    pub fn get_auto_filter(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        Ok(self.model.get_auto_filter(sheet).map_err(to_js_error)?.map(|r| r.to_vec()).unwrap_or_default())
+    }
+
+    /// ENS-Office: set the autofilter range (an empty array removes it).
+    #[wasm_bindgen(js_name = "setAutoFilter")]
+    pub fn set_auto_filter(&mut self, sheet: u32, range: Vec<i32>) -> Result<(), JsError> {
+        let r = (range.len() == 4).then(|| [range[0], range[1], range[2], range[3]]);
+        self.model.set_auto_filter(sheet, r).map_err(to_js_error)
+    }
+
     /// ENS-Office: used range [min_row, min_column, max_row, max_column].
     #[wasm_bindgen(js_name = "getSheetDimension")]
     pub fn get_sheet_dimension(&self, sheet: u32) -> Result<Vec<i32>, JsError> {

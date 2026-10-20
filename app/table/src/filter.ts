@@ -28,7 +28,26 @@ export function initFilter(h: FilterHost): void {
 }
 
 export function filterOf(sheet: number): SheetFilter | undefined {
-  return filters.get(sheet);
+  let f = filters.get(sheet);
+  if (!f && host) {
+    // Фильтр из файла (Excel хранит его область в книге): кнопки возвращаются.
+    const r = (() => { try { return host.model().getAutoFilter(sheet); } catch { return []; } })();
+    if (r.length === 4) {
+      f = { r1: r[0], c1: r[1], r2: r[2], c2: r[3], criteria: new Map() };
+      filters.set(sheet, f);
+    }
+  }
+  return f;
+}
+
+/** Новая книга в окне: фильтры прежней книги забываем. */
+export function resetFilters(): void {
+  filters.clear();
+}
+
+/** Область фильтра — в книгу: сохранится в xlsx, как у Excel. */
+function persist(sheet: number, f: SheetFilter | null): void {
+  try { host.model().setAutoFilter(sheet, f ? [f.r1, f.c1, f.r2, f.c2] : []); } catch { /* старый движок */ }
 }
 
 /** Строки данных фильтра: до последней непустой строки под заголовком. */
@@ -43,7 +62,7 @@ function extend(f: SheetFilter): void {
 }
 
 export function setFilter(sheet: number, f: SheetFilter | null): void {
-  const old = filters.get(sheet);
+  const old = filterOf(sheet);
   if (old) {
     // Снять фильтр — показать все строки.
     host.model().setRowsHidden(sheet, old.r1 + 1, old.r2, false);
@@ -53,6 +72,7 @@ export function setFilter(sheet: number, f: SheetFilter | null): void {
     filters.set(sheet, f);
     extend(f);
   }
+  persist(sheet, f);
   host.changed();
 }
 
@@ -70,6 +90,7 @@ function apply(f: SheetFilter): void {
     if (runHidden !== !show) { flush(r - 1); runStart = r; runHidden = !show; }
   }
   flush(f.r2);
+  persist(s, f);
   host.changed();
 }
 
