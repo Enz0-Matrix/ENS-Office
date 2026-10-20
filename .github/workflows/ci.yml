@@ -5,8 +5,9 @@
 name: CI
 
 on:
+  # Ветки проверяются через pull request; push — только для main.
   push:
-    branches: [main, 'app/**', 'engine/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
