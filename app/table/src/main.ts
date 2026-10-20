@@ -1,7 +1,7 @@
 import './styles.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
-import { loadFonts } from './fonts';
+import { fontStack, loadFonts } from './fonts';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid } from './grid';
@@ -12,6 +12,8 @@ import * as desk from './desktop';
 import { isDesktop } from './platform';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const LAST_ROW = 1_048_576;
+const LAST_COLUMN = 16_384;
 
 await Promise.all([loadEngine(), loadFonts()]);
 let model: Model = newWorkbook(localeId());
@@ -89,8 +91,6 @@ function startEdit(initial?: string): void {
 function commitEdit(dRow: number, dCol: number): void {
   if (!editing) return;
   endPoint();
-  editing = false;
-  editor.classList.remove('editing', 'away');
   const s = editCell;
   const value = activeValue();
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
@@ -99,6 +99,18 @@ function commitEdit(dRow: number, dCol: number): void {
   } catch (err) {
     showToast(`Не удалось записать значение: ${err}`);
   }
+  if (value.startsWith('=') && model.getCellType(s.sheet, s.row, s.column) === 16
+    && ['#ОШИБКА!', '#ERROR!'].includes(model.getFormattedCellValue(s.sheet, s.row, s.column))) {
+    // Как Excel: недописанную формулу («=B5+») не записываем, ввод продолжается.
+    model.undo();
+    showToast('В формуле ошибка: она не дописана или в ней лишний символ. Исправьте её или нажмите Esc, чтобы отменить ввод.');
+    const inp = editor.classList.contains('away') ? formula : editor;
+    inp.focus();
+    return;
+  }
+  editing = false;
+  editor.classList.remove('editing', 'away');
+  showRefs();
   const after = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   editor.value = '';
   if (grid.sheet !== s.sheet) setSheet(s.sheet, false);
@@ -118,6 +130,7 @@ function cancelEdit(): void {
   endPoint();
   editing = false;
   editor.classList.remove('editing', 'away');
+  showRefs();
   editor.value = '';
   if (grid.sheet !== editCell.sheet) setSheet(editCell.sheet, false);
   grid.select(editCell.row, editCell.column);
@@ -135,6 +148,7 @@ editor.addEventListener('input', () => {
   }
   endPoint();
   formula.value = editor.value;
+  showRefs();
   if (settings.expandEditor) growEditor();
 });
 
@@ -184,6 +198,7 @@ function applyPoint(inp: HTMLInputElement | HTMLTextAreaElement, row: number, co
   point.end = point.start + text.length;
   inp.setSelectionRange(point.end, point.end);
   (inp === editor ? formula : editor).value = inp.value;
+  showRefs();
   grid.pointRange = {
     r1: Math.min(point.anchorRow, point.row), c1: Math.min(point.anchorCol, point.col),
     r2: Math.max(point.anchorRow, point.row), c2: Math.max(point.anchorCol, point.col),
@@ -241,10 +256,27 @@ editor.addEventListener('keydown', (e) => {
   if (!editing) { gridKey(e); return; }
   editKey(e);
 });
-editor.addEventListener('blur', () => { if (editing && document.activeElement !== formula) commitEdit(0, 0); });
+// Поле ввода потеряло фокус: щелчок по ленте, другому полю — ввод завершается.
+// Не завершаем, если фокус ушёл в строку формул (или ввод на другом листе) и
+// если переключились в другое окно: в Excel ввод при этом тоже продолжается.
+// Решаем после того, как фокус «осел»: во время blur в WebView2 (Windows)
+// activeElement — ещё <body>, и раньше формула записывалась недописанной.
+editor.addEventListener('blur', () => setTimeout(() => {
+  const now = document.activeElement;
+  if (!editing || editor.classList.contains('away') || now === formula || now === editor || !document.hasFocus()) return;
+  if (now && (now.closest('#recovery') || now.closest('#context-menu'))) return;
+  commitEdit(0, 0);
+}, 0));
 
-formula.addEventListener('focus', () => { if (!editing) { startEdit(); formula.focus(); } });
-formula.addEventListener('input', () => { endPoint(); editor.value = formula.value; });
+formula.addEventListener('focus', () => { if (!editing) { startEdit(); formula.focus(); } showRefs(); });
+formula.addEventListener('input', () => { endPoint(); editor.value = formula.value; showRefs(); });
+formula.addEventListener('scroll', () => syncMirror());
+formula.addEventListener('blur', () => setTimeout(() => {
+  const now = document.activeElement;
+  if (!editing || now === formula || now === editor || !document.hasFocus()) return;
+  if (now && (now.closest('#recovery') || now.closest('#context-menu') || now.closest('.sheet-tabs'))) return;
+  commitEdit(0, 0);
+}, 0));
 formula.addEventListener('keydown', (e) => editKey(e));
 
 // §3: Ctrl+щелчок по ссылке в строке формул — переход к ячейке.
@@ -254,7 +286,10 @@ interface Ref { sheet?: string; row: number; column: number; row2?: number; colu
 
 function refsIn(text: string): Ref[] {
   const out: Ref[] = [];
-  for (const m of text.matchAll(REF)) {
+  // Строчные буквы («=b5») — тоже ссылки; длина строки при этом не меняется.
+  for (const m of text.toUpperCase().matchAll(REF)) {
+    const after = text[m.index! + m[0].length];
+    if (after === '(' || (after && /[\wА-Яа-я]/.test(after))) continue; // LOG10( — функция, не ячейка
     const sheet = m[1] ?? (m[0].includes('!') ? m[2] : undefined);
     out.push({
       sheet, column: columnNumber(m[3]), row: Number(m[4]),
@@ -290,6 +325,48 @@ formula.addEventListener('click', (e) => {
   if (ref) { e.preventDefault(); cancelEdit(); goTo(ref); }
 });
 
+// --- Цветные ссылки формулы: ячейки на листе и текст в строке формул ---
+
+const REF_COLORS = ['#2f6fd1', '#c0392b', '#7b3fb5', '#1e8449', '#d35400', '#b8860b', '#c2185b', '#00838f'];
+const mirror = $('formula-mirror');
+
+function showRefs(): void {
+  const value = editing ? activeValue() : '';
+  const refs = value.startsWith('=') ? refsIn(value) : [];
+  const names = model.getWorksheetsProperties().map((p) => p.name.toLowerCase());
+  const colorOf = new Map<string, string>();
+  const colored = refs.map((r) => {
+    const key = r.text.toUpperCase().replace(/\$/g, '');
+    if (!colorOf.has(key)) colorOf.set(key, REF_COLORS[colorOf.size % REF_COLORS.length]);
+    return { ...r, color: colorOf.get(key)! };
+  });
+  grid.refHighlights = colored
+    .filter((r) => (r.sheet ? names.indexOf(r.sheet.toLowerCase()) : editCell.sheet) === grid.sheet)
+    .map((r) => ({
+      r1: Math.min(r.row, r.row2 ?? r.row), r2: Math.max(r.row, r.row2 ?? r.row),
+      c1: Math.min(r.column, r.column2 ?? r.column), c2: Math.max(r.column, r.column2 ?? r.column), color: r.color,
+    }));
+  grid.render();
+  // Строка формул: под прозрачным текстом поля — тот же текст с цветными ссылками.
+  const show = colored.length > 0 && document.activeElement === formula;
+  formula.classList.toggle('colored', show);
+  mirror.hidden = !show;
+  if (!show) return;
+  let html = '', at = 0;
+  for (const r of colored) {
+    html += escapeHtml(value.slice(at, r.start)) + `<span style="color:${r.color}">${escapeHtml(value.slice(r.start, r.end))}</span>`;
+    at = r.end;
+  }
+  mirror.innerHTML = html + escapeHtml(value.slice(at));
+  syncMirror();
+}
+
+function syncMirror(): void {
+  mirror.style.transform = `translateX(${-formula.scrollLeft}px)`;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
 // --- §4: формат, изменённый вводом, можно сразу вернуть ---
 
 const chip = $('format-chip');
@@ -322,9 +399,6 @@ function offerFormatUndo(row: number, column: number, before: string, after: str
 }
 
 // --- Ctrl+стрелки: к краю области данных, как в Excel ---
-
-const LAST_ROW = 1_048_576;
-const LAST_COLUMN = 16_384;
 
 function dataEdge(row: number, column: number, dRow: number, dCol: number): { row: number; column: number } {
   const vertical = dRow !== 0;
@@ -435,6 +509,7 @@ function setSheet(index: number, reset = true): void {
   grid.invalidateLayout();
   if (reset) grid.select(1, 1);
   renderSheetTabs();
+  showRefs();
 }
 
 /** Щелчок по ярлычку во время ввода формулы — выбор ячеек на другом листе. */
@@ -525,15 +600,7 @@ function sheetMenu(index: number, x: number, y: number): void {
     } },
     ...hidden.map(({ p, i }) => ({ label: `Показать «${p.name}»`, run: () => { model.unhideSheet(i); setSheet(i); } })),
   ];
-  const menu = $('context-menu');
-  menu.replaceChildren();
-  for (const it of items) {
-    const b = document.createElement('button');
-    b.textContent = it.label;
-    b.disabled = !!it.disabled;
-    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
-    menu.append(b);
-  }
+  const menu = showMenu(items, x, y);
   const colors = document.createElement('div');
   colors.className = 'menu-colors';
   colors.title = 'Цвет ярлычка';
@@ -549,16 +616,148 @@ function sheetMenu(index: number, x: number, y: number): void {
   label.className = 'menu-label';
   label.textContent = 'Цвет ярлычка';
   menu.append(label, colors);
-  menu.hidden = false;
-  const h = menu.getBoundingClientRect().height;
-  menu.style.left = `${x}px`;
-  menu.style.top = `${Math.max(8, y - h)}px`;
+  placeMenu(menu, x, y, true);
 }
+
+interface MenuItem { label: string; run: () => void; disabled?: boolean; keys?: string; separator?: boolean }
+
+/** Контекстное меню: пункты; separator — черта перед пунктом. */
+function showMenu(items: MenuItem[], x: number, y: number): HTMLElement {
+  const menu = $('context-menu');
+  menu.replaceChildren();
+  for (const it of items) {
+    if (it.separator) menu.append(Object.assign(document.createElement('hr'), { className: 'menu-sep' }));
+    const b = document.createElement('button');
+    b.innerHTML = `<span>${escapeHtml(it.label)}</span>${it.keys ? `<small>${escapeHtml(it.keys)}</small>` : ''}`;
+    b.disabled = !!it.disabled;
+    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
+    menu.append(b);
+  }
+  placeMenu(menu, x, y, false);
+  return menu;
+}
+
+/** Меню целиком в окне: у нижнего края — вверх от курсора. */
+function placeMenu(menu: HTMLElement, x: number, y: number, above: boolean): void {
+  menu.hidden = false;
+  const { width, height } = menu.getBoundingClientRect();
+  const top = above || y + height > window.innerHeight - 8 ? y - height : y;
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+}
+
+const keysOf = (id: string) => {
+  const c = allCommands().find((x) => x.id === id);
+  return c?.keys?.length ? keyLabel(c.keys[0]) : undefined;
+};
+
+/** Меню ячейки (правый щелчок), как в Excel. */
+function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | null): void {
+  const s = grid.sel;
+  const rows = s.r2 - s.r1 + 1, cols = s.c2 - s.c1 + 1;
+  const fullRows = s.c1 === 1 && s.c2 === LAST_COLUMN;
+  const fullCols = s.r1 === 1 && s.r2 === LAST_ROW;
+  const items: MenuItem[] = [
+    { label: 'Вырезать', keys: keysOf('clipboard.cut'), run: () => run('clipboard.cut') },
+    { label: 'Копировать', keys: keysOf('clipboard.copy'), run: () => run('clipboard.copy') },
+    { label: 'Вставить', keys: keysOf('clipboard.paste'), run: () => run('clipboard.paste') },
+  ];
+  if (header !== 'column' && !fullCols) {
+    items.push({ label: rows > 1 ? `Вставить строки (${rows})` : 'Вставить строку', separator: true, run: () => structure(() => model.insertRows(grid.sheet, s.r1, rows)) });
+  }
+  if (header !== 'row' && !fullRows) {
+    items.push({ label: cols > 1 ? `Вставить столбцы (${cols})` : 'Вставить столбец', separator: header !== 'column' && !fullCols ? false : true,
+      run: () => structure(() => model.insertColumns(grid.sheet, s.c1, cols)) });
+  }
+  if (header !== 'column' && !fullCols) {
+    items.push({ label: rows > 1 ? `Удалить строки (${rows})` : 'Удалить строку', run: () => structure(() => model.deleteRows(grid.sheet, s.r1, rows)) });
+  }
+  if (header !== 'row' && !fullRows) {
+    items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => structure(() => model.deleteColumns(grid.sheet, s.c1, cols)) });
+  }
+  items.push({ label: 'Очистить содержимое', keys: keysOf('edit.clear'), run: () => run('edit.clear') });
+  if (header !== 'row') items.push({ label: 'Ширина столбца…', separator: true, run: () => askSize('column') });
+  if (header !== 'column') items.push({ label: 'Высота строки…', separator: header === 'row', run: () => askSize('row') });
+  if (!header) items.push({ label: 'Перейти к влияющим ячейкам', separator: true, keys: keysOf('nav.precedents'), run: () => run('nav.precedents') });
+  showMenu(items, x, y);
+}
+
+/** Вставка/удаление строк и столбцов: формулы пересчитываются, сетка перерисовывается. */
+function structure(change: () => void): void {
+  try { change(); } catch (e) { showToast(`Не получилось: ${e}`); }
+  grid.invalidateLayout();
+  updateFormulaBar();
+  updateStatus();
+}
+
+/** «Ширина столбца…» / «Высота строки…» — в пикселях, для всех выделенных. */
+function askSize(kind: 'column' | 'row'): void {
+  const s = grid.sel;
+  const current = kind === 'column' ? Math.round(model.getColumnWidth(grid.sheet, s.column))
+    : Math.round(model.getRowHeight(grid.sheet, s.row) * 22 / 25);
+  const answer = prompt(kind === 'column' ? 'Ширина столбца (в пикселях):' : 'Высота строки (в пикселях):', String(current));
+  const px = Number(answer?.replace(',', '.'));
+  if (!answer || !Number.isFinite(px) || px <= 0 || px > 2000) return;
+  setSize(kind, kind === 'column' ? s.c1 : s.r1, kind === 'column' ? s.c2 : s.r2, px);
+  focusGrid();
+}
+
+function setSize(kind: 'column' | 'row', from: number, to: number, px: number): void {
+  if (kind === 'column') model.setColumnsWidth(grid.sheet, from, Math.min(to, LAST_COLUMN), px);
+  else model.setRowsHeight(grid.sheet, from, Math.min(to, LAST_ROW), Grid.rowPxToModel(px));
+  grid.invalidateLayout();
+  placeEditor();
+}
+
+/** Ширина по содержимому (двойной щелчок по границе), как в Excel. */
+function fitColumn(column: number): number {
+  let w = 0;
+  for (const r of model.getRowsWithData(grid.sheet, column)) {
+    const text = model.getFormattedCellValue(grid.sheet, r, column);
+    if (!text) continue;
+    const f = model.getCellStyle(grid.sheet, r, column).style.font;
+    measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${Math.round((f.sz ?? 11) * 1.33)}px ${fontStack(f.name)}`;
+    w = Math.max(w, measure.measureText(text).width);
+  }
+  return w ? Math.ceil(w + 10) : 90;
+}
+
+function fitRow(row: number): number {
+  let sz = 11;
+  for (const c of model.getColumnsWithData(grid.sheet, row)) sz = Math.max(sz, model.getCellStyle(grid.sheet, row, c).style.font.sz ?? 11);
+  return Math.max(22, Math.round(sz * 1.33 + 8));
+}
+
+grid.onResize = (kind, index, px) => {
+  const s = grid.sel;
+  // Тянут границу одного из выделенных целиком столбцов (строк) — меняются все.
+  const many = kind === 'column' ? s.r1 === 1 && s.r2 === LAST_ROW && index >= s.c1 && index <= s.c2
+    : s.c1 === 1 && s.c2 === LAST_COLUMN && index >= s.r1 && index <= s.r2;
+  const [from, to] = many ? (kind === 'column' ? [s.c1, s.c2] : [s.r1, s.r2]) : [index, index];
+  if (px !== null) { setSize(kind, from, to, px); return; }
+  for (let i = from; i <= Math.min(to, from + 500); i++) setSize(kind, i, i, kind === 'column' ? fitColumn(i) : fitRow(i));
+};
+
+grid.onContextMenu = (x, y, header) => {
+  if (editing) commitEdit(0, 0);
+  cellMenu(x, y, header);
+};
+
+// Меню WebView («Копировать изображение», «Сохранить изображение») не нужно:
+// в полях ввода остаётся обычное меню с «Вырезать/Копировать/Вставить».
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target as HTMLElement;
+  if (!t.closest('input, textarea')) e.preventDefault();
+});
 
 document.addEventListener('mousedown', (e) => {
   const menu = $('context-menu');
   if (!menu.hidden && !menu.contains(e.target as Node)) menu.hidden = true;
 });
+document.addEventListener('keydown', (e) => {
+  const menu = $('context-menu');
+  if (e.key === 'Escape' && !menu.hidden) { menu.hidden = true; e.stopPropagation(); }
+}, true);
 
 // --- Файлы ---
 // В браузере файл нельзя перезаписать на месте: «Сохранить» скачивает копию.
@@ -586,9 +785,7 @@ function setModel(next: Model, nextDoc: desk.Doc): void {
   syncDocTitle();
   setSheet(0);
   if (nextDoc.path) {
-    settings.recent = [{ path: nextDoc.path, title: nextDoc.title.replace(/ \(восстановлено\)$/, '') },
-      ...settings.recent.filter((r) => r.path !== nextDoc.path)].slice(0, 12);
-    saveSettings();
+    desk.rememberRecent(nextDoc.path, nextDoc.title.replace(/ \(восстановлено\)$/, ''));
   }
 }
 

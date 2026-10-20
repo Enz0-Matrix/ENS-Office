@@ -38,6 +38,10 @@ export interface GridTheme {
 
 const ROW_H = 22;
 const HEADER_H = 22;
+/** Высота строки в движке (IronCalc: 25 = стандартная) → пиксели на экране. */
+const ROW_SCALE = ROW_H / 25;
+/** Насколько близко к границе заголовка курсор превращается в «⟷». */
+const GRIP = 4;
 const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
@@ -58,12 +62,20 @@ export class Grid {
   onSelect: (sel: Selection) => void = () => {};
   /** Диапазон, выбираемый для формулы (пунктирная рамка, как в Excel). */
   pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null;
+  /** Ссылки редактируемой формулы на этом листе: у каждой свой цвет, как в Excel. */
+  refHighlights: { r1: number; c1: number; r2: number; c2: number; color: string }[] = [];
   /** Щелчок или протяжка по ячейке во время ввода формулы. Вернуть true,
    *  если щелчок обработан (тогда выделение листа не меняется). */
   onPointer: (row: number, column: number, phase: 'down' | 'drag', shift: boolean) => boolean = () => false;
   private pointing = false;
   /** Двойной щелчок или F2: начать редактирование. */
   onEditRequest: (initial?: string) => void = () => {};
+  /** Перетащили границу заголовка: новая ширина столбца / высота строки, px
+   *  (null — двойной щелчок, подобрать по содержимому). */
+  onResize: (kind: 'column' | 'row', index: number, px: number | null) => void = () => {};
+  /** Правый щелчок по ячейке или заголовку. */
+  onContextMenu: (x: number, y: number, header: 'row' | 'column' | 'corner' | null) => void = () => {};
+  private resizing: { kind: 'column' | 'row'; index: number; start: number; startSize: number; size: number } | null = null;
 
   readonly scroller: HTMLDivElement;
   private readonly spacer: HTMLDivElement;
@@ -71,6 +83,7 @@ export class Grid {
   private readonly ctx: CanvasRenderingContext2D;
   private headerW = 50;
   private colX: number[] = [0];
+  private rowY: number[] = [0];
   private extentRows = 1000;
   private extentCols = 52;
   private dragging = false;
@@ -93,7 +106,22 @@ export class Grid {
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
     window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; });
-    this.canvas.addEventListener('dblclick', () => this.onEditRequest());
+    window.addEventListener('mouseup', () => this.endResize());
+    this.canvas.addEventListener('dblclick', (e) => {
+      const g = this.grip(e);
+      if (g) this.onResize(g.kind, g.index, null);
+      else if (!this.hit(e).header) this.onEditRequest();
+    });
+    this.canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const h = this.hit(e);
+      const s = this.sel;
+      // Правый щелчок вне выделения выделяет ячейку (строку, столбец), как в Excel.
+      if (h.header === 'column' && !(s.c1 <= h.column && h.column <= s.c2 && s.r1 === 1 && s.r2 === LAST_ROW)) this.selectRange(1, h.column, LAST_ROW, h.column);
+      else if (h.header === 'row' && !(s.r1 <= h.row && h.row <= s.r2 && s.c1 === 1 && s.c2 === LAST_COLUMN)) this.selectRange(h.row, 1, h.row, LAST_COLUMN);
+      else if (!h.header && !(s.r1 <= h.row && h.row <= s.r2 && s.c1 <= h.column && h.column <= s.c2)) this.select(h.row, h.column);
+      this.onContextMenu(e.clientX, e.clientY, h.header);
+    });
     window.addEventListener('focus', () => { this.windowActive = true; this.render(); });
     window.addEventListener('blur', () => { this.windowActive = false; this.render(); });
   }
@@ -101,6 +129,7 @@ export class Grid {
   // --- Геометрия ---
 
   private columnWidth(column: number): number {
+    if (this.resizing?.kind === 'column' && this.resizing.index === column) return this.resizing.size;
     try {
       return Math.max(4, Math.round(this.model().getColumnWidth(this.sheet, column)));
     } catch {
@@ -121,6 +150,41 @@ export class Grid {
     return this.x(column + 1) - this.x(column);
   }
 
+  private rowHeight(row: number): number {
+    if (this.resizing?.kind === 'row' && this.resizing.index === row) return this.resizing.size;
+    try {
+      return Math.max(0, Math.round(this.model().getRowHeight(this.sheet, row) * ROW_SCALE));
+    } catch {
+      return ROW_H;
+    }
+  }
+
+  /** Верхняя граница строки в пикселях листа (без заголовка столбцов). */
+  private y(row: number): number {
+    while (this.rowY.length <= row) {
+      const r = this.rowY.length;
+      this.rowY.push(this.rowY[r - 1] + this.rowHeight(r));
+    }
+    return this.rowY[row - 1];
+  }
+
+  private height(row: number): number {
+    return this.y(row + 1) - this.y(row);
+  }
+
+  private rowAt(py: number): number {
+    let lo = 1, hi = Math.max(2, this.extentRows + 1);
+    while (this.y(hi) <= py && hi < LAST_ROW) hi = Math.min(LAST_ROW, hi * 2);
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.y(mid) <= py) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  /** Высота строки на экране (px) → значение для движка. */
+  static rowPxToModel(px: number): number { return px / ROW_SCALE; }
+
   private columnAt(px: number): number {
     let lo = 1, hi = Math.max(2, this.extentCols + 1);
     while (this.x(hi) <= px && hi < LAST_COLUMN) hi = Math.min(LAST_COLUMN, hi * 2);
@@ -134,6 +198,7 @@ export class Grid {
   /** Ширины столбцов могли измениться (новый файл, лист). */
   invalidateLayout(): void {
     this.colX = [0];
+    this.rowY = [0];
     this.updateExtent();
     this.render();
   }
@@ -141,7 +206,7 @@ export class Grid {
   private updateExtent(): void {
     this.extentRows = Math.min(LAST_ROW, Math.max(1000, this.sel.r2 + 200, this.extentRows));
     this.extentCols = Math.min(LAST_COLUMN, Math.max(52, this.sel.c2 + 10, this.extentCols));
-    this.spacer.style.height = `${HEADER_H + this.extentRows * ROW_H}px`;
+    this.spacer.style.height = `${HEADER_H + this.y(this.extentRows + 1)}px`;
     this.spacer.style.width = `${this.headerW + this.x(this.extentCols + 1)}px`;
   }
 
@@ -158,7 +223,7 @@ export class Grid {
   }
 
   private get firstRow(): number {
-    return Math.floor(this.scroller.scrollTop / ROW_H) + 1;
+    return this.rowAt(this.scroller.scrollTop);
   }
 
   private get firstColumn(): number {
@@ -166,16 +231,19 @@ export class Grid {
   }
 
   private visibleRows(): number {
-    return Math.ceil((this.scroller.clientHeight - HEADER_H) / ROW_H);
+    const top = this.firstRow;
+    let n = 0;
+    while (top + n < LAST_ROW && this.y(top + n + 1) - this.scroller.scrollTop < this.scroller.clientHeight - HEADER_H) n++;
+    return n;
   }
 
   /** Прямоугольник ячейки на экране (в координатах canvas). */
   cellRect(row: number, column: number): { x: number; y: number; w: number; h: number } {
     return {
       x: this.headerW + this.x(column) - this.scroller.scrollLeft,
-      y: HEADER_H + (row - 1) * ROW_H - this.scroller.scrollTop,
+      y: HEADER_H + this.y(row) - this.scroller.scrollTop,
       w: this.width(column),
-      h: ROW_H,
+      h: this.height(row),
     };
   }
 
@@ -223,10 +291,10 @@ export class Grid {
   }
 
   ensureVisible(row: number, column: number): void {
-    const top = (row - 1) * ROW_H;
+    const top = this.y(row), rh = this.height(row);
     const viewH = this.scroller.clientHeight - HEADER_H;
     if (top < this.scroller.scrollTop) this.scroller.scrollTop = top;
-    else if (top + ROW_H > this.scroller.scrollTop + viewH) this.scroller.scrollTop = top + ROW_H - viewH;
+    else if (top + rh > this.scroller.scrollTop + viewH) this.scroller.scrollTop = top + rh - viewH;
     const left = this.x(column);
     const viewW = this.scroller.clientWidth - this.headerW;
     if (left < this.scroller.scrollLeft) this.scroller.scrollLeft = left;
@@ -238,13 +306,49 @@ export class Grid {
   private hit(e: MouseEvent): { row: number; column: number; header: 'row' | 'column' | 'corner' | null } {
     const r = this.canvas.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
-    const row = py < HEADER_H ? 0 : Math.floor((py - HEADER_H + this.scroller.scrollTop) / ROW_H) + 1;
+    const row = py < HEADER_H ? 0 : this.rowAt(py - HEADER_H + this.scroller.scrollTop);
     const column = px < this.headerW ? 0 : this.columnAt(px - this.headerW + this.scroller.scrollLeft);
     const header = row === 0 && column === 0 ? 'corner' : row === 0 ? 'column' : column === 0 ? 'row' : null;
     return { row, column, header };
   }
 
+  /** Курсор у границы заголовка: какой столбец/строку тянуть. */
+  private grip(e: MouseEvent): { kind: 'column' | 'row'; index: number } | null {
+    const r = this.canvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    if (py < HEADER_H && px > this.headerW) {
+      const sx = px - this.headerW + this.scroller.scrollLeft;
+      const c = this.columnAt(sx);
+      if (this.x(c + 1) - sx <= GRIP) return { kind: 'column', index: c };
+      if (sx - this.x(c) <= GRIP && c > 1) return { kind: 'column', index: c - 1 };
+    } else if (px < this.headerW && py > HEADER_H) {
+      const sy = py - HEADER_H + this.scroller.scrollTop;
+      const row = this.rowAt(sy);
+      if (this.y(row + 1) - sy <= GRIP) return { kind: 'row', index: row };
+      if (sy - this.y(row) <= GRIP && row > 1) return { kind: 'row', index: row - 1 };
+    }
+    return null;
+  }
+
+  private endResize(): void {
+    const z = this.resizing;
+    if (!z) return;
+    this.resizing = null;
+    document.body.style.cursor = '';
+    if (z.size !== z.startSize) this.onResize(z.kind, z.index, z.size);
+    this.invalidateLayout();
+  }
+
   private mouseDown(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    const g = this.grip(e);
+    if (g) {
+      e.preventDefault();
+      const size = g.kind === 'column' ? this.width(g.index) : this.height(g.index);
+      this.resizing = { ...g, start: g.kind === 'column' ? e.clientX : e.clientY, startSize: size, size };
+      document.body.style.cursor = g.kind === 'column' ? 'col-resize' : 'row-resize';
+      return;
+    }
     const h = this.hit(e);
     if (!h.header && h.row >= 1 && h.column >= 1 && this.onPointer(h.row, h.column, 'down', e.shiftKey)) {
       e.preventDefault(); // фокус остаётся в поле ввода формулы
@@ -262,6 +366,19 @@ export class Grid {
   }
 
   private mouseMove(e: MouseEvent): void {
+    const z = this.resizing;
+    if (z) {
+      const pos = z.kind === 'column' ? e.clientX : e.clientY;
+      z.size = Math.max(z.kind === 'column' ? 8 : 6, Math.round(z.startSize + pos - z.start));
+      this.colX = [0];
+      this.rowY = [0];
+      this.render();
+      return;
+    }
+    if (e.target === this.canvas && !this.dragging && !this.pointing) {
+      const g = this.grip(e);
+      this.canvas.style.cursor = g ? (g.kind === 'column' ? 'col-resize' : 'row-resize') : '';
+    }
     if (this.pointing) {
       const p = this.hit(e);
       if (p.row >= 1 && p.column >= 1) this.onPointer(p.row, p.column, 'drag', true);
@@ -287,7 +404,9 @@ export class Grid {
     const model = this.model();
     const W = this.scroller.clientWidth, H = this.scroller.clientHeight;
     const sl = this.scroller.scrollLeft, st = this.scroller.scrollTop;
-    const r0 = this.firstRow, rN = Math.min(LAST_ROW, r0 + this.visibleRows());
+    const r0 = this.firstRow;
+    let rN = r0;
+    while (rN < LAST_ROW && HEADER_H + this.y(rN + 1) - st < H) rN++;
     const c0 = this.firstColumn;
     let cN = c0;
     while (cN < LAST_COLUMN && this.headerW + this.x(cN + 1) - sl < W) cN++;
@@ -333,7 +452,7 @@ export class Grid {
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let r = r0; r <= rN + 1; r++) {
-        const y = Math.round(HEADER_H + (r - 1) * ROW_H - st) + 0.5;
+        const y = Math.round(HEADER_H + this.y(r) - st) + 0.5;
         ctx.moveTo(this.headerW, y); ctx.lineTo(W, y);
       }
       for (let c = c0; c <= cN + 1; c++) {
@@ -393,6 +512,19 @@ export class Grid {
       ctx.lineWidth = 1.5;
       ctx.strokeRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
+    for (const h of this.refHighlights) {
+      if (h.r2 < r0 || h.r1 > rN || h.c2 < c0 || h.c1 > cN) continue;
+      const a = this.cellRect(h.r1, h.c1), b = this.cellRect(h.r2, h.c2);
+      ctx.save();
+      ctx.globalAlpha = 0.1;
+      ctx.fillStyle = h.color;
+      ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = h.color;
+      ctx.strokeRect(a.x + 1, a.y + 1, b.x + b.w - a.x - 2, b.y + b.h - a.y - 2);
+      ctx.restore();
+    }
     if (this.pointRange) {
       const p = this.pointRange;
       const a = this.cellRect(p.r1, p.c1), b = this.cellRect(p.r2, p.c2);
@@ -417,7 +549,7 @@ export class Grid {
     const rowRect = this.cellRect(s.row, c0);
     const rowEnd = fc.extent === 'full' ? rN : s.row - 1;
     const colEnd = fc.extent === 'full' ? cN : s.column - 1;
-    const bandColH = HEADER_H + rowEnd * ROW_H - this.scroller.scrollTop - colRect.y;
+    const bandColH = HEADER_H + this.y(rowEnd + 1) - this.scroller.scrollTop - colRect.y;
     const bandRowW = this.headerW + this.x(colEnd + 1) - this.scroller.scrollLeft - rowRect.x;
     ctx.save();
     if (fc.mode === 'shade') {
@@ -475,6 +607,24 @@ export class Grid {
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.headerW / 2, y + h / 2);
       ctx.beginPath(); ctx.moveTo(0, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
+    }
+    const z = this.resizing;
+    if (z) {
+      // Размер при перетаскивании границы — подсказка, как в Excel.
+      const label = z.kind === 'column' ? `Ширина: ${z.size} пикс.` : `Высота: ${z.size} пикс.`;
+      const at = z.kind === 'column' ? this.cellRect(1, z.index) : this.cellRect(z.index, 1);
+      ctx.font = '12px "Segoe UI", sans-serif';
+      const tw = ctx.measureText(label).width + 12;
+      const bx = z.kind === 'column' ? Math.min(W - tw - 2, at.x + at.w + 6) : this.headerW + 6;
+      const by = z.kind === 'column' ? HEADER_H + 4 : at.y + at.h + 4;
+      ctx.fillStyle = '#fffbe6'; ctx.strokeStyle = '#999';
+      ctx.fillRect(bx, by, tw, 20); ctx.strokeRect(bx + 0.5, by + 0.5, tw, 20);
+      ctx.fillStyle = '#222'; ctx.textAlign = 'left';
+      ctx.fillText(label, bx + 6, by + 10);
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.setLineDash([3, 3]); ctx.beginPath();
+      if (z.kind === 'column') { const lx = Math.round(at.x + at.w) + 0.5; ctx.moveTo(lx, 0); ctx.lineTo(lx, H); }
+      else { const ly = Math.round(at.y + at.h) + 0.5; ctx.moveTo(0, ly); ctx.lineTo(W, ly); }
+      ctx.stroke(); ctx.setLineDash([]);
     }
     ctx.fillStyle = '#e8e8e8';
     ctx.fillRect(0, 0, this.headerW, HEADER_H);

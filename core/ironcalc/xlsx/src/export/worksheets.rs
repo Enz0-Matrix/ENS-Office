@@ -180,6 +180,16 @@ fn get_array_formula_attribute(
     escape_xml(formula).to_string()
 }
 
+/// ENS-Office: an error value Excel understands.
+fn excel_error_name(name: &str) -> &str {
+    match name {
+        "#NULL!" | "#DIV/0!" | "#VALUE!" | "#REF!" | "#NAME?" | "#NUM!" | "#N/A" | "#SPILL!"
+        | "#CALC!" => name,
+        "#N/IMPL" | "#N/IMPL!" => "#NAME?",
+        _ => "#VALUE!",
+    }
+}
+
 pub(crate) fn get_worksheet_xml(
     worksheet: &Worksheet,
     parsed_formulas: &[(std::sync::Arc<Node>, StaticResult)],
@@ -370,13 +380,28 @@ pub(crate) fn get_worksheet_xml(
                     //   <f>A1/A3<f/>
                     //   <v>#DIV/0!</v>
                     // </c>
+                    let node = &parsed_formulas[*f as usize].0;
+                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: a formula that does not parse (say "=B5+") is not
+                    // valid in Excel, which "repairs" the whole file and drops it.
+                    // Keep the text the user typed as an inline string instead.
+                    if let Node::ParseErrorKind { formula, .. } = node.as_ref() {
+                        let text = escape_xml(&format!("={formula}")).to_string();
+                        row_data_str.push(format!(
+                            "<c r=\"{cell_name}\" t=\"inlineStr\"{style}><is><t>{text}</t></is></c>"
+                        ));
+                        continue;
+                    }
                     let formula = get_formula_attribute(
                         worksheet.get_name(),
                         row_index,
                         column_index,
-                        &parsed_formulas[*f as usize].0,
+                        node,
                     );
-                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: #ERROR!, #N/IMPL and #CIRC! are IronCalc's own
+                    // errors; Excel only accepts its standard ones.
+                    let ei_name = ei.to_string();
+                    let ei = excel_error_name(&ei_name);
                     row_data_str.push(format!(
                         "<c r=\"{cell_name}\" t=\"e\"{style}><f>{formula}</f><v>{ei}</v></c>"
                     ));

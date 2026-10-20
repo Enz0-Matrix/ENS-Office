@@ -51,6 +51,9 @@ export async function ask(message: string, ok: string, cancel: string): Promise<
   return dialogAsk(message, { title: 'ENS-Table', okLabel: ok, cancelLabel: cancel, kind: 'warning' });
 }
 
+/** Файл, с которым запустили программу («Открыть с помощью»). */
+export const startupFile = () => invoke<string | null>('startup_file');
+
 export const inspectFile = (path: string) => invoke<FileInfo>('inspect_file', { path });
 
 export async function readFile(path: string): Promise<Uint8Array> {

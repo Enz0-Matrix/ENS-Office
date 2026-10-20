@@ -7,12 +7,15 @@
 //!   journal.bin    — правки после снимка: [длина u32][байты] …
 //! Восстановление = снимок + все правки журнала: теряется не больше секунды.
 //!
-//! Сеанс (запуск программы) пишет «пульс» раз в 30 с. Сеанс без пульса дольше
-//! двух минут и без отметки о нормальном завершении — упавший: его книги
-//! предлагаются к восстановлению. Работающий второй экземпляр программы
-//! пульс пишет, поэтому его книги не трогаем.
+//! Сеанс (запуск программы) держит блокировку файла alive.lock, пока жив.
+//! Если процесс убит (сбой, «Снять задачу»), система сразу снимает блокировку:
+//! сеанс без блокировки и без отметки о нормальном завершении — упавший, его
+//! книги предлагаются к восстановлению при следующем запуске. Книги второго
+//! работающего экземпляра программы не трогаем. Для старых сеансов без
+//! alive.lock (и папок, где блокировки не работают) остаётся «пульс» раз в 30 с:
+//! без пульса дольше двух минут — упавший.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -24,6 +27,8 @@ use tauri::ipc::{InvokeBody, Request, Response};
 pub struct Recovery {
     pub root: Mutex<PathBuf>,
     pub session: String,
+    /// Открытый и заблокированный alive.lock этого сеанса.
+    alive: Mutex<Option<File>>,
 }
 
 fn now_ms() -> u64 {
@@ -64,8 +69,9 @@ pub struct RecoverableDoc {
 impl Recovery {
     pub fn new(root: PathBuf) -> Self {
         let session = format!("{}-{}", now_ms(), std::process::id());
-        let r = Recovery { root: Mutex::new(root), session };
+        let r = Recovery { root: Mutex::new(root), session, alive: Mutex::new(None) };
         let _ = r.write_session(false);
+        r.hold_alive_lock();
         r
     }
 
@@ -82,6 +88,16 @@ impl Recovery {
             return Err("недопустимый идентификатор книги".into());
         }
         Ok(self.session_dir(session).join(id))
+    }
+
+    /// Заблокировать alive.lock в папке сеанса (заново — после смены папки).
+    fn hold_alive_lock(&self) {
+        let path = self.session_dir(&self.session).join("alive.lock");
+        let file = OpenOptions::new().create(true).truncate(false).write(true).open(path).ok()
+            .filter(|f| f.try_lock().is_ok());
+        if let Ok(mut alive) = self.alive.lock() {
+            *alive = file;
+        }
     }
 
     fn write_session(&self, clean_exit: bool) -> std::io::Result<()> {
@@ -141,7 +157,9 @@ pub fn recovery_set_root(state: tauri::State<'_, Recovery>, path: String) -> Res
     let p = PathBuf::from(path);
     fs::create_dir_all(&p).map_err(io_err)?;
     *state.root.lock().map_err(|e| e.to_string())? = p;
-    state.write_session(false).map_err(io_err)
+    state.write_session(false).map_err(io_err)?;
+    state.hold_alive_lock();
+    Ok(())
 }
 
 #[tauri::command]
@@ -207,6 +225,9 @@ pub fn recovery_forget(state: tauri::State<'_, Recovery>, id: String) -> Result<
 pub fn recovery_end_session(state: tauri::State<'_, Recovery>) -> Result<(), String> {
     let dir = state.session_dir(&state.session);
     let has_docs = fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).any(|e| e.path().is_dir())).unwrap_or(false);
+    if let Ok(mut alive) = state.alive.lock() {
+        *alive = None;
+    }
     if has_docs {
         // Остались книги, по которым пользователь не решил: помечаем, но храним.
         state.write_session(true).map_err(io_err)
@@ -228,8 +249,7 @@ pub fn recovery_list(state: tauri::State<'_, Recovery>) -> Result<Vec<Recoverabl
         }
         let info: Option<SessionInfo> = fs::read(s.path().join("session.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let Some(info) = info else { continue };
-        let alive = !info.clean_exit && now_ms().saturating_sub(info.heartbeat_ms) < 120_000;
-        if alive {
+        if !info.clean_exit && session_alive(&s.path(), info.heartbeat_ms) {
             continue; // другой работающий экземпляр программы
         }
         let Ok(docs) = fs::read_dir(s.path()) else { continue };
@@ -254,6 +274,15 @@ pub fn recovery_list(state: tauri::State<'_, Recovery>) -> Result<Vec<Recoverabl
     }
     out.sort_by_key(|d| std::cmp::Reverse(d.crashed_ms));
     Ok(out)
+}
+
+/// Работает ли ещё программа, которая ведёт этот сеанс.
+fn session_alive(dir: &Path, heartbeat_ms: u64) -> bool {
+    match OpenOptions::new().write(true).open(dir.join("alive.lock")) {
+        // Заблокировать удалось — владельца нет в живых.
+        Ok(f) => f.try_lock().is_err(),
+        Err(_) => now_ms().saturating_sub(heartbeat_ms) < 120_000,
+    }
 }
 
 /// Снимок восстанавливаемой книги.
@@ -316,6 +345,16 @@ mod tests {
         journal.extend_from_slice(b"de");
         fs::write(doc.join("journal.bin"), &journal).unwrap();
 
+        // Сеанс, убитый только что: пульс свежий, но alive.lock никто не держит.
+        let killed = root.join("sessions").join("2-2");
+        fs::create_dir_all(killed.join("doc-2")).unwrap();
+        fs::write(killed.join("session.json"), serde_json::to_vec(&SessionInfo { pid: 2, started_ms: 1, heartbeat_ms: now_ms(), clean_exit: false }).unwrap()).unwrap();
+        fs::write(killed.join("alive.lock"), b"").unwrap();
+        assert!(!session_alive(&killed, now_ms()));
+        // Живой сеанс держит блокировку.
+        let live = Recovery::new(root.join("live"));
+        assert!(session_alive(&live.session_dir(&live.session), 0));
+
         let r = Recovery::new(root.clone());
         let session = r.session.clone();
         assert_ne!(session, "1-1");
@@ -331,6 +370,7 @@ mod tests {
         }
         assert_eq!(end, 7);
         assert!(r.doc_dir("1-1", "../x").is_err());
+        drop((r, live));
         fs::remove_dir_all(root).unwrap();
     }
 }

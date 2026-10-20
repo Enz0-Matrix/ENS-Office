@@ -3,7 +3,7 @@
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
 import { fromBytes, openXlsx, type Model } from './engine';
-import { ask, inspectFile, isDesktop, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { ask, inspectFile, isDesktop, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
 import { localeId, saveSettings, settings } from './settings';
 
 export interface Doc {
@@ -136,6 +136,8 @@ export async function start(h: Host): Promise<void> {
     await track(); // новое окно: панель восстановления уже показана в первом
   } else {
     await track();
+    const file = isDesktop ? await startupFile().catch(() => null) : null;
+    if (file) await openPath(file);
     if (isDesktop) await offerRecovery();
   }
 }
@@ -226,6 +228,7 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   doc.path = path;
   doc.title = baseName(path);
   doc.dirty = false;
+  rememberRecent(path, doc.title);
   if (doc.recoveredFrom) {
     await recovery.discard(doc.recoveredFrom.session, doc.recoveredFrom.id).catch(() => {});
     doc.recoveredFrom = undefined;
@@ -237,6 +240,12 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   });
   await snapshot();
   return true;
+}
+
+/** Список «Последние» в меню «Файл». */
+export function rememberRecent(path: string, title: string): void {
+  settings.recent = [{ path, title }, ...settings.recent.filter((r) => r.path !== path)].slice(0, 12);
+  saveSettings();
 }
 
 function download(): boolean {

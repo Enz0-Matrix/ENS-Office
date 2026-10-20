@@ -16,7 +16,10 @@
   <div class="formula-bar">
     <input id="name-box" class="name-box" title="Поле имени: адрес ячейки">
     <span class="fx">ƒx</span>
-    <input id="formula" class="formula" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке" autocomplete="off" spellcheck="false">
+    <div class="formula-wrap">
+      <div id="formula-mirror" class="formula-mirror" hidden aria-hidden="true"></div>
+      <input id="formula" class="formula" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке" autocomplete="off" spellcheck="false">
+    </div>
   </div>
   <main id="grid" class="grid"></main>
   <footer>
