@@ -21,6 +21,7 @@ export interface SheetProps {
   name: string;
   state: string;
   sheet_id: number;
+  color?: string;
 }
 
 /** Методы движка, которыми пользуется интерфейс. */
@@ -45,6 +46,13 @@ export interface Model {
   setRecognizeDates(on: boolean): void;
   getRecognizeDates(): boolean;
   setLocale(locale: string): void;
+  renameSheet(sheet: number, name: string): void;
+  deleteSheet(sheet: number): void;
+  duplicateSheet(sheet: number): void;
+  moveSheet(sheet: number, newIndex: number): void;
+  hideSheet(sheet: number): void;
+  unhideSheet(sheet: number): void;
+  setSheetColor(sheet: number, color: Color): void;
   getWorksheetsProperties(): SheetProps[];
   getShowGridLines(sheet: number): boolean;
   setShowGridLines(sheet: number, show: boolean): void;
@@ -80,7 +88,16 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const LANGUAGE = 'ru';
 
 export function newWorkbook(locale: string, name = 'Книга1'): Model {
-  return new Engine(name, locale, TZ, LANGUAGE);
+  const model = new Engine(name, locale, TZ, LANGUAGE);
+  model.renameSheet(0, 'Лист1');
+  model.flushSendQueue(); // переименование — не правка пользователя
+  return model;
+}
+
+/** Свободное имя для нового листа: Лист2, Лист3… */
+export function nextSheetName(model: Model): string {
+  const names = new Set(model.getWorksheetsProperties().map((p) => p.name.toLowerCase()));
+  for (let n = 1; ; n++) if (!names.has(`лист${n}`)) return `Лист${n}`;
 }
 
 /** Книга из внутреннего формата движка (снимок для восстановления). */

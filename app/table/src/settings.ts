@@ -7,10 +7,18 @@ export interface Settings {
   expandEditor: boolean;
   /** Как часто сохранять снимок книги для восстановления после сбоя, минут. */
   autosaveMinutes: number;
+  /** Распознавать даты при вводе в ячейки «Общий» («22.08» → дата). */
+  recognizeDates: boolean;
+  /** Своя папка временных файлов восстановления ('' — в профиле пользователя). */
+  recoveryRoot: string;
+  /** Последние открытые книги (для «Файл → Открыть»). */
+  recent: { path: string; title: string }[];
 }
 
 const KEY = 'ens-table.settings';
-const defaults: Settings = { decimal: 'comma', expandEditor: false, autosaveMinutes: 10 };
+const defaults: Settings = {
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [],
+};
 
 export const settings: Settings = (() => {
   try {

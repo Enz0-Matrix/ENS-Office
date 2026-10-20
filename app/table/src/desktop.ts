@@ -3,8 +3,8 @@
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
 import { fromBytes, openXlsx, type Model } from './engine';
-import { ask, inspectFile, isDesktop, openWindow, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
-import { localeId, settings } from './settings';
+import { ask, inspectFile, isDesktop, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { localeId, saveSettings, settings } from './settings';
 
 export interface Doc {
   /** Идентификатор для папки восстановления: латиница, цифры, дефис. */
@@ -85,8 +85,40 @@ async function tick(): Promise<void> {
   if (due || idle) await snapshot().catch((e) => host.toast(String(e)));
 }
 
+export async function newWindow(): Promise<void> {
+  await openWindow('new=1', 'Книга');
+}
+
+export async function closeBook(): Promise<void> {
+  if (!isDesktop) return;
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().close(); // спросит «Сохранить изменения?»
+}
+
+export async function recoveryFolder(): Promise<string> {
+  return isDesktop ? recovery.root() : '';
+}
+
+export async function chooseRecoveryFolder(): Promise<void> {
+  const path = await pickFolder('Папка для временных файлов восстановления');
+  if (!path) return;
+  try {
+    await recovery.setRoot(path);
+    settings.recoveryRoot = path;
+    saveSettings();
+    await track();
+  } catch (e) {
+    host.toast(`Папка недоступна для записи: ${e}. Временные файлы остаются в прежней папке.`);
+  }
+}
+
 export async function start(h: Host): Promise<void> {
   host = h;
+  if (isDesktop && settings.recoveryRoot) {
+    // Своя (например, сетевая) папка; если недоступна — остаёмся в профиле.
+    await recovery.setRoot(settings.recoveryRoot).catch(() =>
+      h.toast(`Папка восстановления «${settings.recoveryRoot}» недоступна — временные файлы пишутся в профиль пользователя.`));
+  }
   emptyQueue = h.model().flushSendQueue().length;
   setInterval(() => void tick(), 1000);
   if (isDesktop) {
@@ -100,6 +132,8 @@ export async function start(h: Host): Promise<void> {
   else if (recover) {
     const [session, id] = recover.split('/');
     await restore(session, id, params.get('title') ?? 'Книга');
+  } else if (params.get('new')) {
+    await track(); // новое окно: панель восстановления уже показана в первом
   } else {
     await track();
     if (isDesktop) await offerRecovery();

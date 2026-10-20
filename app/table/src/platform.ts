@@ -91,6 +91,39 @@ export const recovery = {
   },
 };
 
+/** Буфер обмена: в настольной версии — системный (плагин Tauri), в браузере —
+ *  Clipboard API, а если он недоступен — внутренний буфер программы. */
+let internalClipboard = '';
+
+export async function copyText(text: string): Promise<void> {
+  internalClipboard = text;
+  if (isDesktop) {
+    const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
+    await writeText(text);
+    return;
+  }
+  await navigator.clipboard.writeText(text).catch(() => {});
+}
+
+export async function readText(): Promise<string> {
+  if (isDesktop) {
+    const { readText: read } = await import('@tauri-apps/plugin-clipboard-manager');
+    return (await read()) ?? internalClipboard;
+  }
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    if (internalClipboard) return internalClipboard;
+    throw new Error('буфер обмена недоступен');
+  }
+}
+
+export async function pickFolder(title: string): Promise<string | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const path = await open({ directory: true, multiple: false, title });
+  return typeof path === 'string' ? path : null;
+}
+
 /** Открыть ещё одно окно ENS-Table (например, исходную книгу рядом с восстановленной). */
 export async function openWindow(query: string, title: string): Promise<void> {
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');

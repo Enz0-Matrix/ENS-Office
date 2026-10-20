@@ -1,6 +1,9 @@
 import './styles.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { columnName, columnNumber, loadEngine, newWorkbook, openXlsx, type Area, type Model } from './engine';
+import { columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { loadFonts } from './fonts';
+import { hideBackstage, initBackstage, showBackstage } from './backstage';
+import { copyText, readText } from './platform';
 import { Grid } from './grid';
 import { icon, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
@@ -10,8 +13,9 @@ import { isDesktop } from './platform';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-await loadEngine();
+await Promise.all([loadEngine(), loadFonts()]);
 let model: Model = newWorkbook(localeId());
+model.setRecognizeDates(settings.recognizeDates);
 let doc: desk.Doc = desk.newDoc();
 window.__ensDoc = () => doc;
 
@@ -49,7 +53,8 @@ function placeEditor(): void {
 const measure = document.createElement('canvas').getContext('2d')!;
 function growEditor(): void {
   const r = grid.cellRect(grid.sel.row, grid.sel.column);
-  measure.font = getComputedStyle(editor).font;
+  const cs = getComputedStyle(editor);
+  measure.font = `${cs.fontSize} ${cs.fontFamily}`;
   const need = measure.measureText(editor.value).width + 14;
   const max = grid.scroller.clientWidth - r.x - 4;
   editor.style.width = `${Math.min(Math.max(r.w, need), Math.max(r.w, max))}px`;
@@ -59,6 +64,10 @@ function growEditor(): void {
  *  или «правка» (F2, двойной щелчок, строка формул — стрелки двигают курсор). */
 let editMode: 'enter' | 'edit' = 'enter';
 
+/** Ячейка, которую редактируют: при вводе формулы можно перейти на другой
+ *  лист и выбрать ячейки там — результат запишется сюда. */
+let editCell = { sheet: 0, row: 1, column: 1 };
+
 function focusGrid(): void {
   placeEditor();
   editor.focus({ preventScroll: true });
@@ -66,11 +75,13 @@ function focusGrid(): void {
 
 function startEdit(initial?: string): void {
   editMode = initial === undefined ? 'edit' : 'enter';
+  editCell = { sheet: grid.sheet, row: grid.sel.row, column: grid.sel.column };
   placeEditor();
   editor.value = initial ?? model.getCellContent(grid.sheet, grid.sel.row, grid.sel.column);
   formula.value = editor.value;
   editing = true;
   editor.classList.add('editing');
+  if (settings.expandEditor) growEditor();
   editor.focus();
   editor.setSelectionRange(editor.value.length, editor.value.length);
 }
@@ -79,27 +90,37 @@ function commitEdit(dRow: number, dCol: number): void {
   if (!editing) return;
   endPoint();
   editing = false;
-  editor.classList.remove('editing');
-  const s = grid.sel;
-  const before = model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt;
+  editor.classList.remove('editing', 'away');
+  const s = editCell;
+  const value = activeValue();
+  const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   try {
-    model.setUserInput(grid.sheet, s.row, s.column, editor.value);
+    model.setUserInput(s.sheet, s.row, s.column, value);
   } catch (err) {
-    alert(`Не удалось записать значение: ${err}`);
+    showToast(`Не удалось записать значение: ${err}`);
   }
-  const after = model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt;
-  if (after !== before) offerFormatUndo(s.row, s.column, before, after);
+  const after = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   editor.value = '';
+  if (grid.sheet !== s.sheet) setSheet(s.sheet, false);
+  grid.select(s.row, s.column);
+  if (after !== before) offerFormatUndo(s.row, s.column, before, after);
   grid.render();
   grid.move(dRow, dCol, false);
   focusGrid();
 }
 
+/** Текст ввода: при работе с другим листом он в строке формул. */
+function activeValue(): string {
+  return editor.classList.contains('away') ? formula.value : editor.value;
+}
+
 function cancelEdit(): void {
   endPoint();
   editing = false;
-  editor.classList.remove('editing');
+  editor.classList.remove('editing', 'away');
   editor.value = '';
+  if (grid.sheet !== editCell.sheet) setSheet(editCell.sheet, false);
+  grid.select(editCell.row, editCell.column);
   updateFormulaBar();
   focusGrid();
 }
@@ -109,6 +130,7 @@ editor.addEventListener('input', () => {
     // Первый введённый символ начинает редактирование, как в Excel.
     editing = true;
     editMode = 'enter';
+    editCell = { sheet: grid.sheet, row: grid.sel.row, column: grid.sel.column };
     editor.classList.add('editing');
   }
   endPoint();
@@ -141,7 +163,10 @@ function pointText(p: Point): string {
   const r1 = Math.min(p.anchorRow, p.row), r2 = Math.max(p.anchorRow, p.row);
   const c1 = Math.min(p.anchorCol, p.col), c2 = Math.max(p.anchorCol, p.col);
   const a = `${columnName(c1)}${r1}`;
-  return r1 === r2 && c1 === c2 ? a : `${a}:${columnName(c2)}${r2}`;
+  const ref = r1 === r2 && c1 === c2 ? a : `${a}:${columnName(c2)}${r2}`;
+  if (grid.sheet === editCell.sheet) return ref;
+  const name = model.getWorksheetsProperties()[grid.sheet].name;
+  return `${/^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`}!${ref}`;
 }
 
 function applyPoint(inp: HTMLInputElement | HTMLTextAreaElement, row: number, col: number, extend: boolean): void {
@@ -182,7 +207,8 @@ function editKey(e: KeyboardEvent): void {
   const d = ARROWS[e.key];
   if (d && !e.ctrlKey && !e.altKey && canPoint(inp)) {
     e.preventDefault();
-    const from = point ? { row: point.row, col: point.col } : { row: grid.sel.row, col: grid.sel.column };
+    const from = point ? { row: point.row, col: point.col }
+      : grid.sheet === editCell.sheet ? { row: editCell.row, col: editCell.column } : { row: grid.sel.row, col: grid.sel.column };
     applyPoint(inp, from.row + d[0], from.col + d[1], e.shiftKey && point !== null);
     return;
   }
@@ -403,12 +429,29 @@ function gridKey(e: KeyboardEvent): void {
 
 // --- Листы ---
 
-function setSheet(index: number): void {
+function setSheet(index: number, reset = true): void {
   grid.sheet = index;
   model.setSelectedSheet(index);
   grid.invalidateLayout();
-  grid.select(1, 1);
+  if (reset) grid.select(1, 1);
   renderSheetTabs();
+}
+
+/** Щелчок по ярлычку во время ввода формулы — выбор ячеек на другом листе. */
+function clickSheetTab(index: number): void {
+  if (index === grid.sheet) return;
+  if (editing && activeValue().startsWith('=')) {
+    endPoint();
+    const value = activeValue();
+    editor.classList.add('away');
+    formula.value = value;
+    setSheet(index, false);
+    formula.focus();
+    formula.setSelectionRange(value.length, value.length);
+    return;
+  }
+  if (editing) commitEdit(0, 0);
+  setSheet(index);
 }
 
 function renderSheetTabs(): void {
@@ -419,7 +462,11 @@ function renderSheetTabs(): void {
     const b = document.createElement('button');
     b.className = `sheet-tab${i === grid.sheet ? ' active' : ''}`;
     b.textContent = p.name;
-    b.addEventListener('click', () => setSheet(i));
+    if (p.color) b.style.borderBottom = `3px solid ${p.color}`;
+    b.addEventListener('mousedown', (e) => { if (editing) e.preventDefault(); });
+    b.addEventListener('click', () => clickSheetTab(i));
+    b.addEventListener('dblclick', () => renameSheet(i, b));
+    b.addEventListener('contextmenu', (e) => { e.preventDefault(); sheetMenu(i, e.clientX, e.clientY); });
     host.append(b);
   });
   const add = document.createElement('button');
@@ -429,6 +476,89 @@ function renderSheetTabs(): void {
   add.addEventListener('click', () => run('sheet.new'));
   host.append(add);
 }
+
+function renameSheet(index: number, tab?: HTMLElement): void {
+  const tabEl = tab ?? [...document.querySelectorAll<HTMLElement>('.sheet-tab')].find((t) => t.textContent === model.getWorksheetsProperties()[index].name);
+  if (!tabEl) return;
+  const old = model.getWorksheetsProperties()[index].name;
+  const input = document.createElement('input');
+  input.className = 'sheet-rename';
+  input.value = old;
+  tabEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save: boolean) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (save && name && name !== old) {
+      try { model.renameSheet(index, name); } catch (e) { showToast(`Нельзя так назвать лист: ${e}`); }
+    }
+    renderSheetTabs();
+    focusGrid();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+  input.addEventListener('blur', () => finish(true));
+}
+
+const SHEET_COLORS = ['', '#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#7030A0'];
+
+function sheetMenu(index: number, x: number, y: number): void {
+  const props = model.getWorksheetsProperties();
+  const visible = props.filter((p) => p.state === 'visible').length;
+  const hidden = props.map((p, i) => ({ p, i })).filter(({ p }) => p.state !== 'visible');
+  const items: { label: string; run: () => void; disabled?: boolean }[] = [
+    { label: 'Вставить лист', run: () => run('sheet.new') },
+    { label: 'Удалить', disabled: visible <= 1, run: () => {
+      if (!confirm(`Удалить лист «${props[index].name}»? Отменить удаление можно сочетанием Ctrl+Z.`)) return;
+      model.deleteSheet(index); setSheet(Math.max(0, Math.min(index, model.getWorksheetsProperties().length - 1)));
+    } },
+    { label: 'Переименовать', run: () => renameSheet(index) },
+    { label: 'Копировать лист', run: () => { model.duplicateSheet(index); setSheet(index + 1); } },
+    { label: 'Переместить влево', disabled: index === 0, run: () => { model.moveSheet(index, index - 1); setSheet(index - 1, false); } },
+    { label: 'Переместить вправо', disabled: index >= props.length - 1, run: () => { model.moveSheet(index, index + 1); setSheet(index + 1, false); } },
+    { label: 'Скрыть', disabled: visible <= 1, run: () => {
+      model.hideSheet(index);
+      const next = model.getWorksheetsProperties().findIndex((p) => p.state === 'visible');
+      setSheet(next);
+    } },
+    ...hidden.map(({ p, i }) => ({ label: `Показать «${p.name}»`, run: () => { model.unhideSheet(i); setSheet(i); } })),
+  ];
+  const menu = $('context-menu');
+  menu.replaceChildren();
+  for (const it of items) {
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    b.disabled = !!it.disabled;
+    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
+    menu.append(b);
+  }
+  const colors = document.createElement('div');
+  colors.className = 'menu-colors';
+  colors.title = 'Цвет ярлычка';
+  for (const c of SHEET_COLORS) {
+    const s = document.createElement('button');
+    s.className = 'swatch';
+    s.style.background = c || '#ffffff';
+    s.title = c ? c : 'Без цвета';
+    s.addEventListener('click', () => { menu.hidden = true; model.setSheetColor(index, c); renderSheetTabs(); });
+    colors.append(s);
+  }
+  const label = document.createElement('div');
+  label.className = 'menu-label';
+  label.textContent = 'Цвет ярлычка';
+  menu.append(label, colors);
+  menu.hidden = false;
+  const h = menu.getBoundingClientRect().height;
+  menu.style.left = `${x}px`;
+  menu.style.top = `${Math.max(8, y - h)}px`;
+}
+
+document.addEventListener('mousedown', (e) => {
+  const menu = $('context-menu');
+  if (!menu.hidden && !menu.contains(e.target as Node)) menu.hidden = true;
+});
 
 // --- Файлы ---
 // В браузере файл нельзя перезаписать на месте: «Сохранить» скачивает копию.
@@ -452,8 +582,14 @@ function setModel(next: Model, nextDoc: desk.Doc): void {
   if (next !== model) model.free();
   model = next;
   doc = nextDoc;
+  model.setRecognizeDates(settings.recognizeDates);
   syncDocTitle();
   setSheet(0);
+  if (nextDoc.path) {
+    settings.recent = [{ path: nextDoc.path, title: nextDoc.title.replace(/ \(восстановлено\)$/, '') },
+      ...settings.recent.filter((r) => r.path !== nextDoc.path)].slice(0, 12);
+    saveSettings();
+  }
 }
 
 function syncDocTitle(): void {
@@ -485,9 +621,22 @@ editor.addEventListener('paste', (e) => {
   pasteText(e.clipboardData?.getData('text/plain') ?? '');
 });
 
+/** Вставка, как в Excel: если выделено несколько ячеек, а скопировано меньше —
+ *  скопированное повторяется на всё выделение (одно значение — во все ячейки). */
 function pasteText(text: string): void {
   if (!text) return;
-  model.pasteCsvText(selectionArea(), text.replace(/\r\n?/g, '\n').replace(/\n$/, ''));
+  const rows = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n').map((r) => r.split('\t'));
+  const h = rows.length, w = Math.max(...rows.map((r) => r.length));
+  const area = selectionArea();
+  let out = rows;
+  if ((area.height > h || area.width > w) && area.height % h === 0 && area.width % w === 0) {
+    out = [];
+    for (let r = 0; r < area.height; r++) {
+      const src = rows[r % h];
+      out.push(Array.from({ length: area.width }, (_, c) => src[c % w] ?? ''));
+    }
+  }
+  model.pasteCsvText(area, out.map((r) => r.join('\t')).join('\n'));
   grid.render();
   updateFormulaBar();
   updateStatus();
@@ -525,21 +674,18 @@ register(
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
     const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); grid.render(); updateFormulaBar();
   } },
-  { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм'], keys: ['Alt+Equal'], run: () => {
-    const s = grid.sel;
-    let top = s.row - 1;
-    while (top >= 1 && model.getCellType(grid.sheet, top, s.column) === 1) top--;
-    startEdit(top < s.row - 1 ? `=СУММ(${columnName(s.column)}${top + 1}:${columnName(s.column)}${s.row - 1})` : '=СУММ()');
-  } },
+  { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм', 'итог'], keys: ['Alt+Equal'], run: autosum },
+  { id: 'edit.insertFunction', label: 'Вставить функцию', keywords: ['insert function', 'функция', 'fx', 'мастер функций'], keys: ['Shift+F3'],
+    run: () => { search.value = 'ƒ '; search.focus(); showPicker(functionList(''), search); } },
   { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], nativeKeys: true,
-    run: () => { focusGrid(); document.execCommand('copy'); } },
+    run: async () => { await copyText(toTsv()).catch((e) => showToast(String(e))); focusGrid(); } },
   { id: 'clipboard.cut', label: 'Вырезать', keywords: ['cut'], keys: ['Ctrl+KeyX'], nativeKeys: true,
-    run: () => { focusGrid(); document.execCommand('cut'); } },
+    run: async () => { try { await copyText(toTsv()); run('edit.clear'); } catch (e) { showToast(String(e)); } focusGrid(); } },
   { id: 'clipboard.paste', label: 'Вставить', keywords: ['paste'], keys: ['Ctrl+KeyV'], nativeKeys: true, run: async () => {
     try {
-      pasteText(await navigator.clipboard.readText());
+      pasteText(await readText());
     } catch {
-      showToast('Браузер не дал прочитать буфер обмена с кнопки. Нажмите Ctrl+V — так вставка работает всегда.');
+      showToast('Не удалось прочитать буфер обмена с кнопки. Нажмите Ctrl+V — так вставка работает всегда.');
     }
     focusGrid();
   } },
@@ -558,8 +704,13 @@ register(
   { id: 'align.right', label: 'По правому краю', keywords: ['align right'], run: () => style('alignment.horizontal', () => 'right') },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => { if (fmt) style('num_fmt', () => fmt); } },
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
-    model.newSheet(); setSheet(model.getWorksheetsProperties().length - 1);
+    const name = nextSheetName(model);
+    model.newSheet();
+    const index = model.getWorksheetsProperties().length - 1;
+    model.renameSheet(index, name);
+    setSheet(index);
   } },
+  { id: 'sheet.rename', label: 'Переименовать лист', keywords: ['rename sheet', 'имя листа'], run: () => renameSheet(grid.sheet) },
   { id: 'view.focusCell', label: 'Фокус ячейки (перекрестие)', keywords: ['focus cell', 'подсветка строки', 'перекрестие', 'crosshair'],
     keys: ['Ctrl+Shift+KeyK'], checked: () => grid.focusCell.enabled,
     run: () => { grid.focusCell.enabled = !grid.focusCell.enabled; grid.render(); refreshRibbon(); } },
@@ -572,9 +723,12 @@ register(
       if (refs.length === 1) goTo(refs[0]);
       else if (refs.length > 1) showPicker(refs.map((r) => ({ label: r.text, run: () => goTo(r) })));
     } },
-  { id: 'nav.back', label: 'Назад к предыдущей ячейке', keywords: ['back', 'назад'], keys: ['Alt+ArrowLeft'], run: () => {
+  { id: 'nav.back', label: 'Вернуться к ячейке, из которой перешли по ссылке', keywords: ['back', 'назад', 'вернуться'], keys: ['Alt+ArrowLeft'], run: () => {
     const prev = backStack.pop();
-    if (!prev) return;
+    if (!prev) {
+      showToast('Возвращаться некуда: кнопка работает после перехода по ссылке (Ctrl+[ или Ctrl+щелчок по ссылке в строке формул). Отмена действия — Ctrl+Z.');
+      return;
+    }
     if (prev.sheet !== grid.sheet) setSheet(prev.sheet);
     grid.select(prev.row, prev.column);
   } },
@@ -590,8 +744,12 @@ register(
       grid.render(); updateFormulaBar(); updateStatus();
     } },
   { id: 'options.recognizeDates', label: 'Распознавать даты при вводе', keywords: ['даты', 'автоформат', 'dates', 'autoformat', 'параметры'],
-    checked: () => model.getRecognizeDates(),
-    run: () => { model.setRecognizeDates(!model.getRecognizeDates()); refreshRibbon(); } },
+    checked: () => settings.recognizeDates,
+    run: () => { settings.recognizeDates = !settings.recognizeDates; saveSettings(); model.setRecognizeDates(settings.recognizeDates); refreshRibbon(); } },
+  { id: 'file.backstage', label: 'Файл: создать, открыть, сохранить, печать, параметры', keywords: ['файл', 'file', 'параметры', 'options'], keys: ['Alt+KeyF'],
+    run: () => showBackstage() },
+  { id: 'file.options', label: 'Параметры', keywords: ['options', 'настройки', 'settings'], run: () => showBackstage('options') },
+  { id: 'file.new', label: 'Создать книгу', keywords: ['new', 'новая книга'], keys: ['Ctrl+KeyN'], run: () => newBook() },
 );
 
 // --- Выпадающий список (выбор ссылки, результаты поиска) ---
@@ -633,7 +791,16 @@ function hidePicker(): void {
 const search = $<HTMLInputElement>('search');
 search.insertAdjacentHTML('beforebegin', icon('search', 20));
 
+function functionList(q: string) {
+  return FUNCTIONS
+    .map((f) => ({ f, score: q ? Math.max(matchScore(q, f.ru), matchScore(q, f.en), matchScore(q, f.description) * 0.7) : 1 }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ f }) => ({ label: `ƒ ${f.ru} — ${f.description}`, hint: f.en, run: () => startEdit(`=${f.ru}(`) }));
+}
+
 function searchResults(q: string) {
+  if (q.startsWith('ƒ')) return functionList(q.slice(1).trim()).map((x) => ({ ...x, score: 1 }));
   const found: { score: number; label: string; hint?: string; run: () => void }[] = [];
   for (const c of allCommands()) {
     if (c.id === 'search.focus') continue;
@@ -669,7 +836,7 @@ window.addEventListener('keydown', (e) => {
 
 // --- Запуск ---
 
-const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => run('file.open'));
+const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
 /** Списки ленты (формат, шрифт, размер) показывают значения активной ячейки. */
 function syncNumberFormat(): void {
   const st = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style;
@@ -703,6 +870,59 @@ syncDocTitle();
 renderSheetTabs();
 grid.select(1, 1);
 focusGrid();
+
+function autosum(): void {
+  if (editing) commitEdit(0, 0);
+  const s = grid.sel;
+  const isNum = (r: number, c: number) => model.getCellType(grid.sheet, r, c) === 1;
+  const sheet = grid.sheet;
+  const ref = (r1: number, c1: number, r2: number, c2: number) =>
+    `${columnName(c1)}${r1}${r1 === r2 && c1 === c2 ? '' : `:${columnName(c2)}${r2}`}`;
+  if (s.r1 !== s.r2 || s.c1 !== s.c2) {
+    // Выделен диапазон: суммы под каждым столбцом (как в Excel). Если нижняя
+    // строка выделения пустая — суммы пишутся в неё.
+    const lastEmpty = Array.from({ length: s.c2 - s.c1 + 1 }, (_, i) => s.c1 + i)
+      .every((c) => !model.getFormattedCellValue(sheet, s.r2, c));
+    const target = lastEmpty && s.r2 > s.r1 ? s.r2 : s.r2 + 1;
+    const bottom = lastEmpty && s.r2 > s.r1 ? s.r2 - 1 : s.r2;
+    for (let c = s.c1; c <= s.c2; c++) model.setUserInput(sheet, target, c, `=СУММ(${ref(s.r1, c, bottom, c)})`);
+    grid.select(target, s.c1);
+    grid.render();
+    return;
+  }
+  // Одна ячейка: сумма чисел над ней, а если над ней пусто — слева.
+  let top = s.row - 1;
+  while (top >= 1 && isNum(top, s.column)) top--;
+  if (top < s.row - 1) { startEdit(`=СУММ(${ref(top + 1, s.column, s.row - 1, s.column)})`); return; }
+  let left = s.column - 1;
+  while (left >= 1 && isNum(s.row, left)) left--;
+  startEdit(left < s.column - 1 ? `=СУММ(${ref(s.row, left + 1, s.row, s.column - 1)})` : '=СУММ()');
+}
+
+async function newBook(): Promise<void> {
+  if (isDesktop) { await desk.newWindow(); return; }
+  if (doc.dirty && !confirm('Текущая книга не сохранена. Создать новую? Несохранённые изменения пропадут.')) return;
+  setModel(newWorkbook(localeId()), desk.newDoc());
+}
+
+initBackstage({
+  docInfo: () => ({ title: doc.title, path: doc.path, dirty: doc.dirty }),
+  recent: () => settings.recent,
+  newBook: () => void newBook(),
+  open: () => void desk.openDialog(),
+  openPath: (p) => void desk.openPath(p),
+  save: () => void desk.save(),
+  saveAs: () => void desk.saveAs(),
+  close: () => void desk.closeBook(),
+  applySettings: () => {
+    model.setLocale(localeId());
+    model.setRecognizeDates(settings.recognizeDates);
+    grid.render(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat();
+  },
+  recoveryFolder: () => desk.recoveryFolder(),
+  chooseRecoveryFolder: () => desk.chooseRecoveryFolder(),
+});
+void hideBackstage;
 
 await desk.start({
   model: () => model,

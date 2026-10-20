@@ -22,6 +22,21 @@ import arrowUndo24 from '@fluentui/svg-icons/icons/arrow_undo_24_regular.svg?raw
 import target24 from '@fluentui/svg-icons/icons/target_24_regular.svg?raw';
 import calendarLtr24 from '@fluentui/svg-icons/icons/calendar_ltr_24_regular.svg?raw';
 import arrowAutofitWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
+import autosum20 from '@fluentui/svg-icons/icons/autosum_20_regular.svg?raw';
+import autosum24 from '@fluentui/svg-icons/icons/autosum_24_regular.svg?raw';
+import mathFormula24 from '@fluentui/svg-icons/icons/math_formula_24_regular.svg?raw';
+import arrowHook24 from '@fluentui/svg-icons/icons/arrow_hook_up_left_24_regular.svg?raw';
+import arrowLeft24 from '@fluentui/svg-icons/icons/arrow_left_24_regular.svg?raw';
+import info20 from '@fluentui/svg-icons/icons/info_20_regular.svg?raw';
+import docAdd20 from '@fluentui/svg-icons/icons/document_add_20_regular.svg?raw';
+import folderOpen20 from '@fluentui/svg-icons/icons/folder_open_20_regular.svg?raw';
+import folderOpen24 from '@fluentui/svg-icons/icons/folder_open_24_regular.svg?raw';
+import save20 from '@fluentui/svg-icons/icons/save_20_regular.svg?raw';
+import saveEdit20 from '@fluentui/svg-icons/icons/save_edit_20_regular.svg?raw';
+import print20 from '@fluentui/svg-icons/icons/print_20_regular.svg?raw';
+import dismiss20 from '@fluentui/svg-icons/icons/dismiss_20_regular.svg?raw';
+import settings20 from '@fluentui/svg-icons/icons/settings_20_regular.svg?raw';
+import document24 from '@fluentui/svg-icons/icons/document_24_regular.svg?raw';
 import grid24 from '@fluentui/svg-icons/icons/grid_24_regular.svg?raw';
 
 export const ICONS: Record<string, string> = {
@@ -45,6 +60,21 @@ export const ICONS: Record<string, string> = {
   'arrow_undo_24': arrowUndo24,
   'target_24': target24,
   'grid_24': grid24,
+  'autosum_20': autosum20,
+  'autosum_24': autosum24,
+  'math_formula_24': mathFormula24,
+  'arrow_hook_up_left_24': arrowHook24,
+  'arrow_left_24': arrowLeft24,
+  'info_20': info20,
+  'document_add_20': docAdd20,
+  'folder_open_20': folderOpen20,
+  'folder_open_24': folderOpen24,
+  'save_20': save20,
+  'save_edit_20': saveEdit20,
+  'print_20': print20,
+  'dismiss_20': dismiss20,
+  'settings_20': settings20,
+  'document_24': document24,
   'arrow_autofit_width_24': arrowAutofitWidth24,
   'calendar_ltr_24': calendarLtr24,
 };

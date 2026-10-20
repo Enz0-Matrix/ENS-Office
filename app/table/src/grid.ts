@@ -4,6 +4,7 @@
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
 import { columnName, type Model } from './engine';
+import { fontStack } from './fonts';
 
 export interface Selection {
   /** Активная ячейка. */
@@ -353,7 +354,7 @@ export class Grid {
         let style;
         try { style = model.getCellStyle(this.sheet, r, c).style; } catch { style = undefined; }
         const f = style?.font;
-        ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${Math.round((f?.sz ?? 11) * 1.33)}px ${f?.name ? `"${f.name}", ` : ""}Calibri, Carlito, "Segoe UI", sans-serif`;
+        ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${Math.round((f?.sz ?? 11) * 1.33)}px ${fontStack(f?.name)}`;
         ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
         let align = style?.alignment?.horizontal ?? 'general';
         if (align === 'general') {

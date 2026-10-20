@@ -3,6 +3,7 @@
 
 import { command, keyLabel, run } from './commands';
 import { ICONS } from './icons';
+import { OFFICE_FONTS } from './fonts';
 
 export function icon(name: string, size: 20 | 24 = 20): string {
   return ICONS[`${name}_${size}`] ?? ICONS[`${name}_${size === 20 ? 24 : 20}`] ?? '';
@@ -35,9 +36,7 @@ export const NUMBER_FORMATS = [
   { value: '@', label: 'Текстовый' },
 ];
 
-export const FONTS = ['Calibri', 'Carlito', 'Arial', 'Liberation Sans', 'Times New Roman', 'Liberation Serif',
-  'Cambria', 'Caladea', 'Courier New', 'Liberation Mono', 'Segoe UI', 'Verdana', 'Tahoma']
-  .map((f) => ({ value: f, label: f }));
+export const FONTS = OFFICE_FONTS.map((f) => ({ value: f, label: f }));
 
 export const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]
   .map((n) => ({ value: String(n), label: String(n) }));
@@ -134,7 +133,8 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Редактирование',
         items: [
-          { type: 'small', command: 'edit.autosum', icon: 'math_formula' },
+          { type: 'small', command: 'edit.autosum', icon: 'autosum' },
+          { type: 'small', command: 'edit.insertFunction', icon: 'math_formula' },
           { type: 'small', command: 'edit.clear', icon: 'eraser' },
         ],
       },
@@ -152,10 +152,17 @@ export const TABS: RibbonTab[] = [
     label: 'Формулы',
     groups: [
       {
+        name: 'Библиотека функций',
+        items: [
+          { type: 'large', command: 'edit.insertFunction', icon: 'math_formula', label: 'Вставить функцию' },
+          { type: 'large', command: 'edit.autosum', icon: 'autosum', label: 'Автосумма' },
+        ],
+      },
+      {
         name: 'Зависимости формул',
         items: [
           { type: 'large', command: 'nav.precedents', icon: 'arrow_previous', label: 'Влияющие ячейки' },
-          { type: 'large', command: 'nav.back', icon: 'arrow_undo', label: 'Назад' },
+          { type: 'large', command: 'nav.back', icon: 'arrow_hook_up_left', label: 'Вернуться к ячейке' },
         ],
       },
     ],

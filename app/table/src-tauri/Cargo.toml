@@ -1,6 +1,6 @@
 [package]
 name = "ens-table"
-version = "0.1.0"
+version = "0.1.1"
 description = "ENS-Table — редактор таблиц ENS-Office"
 edition = "2021"
 publish = false
@@ -15,6 +15,7 @@ tauri-build = { version = "2.7.1", features = [] }
 [dependencies]
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-dialog = "2.8.1"
+tauri-plugin-clipboard-manager = "2.4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
