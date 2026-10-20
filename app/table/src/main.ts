@@ -3,6 +3,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
+import { printSheet, renderPreview } from './print';
 import { filterOf, initFilter, openFilterPopup, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -1233,6 +1234,8 @@ register(
   { id: 'view.focusCell', label: 'Фокус ячейки (перекрестие)', keywords: ['focus cell', 'подсветка строки', 'перекрестие', 'crosshair'],
     keys: ['Ctrl+Shift+KeyK'], checked: () => grid.focusCell.enabled,
     run: () => { grid.focusCell.enabled = !grid.focusCell.enabled; grid.render(); refreshRibbon(); } },
+  { id: 'file.print', label: 'Печать и PDF', keywords: ['print', 'печать', 'pdf', 'распечатать'], keys: ['Ctrl+KeyP'],
+    run: () => showBackstage('print') },
   { id: 'edit.find', label: 'Найти', keywords: ['find', 'поиск', 'найти'], keys: ['Ctrl+KeyF'],
     run: () => showFind('find') },
   { id: 'edit.replace', label: 'Заменить', keywords: ['replace', 'замена', 'заменить'], keys: ['Ctrl+KeyH'], run: () => showFind('replace') },
@@ -1453,6 +1456,10 @@ initBackstage({
   },
   recoveryFolder: () => desk.recoveryFolder(),
   chooseRecoveryFolder: () => desk.chooseRecoveryFolder(),
+  printPreview: (el, opts) => renderPreview(el, model, grid.sheet, opts, grid.sel),
+  print: (opts) => {
+    try { printSheet(model, grid.sheet, opts, grid.sel, doc.title); } catch (e) { showToast(String((e as Error).message ?? e)); }
+  },
 });
 void hideBackstage;
 

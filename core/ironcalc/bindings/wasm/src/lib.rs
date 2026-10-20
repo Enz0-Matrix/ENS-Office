@@ -587,6 +587,12 @@ impl Model {
         self.model.set_recognize_dates(on);
     }
 
+    /// ENS-Office: used range [min_row, min_column, max_row, max_column].
+    #[wasm_bindgen(js_name = "getSheetDimension")]
+    pub fn get_sheet_dimension(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_sheet_dimension(sheet).map(|d| d.to_vec()).map_err(to_js_error)
+    }
+
     /// ENS-Office: paste the values of the source range at the selected cell.
     #[wasm_bindgen(js_name = "pasteValues")]
     pub fn paste_values(

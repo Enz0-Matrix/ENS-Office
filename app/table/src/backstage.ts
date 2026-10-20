@@ -4,6 +4,9 @@ import { icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
 import { DONATE_URL } from './modules';
+import { DEFAULT_PRINT, type PrintOptions } from './print';
+
+let printOpts: PrintOptions = { ...DEFAULT_PRINT };
 
 export interface BackstageHost {
   docInfo(): { title: string; path: string; dirty: boolean };
@@ -15,6 +18,8 @@ export interface BackstageHost {
   saveAs(): void;
   close(): void;
   applySettings(): void;
+  printPreview(el: HTMLElement, opts: PrintOptions): void;
+  print(opts: PrintOptions): void;
   recoveryFolder(): Promise<string>;
   chooseRecoveryFolder(): Promise<void>;
 }
@@ -111,9 +116,38 @@ function render(section: Section): void {
     }
   } else if (section === 'print') {
     body.innerHTML = `<h1>Печать</h1>
-      <p>Печать и сохранение в PDF с разметкой страниц (поля, ориентация, «уместить на странице»)
-      будут в следующей версии.</p>
-      <p class="bs-muted">Пока можно сохранить книгу и напечатать её из другой программы.</p>`;
+      <div class="print-layout">
+        <div class="print-options">
+          <button class="print-go" data-act="print">${icon('print', 20)}Печать…</button>
+          <p class="bs-muted">В окне печати можно выбрать принтер или «Сохранить как PDF».</p>
+          <label>Что печатать
+            <select data-p="what"><option value="sheet">Активный лист</option><option value="selection">Выделенный диапазон</option></select></label>
+          <label>Ориентация
+            <select data-p="landscape"><option value="false">Книжная</option><option value="true">Альбомная</option></select></label>
+          <label>Масштаб
+            <select data-p="fit"><option value="none">Текущий (100%)</option><option value="width">Вписать все столбцы на одну страницу</option>
+            <option value="page">Вписать лист на одну страницу</option></select></label>
+          <label>Поля
+            <select data-p="margins"><option value="normal">Обычные</option><option value="narrow">Узкие</option><option value="wide">Широкие</option></select></label>
+          <label class="check"><input type="checkbox" data-p="gridlines"> Печатать сетку</label>
+          <label class="check"><input type="checkbox" data-p="repeatHeader"> Первая строка на каждой странице</label>
+        </div>
+        <div class="print-preview"></div>
+      </div>`;
+    const preview = body.querySelector<HTMLElement>('.print-preview')!;
+    const refresh = () => host.printPreview(preview, printOpts);
+    body.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-p]').forEach((el) => {
+      const k = el.dataset.p as keyof PrintOptions;
+      if (el instanceof HTMLInputElement) el.checked = !!printOpts[k];
+      else el.value = String(printOpts[k]);
+      el.addEventListener('change', () => {
+        const v = el instanceof HTMLInputElement ? el.checked : el.value === 'true' ? true : el.value === 'false' ? false : el.value;
+        printOpts = { ...printOpts, [k]: v } as PrintOptions;
+        refresh();
+      });
+    });
+    body.querySelector('[data-act="print"]')!.addEventListener('click', () => { hideBackstage(); host.print(printOpts); });
+    requestAnimationFrame(refresh);
   } else if (section === 'options') {
     body.innerHTML = `<h1>Параметры</h1>
       <h2>Ввод и числа</h2>

@@ -227,6 +227,13 @@ impl UserModel<'_> {
 }
 
 impl UserModel<'_> {
+    /// Used range of the sheet: [min_row, min_column, max_row, max_column]
+    /// (all 1 for an empty sheet). For printing.
+    pub fn get_sheet_dimension(&self, sheet: u32) -> Result<[i32; 4], String> {
+        let d = self.model.workbook.worksheet(sheet)?.dimension();
+        Ok([d.min_row, d.min_column, d.max_row, d.max_column])
+    }
+
     /// "Paste values": the values (not formulas) of the source range, at the
     /// selected cell, optionally transposed. Numbers keep full precision.
     pub fn paste_values(&mut self, source_sheet: u32, source: (i32, i32, i32, i32), transpose: bool) -> Result<(), String> {

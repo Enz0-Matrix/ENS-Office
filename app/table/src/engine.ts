@@ -58,6 +58,8 @@ export interface Model {
   getColumnWidth(sheet: number, column: number): number;
   getRowHeight(sheet: number, row: number): number;
   getMergedCells(sheet: number): MergedCell[];
+  /** Занятая часть листа: [первая строка, первый столбец, последняя строка, последний столбец]. */
+  getSheetDimension(sheet: number): number[];
   sortRange(area: Area, keyColumn: number, descending: boolean): void;
   findAll(text: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean, sheet: number): { sheet: number; row: number; column: number }[];
   replaceAll(text: string, replacement: string, matchCase: boolean, wholeCell: boolean, sheet: number, onlyRow: number, onlyColumn: number): number;
