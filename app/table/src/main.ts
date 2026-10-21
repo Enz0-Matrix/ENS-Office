@@ -4,6 +4,7 @@ import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nex
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { printSheet, renderPreview } from './print';
+import { exampleFor, type FunctionExample } from './examples';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -1327,12 +1328,74 @@ function hidePicker(): void {
 const search = $<HTMLInputElement>('search');
 search.insertAdjacentHTML('beforebegin', icon('search', 20));
 
+/** Лист «Пример ВПР»: объяснение, данные и живые формулы (идея пользователя). */
+function createExampleSheet(ex: FunctionExample): void {
+  const names = model.getWorksheetsProperties().map((p) => p.name.toLowerCase());
+  let name = `Пример ${ex.fn}`;
+  for (let i = 2; names.includes(name.toLowerCase()); i++) name = `Пример ${ex.fn} (${i})`;
+  model.newSheet();
+  const sh = model.getWorksheetsProperties().length - 1;
+  model.renameSheet(sh, name);
+  const set = (r: number, c: number, v: string) => model.setUserInput(sh, r, c, v);
+  const text = (v: string) => (/^[=+\-]/.test(v) ? `'${v}` : v); // показать формулу как текст
+  const area = (row: number, column: number, width = 1, height = 1) => ({ sheet: sh, row, column, width, height });
+  const bold = (r: number, c: number, w = 1) => model.updateRangeStyle(area(r, c, w), 'font.b', 'true');
+  const line = { item: { style: 'thin', color: '#9fc9bd' }, type: 'All' as const };
+  const fill = '#e6f3ef';
+
+  set(1, 1, ex.title);
+  model.updateRangeStyle(area(1, 1), 'font.size', '15');
+  bold(1, 1);
+  set(2, 1, text(ex.syntax));
+  model.updateRangeStyle(area(2, 1), 'font.color', '#1d5a4f');
+  ex.args.slice(0, 5).forEach(([arg, what], i) => { set(3 + i, 1, arg); bold(3 + i, 1); set(3 + i, 2, what); });
+
+  set(9, 1, 'Данные для примеров');
+  bold(9, 1);
+  const width = Math.max(...ex.data.map((r) => r.length));
+  ex.data.slice(0, 9).forEach((row, i) => row.forEach((v, j) => set(10 + i, 1 + j, v)));
+  model.updateRangeStyle(area(10, 1, width), 'fill.color', fill);
+  bold(10, 1, width);
+  model.setAreaWithBorder(area(10, 1, width, Math.min(ex.data.length, 9)), line);
+
+  const r0 = 21;
+  set(r0 - 1, 1, 'Примеры: меняйте данные выше — результаты пересчитаются');
+  bold(r0 - 1, 1);
+  ['Формула', 'Результат', 'Что делает'].forEach((h, j) => set(r0, 1 + j, h));
+  model.updateRangeStyle(area(r0, 1, 3), 'fill.color', fill);
+  bold(r0, 1, 3);
+  ex.examples.forEach(([f, note], i) => {
+    set(r0 + 1 + i, 1, text(f));
+    set(r0 + 1 + i, 2, f);
+    set(r0 + 1 + i, 3, note);
+  });
+  model.setAreaWithBorder(area(r0, 1, 2, ex.examples.length + 1), line);
+  model.updateRangeStyle(area(r0 + 1, 1, 1, ex.examples.length), 'font.color', '#1d5a4f');
+  model.updateRangeStyle(area(r0 + 1, 2, 1, ex.examples.length), 'font.b', 'true');
+
+  const e0 = r0 + ex.examples.length + 3;
+  set(e0, 1, 'Частые ошибки');
+  bold(e0, 1);
+  ex.errors.forEach((t, i) => set(e0 + 1 + i, 1, `• ${t}`));
+
+  model.setColumnsWidth(sh, 1, 1, 360);
+  model.setColumnsWidth(sh, 2, 4, 120);
+  setSheet(sh);
+  grid.select(r0 + 1, 2);
+  showToast(`Лист «${name}» добавлен. Это обычный лист: его можно менять или удалить.`);
+}
+
 function functionList(q: string) {
   return FUNCTIONS
     .map((f) => ({ f, score: q ? Math.max(matchScore(q, f.ru), matchScore(q, f.en), matchScore(q, f.description) * 0.7) : 1 }))
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score)
-    .map(({ f }) => ({ label: `ƒ ${f.ru} — ${f.description}`, hint: f.en, run: () => startEdit(`=${f.ru}(`) }));
+    .flatMap(({ f }) => {
+      const items = [{ label: `ƒ ${f.ru} — ${f.description}`, hint: f.en, run: () => startEdit(`=${f.ru}(`) }];
+      const ex = exampleFor(f.ru);
+      if (ex && q) items.push({ label: `📘 ${f.ru}: пример на отдельном листе`, hint: 'справка', run: () => createExampleSheet(ex) });
+      return items;
+    });
 }
 
 function searchResults(q: string) {
@@ -1347,6 +1410,8 @@ function searchResults(q: string) {
     const score = Math.max(matchScore(q, f.ru), matchScore(q, f.en), matchScore(q, f.description) * 0.7);
     if (score > 0) {
       found.push({ score, label: `ƒ ${f.ru} (${f.en}) — ${f.description}`, run: () => startEdit(`=${f.ru}(`) });
+      const ex = exampleFor(f.ru);
+      if (ex) found.push({ score: score - 0.01, label: `📘 ${f.ru}: пример на отдельном листе`, run: () => createExampleSheet(ex) });
     }
   }
   return found.sort((a, b) => b.score - a.score);
@@ -1463,6 +1528,8 @@ initBackstage({
   },
 });
 void hideBackstage;
+
+if (import.meta.env.DEV) Object.assign((window as unknown as { __ens: object }).__ens, { example: (fn: string) => createExampleSheet(exampleFor(fn)!) });
 
 if (location.protocol === 'file:') {
   // Версия одним файлом для браузера: сохранять на место браузер не умеет.

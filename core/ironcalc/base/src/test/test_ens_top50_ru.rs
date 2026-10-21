@@ -111,3 +111,30 @@ fn ens_top50_functions_ru() {
     }
     assert!(failed.is_empty(), "{} из {} не совпали:\n{}", failed.len(), cases.len(), failed.join("\n"));
 }
+
+/// ENS-Office: halves are rounded away from zero when a number is shown, as in
+/// Excel, and TEXT takes the format in Russian notation ("# ##0,00").
+#[test]
+fn ens_display_rounding_and_text_format_ru() {
+    let mut m = UserModel::new_empty("model", "ru", "UTC", "ru").unwrap();
+    m.set_user_input(0, 1, 1, "1234,5").unwrap();
+    m.set_user_input(0, 2, 1, "2,5").unwrap();
+    m.set_user_input(0, 3, 1, "2,345").unwrap();
+    m.set_user_input(0, 4, 1, "-0,125").unwrap();
+    let area = |r| crate::expressions::types::Area { sheet: 0, row: r, column: 1, width: 1, height: 1 };
+    m.update_range_style(&area(1), "num_fmt", "0").unwrap();
+    m.update_range_style(&area(2), "num_fmt", "0").unwrap();
+    m.update_range_style(&area(3), "num_fmt", "0.00").unwrap();
+    m.update_range_style(&area(4), "num_fmt", "0.00").unwrap();
+    assert_eq!(m.get_formatted_cell_value(0, 1, 1).unwrap(), "1235");
+    assert_eq!(m.get_formatted_cell_value(0, 2, 1).unwrap(), "3");
+    assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "2,35");
+    assert_eq!(m.get_formatted_cell_value(0, 4, 1).unwrap(), "-0,13");
+    m.set_user_input(0, 1, 2, "=ТЕКСТ(A1; \"0\")").unwrap();
+    m.set_user_input(0, 2, 2, "=ТЕКСТ(A1; \"# ##0,00\")").unwrap();
+    m.set_user_input(0, 3, 2, "=ТЕКСТ(0,256; \"0,0%\")").unwrap();
+    m.set_user_input(0, 4, 2, "=ТЕКСТ(A1; \"0,00\\\" руб.\\\"\")").unwrap();
+    assert_eq!(m.get_formatted_cell_value(0, 1, 2).unwrap(), "1235");
+    assert_eq!(m.get_formatted_cell_value(0, 2, 2).unwrap().replace('\u{a0}', " "), "1 234,50");
+    assert_eq!(m.get_formatted_cell_value(0, 3, 2).unwrap(), "25,6%");
+}

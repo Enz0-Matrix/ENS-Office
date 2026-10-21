@@ -385,7 +385,7 @@ impl<'a> Model<'a> {
         match value_result {
             CalcResult::Array(arr) => {
                 let format_code = match self.get_string(&args[1], cell) {
-                    Ok(s) => s,
+                    Ok(s) => crate::formatter::format::delocalize_format_code(&s, self.locale),
                     // An error in every element; the ones that already are
                     // an error keep theirs.
                     Err(e) => {
@@ -432,7 +432,7 @@ impl<'a> Model<'a> {
                 // The format comes before the value is looked at: an error in
                 // it is the result, whatever the value, as for an array
                 let format_code = match self.get_string(&args[1], cell) {
-                    Ok(s) => s,
+                    Ok(s) => crate::formatter::format::delocalize_format_code(&s, self.locale),
                     Err(s) => return s,
                 };
                 let value = match other {

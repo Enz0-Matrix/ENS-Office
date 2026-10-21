@@ -59,6 +59,84 @@ fn use_group_separator(use_thousands: bool, digit_index: i32, group_sizes: &str)
     false
 }
 
+/// ENS-Office: round to `digits` decimals, halves away from zero, working on
+/// the shortest decimal representation (so 2.345 is "2.345", not 2.34499…).
+pub(crate) fn round_half_away(value: f64, digits: i32) -> f64 {
+    if !value.is_finite() || !(0..=15).contains(&digits) {
+        return value;
+    }
+    let clean = to_precision(value, 15);
+    let s = format!("{}", clean.abs());
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => return clean,
+    };
+    let d = digits as usize;
+    if frac_part.len() <= d {
+        return clean;
+    }
+    let mut kept: Vec<u8> = int_part.bytes().chain(frac_part.bytes().take(d)).map(|b| b - b'0').collect();
+    if frac_part.as_bytes()[d] >= b'5' {
+        let mut i = kept.len();
+        loop {
+            if i == 0 {
+                kept.insert(0, 1);
+                break;
+            }
+            i -= 1;
+            if kept[i] == 9 {
+                kept[i] = 0;
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    let digits_str: String = kept.iter().map(|d| (b'0' + d) as char).collect();
+    let split = digits_str.len() - d;
+    let text = if d == 0 { digits_str } else { format!("{}.{}", &digits_str[..split], &digits_str[split..]) };
+    let rounded = text.parse::<f64>().unwrap_or(clean);
+    if clean < 0.0 { -rounded } else { rounded }
+}
+
+/// ENS-Office: a format code typed in a formula (TEXT) in the locale's notation —
+/// "# ##0,00" in Russian Excel — to the stored notation "#,##0.00". Text in
+/// quotes and escaped characters are left alone.
+pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
+    if locale.numbers.symbols.decimal != "," {
+        return code.to_string();
+    }
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    let mut in_quotes = false;
+    let is_digit = |c: Option<&char>| matches!(c, Some('0' | '#' | '?'));
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            in_quotes = !in_quotes;
+            out.push(c);
+        } else if in_quotes {
+            out.push(c);
+        } else if c == '\\' && i + 1 < chars.len() {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 1;
+        } else if c == ',' {
+            out.push('.');
+        } else if c == '.' {
+            out.push(',');
+        } else if (c == ' ' || c == '\u{a0}') && is_digit(chars.get(i.wrapping_sub(1)).filter(|_| i > 0)) && is_digit(chars.get(i + 1)) {
+            // a space between digit placeholders is the thousands separator
+            out.push(',');
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
 pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Formatted {
     let mut parser = Parser::new(format);
     parser.parse();
@@ -441,10 +519,15 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let tokens = &p.tokens;
             value = value * 100.0_f64.powi(p.percent) / (1000.0_f64.powi(p.comma));
             // p.precision is the number of significant digits _after_ the decimal point
-            value = to_precision(
-                value,
-                (p.precision as usize) + format!("{}", value.abs().floor()).len(),
-            );
+            // ENS-Office: Excel rounds halves away from zero on the decimal
+            // digits (1234,5 → "1235"; 2,345 → "2,35"); Rust's formatting
+            // rounds exact binary ties to even.
+            value = if p.is_scientific {
+                // in scientific notation the precision is that of the mantissa
+                to_precision(value, (p.precision as usize) + format!("{}", value.abs().floor()).len())
+            } else {
+                round_half_away(value, p.precision)
+            };
             let mut value_abs = value.abs();
             let mut exponent_part: Vec<char> = vec![];
             let mut exponent_is_negative = value_abs < 10.0;
