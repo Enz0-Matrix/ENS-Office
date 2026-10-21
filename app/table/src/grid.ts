@@ -68,6 +68,8 @@ export class Grid {
    *  если щелчок обработан (тогда выделение листа не меняется). */
   onPointer: (row: number, column: number, phase: 'down' | 'drag', shift: boolean) => boolean = () => false;
   private pointing = false;
+  /** Перед выбором ячейки мышью: завершить ввод в прежней ячейке. false — остаться в ней. */
+  beforeSelect: () => boolean = () => true;
   /** Двойной щелчок или F2: начать редактирование. */
   onEditRequest: (initial?: string) => void = () => {};
   /** Перетащили границу заголовка: новая ширина столбца / высота строки, px
@@ -509,6 +511,9 @@ export class Grid {
       this.pointing = true;
       return;
     }
+    // Ввод завершаем сразу, а не после потери фокуса: иначе прежняя ячейка
+    // выделяется заново и протяжка превращает щелчок в диапазон.
+    if (!this.beforeSelect()) { e.preventDefault(); return; }
     this.scroller.focus();
     if (h.header === 'column') this.selectRange(1, h.column, LAST_ROW, h.column);
     else if (h.header === 'row') this.selectRange(h.row, 1, h.row, LAST_COLUMN);

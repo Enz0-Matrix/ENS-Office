@@ -133,10 +133,10 @@ export const TABS: RibbonTab[] = [
           { type: 'medium', command: 'align.top', icon: 'align_top' },
           { type: 'medium', command: 'align.middle', icon: 'align_middle' },
           { type: 'medium', command: 'align.bottom', icon: 'align_bottom' },
-          { type: 'medium', command: 'format.wrap', icon: 'text_wrap' },
           { type: 'medium', command: 'align.left', icon: 'text_align_left' },
           { type: 'medium', command: 'align.center', icon: 'text_align_center' },
           { type: 'medium', command: 'align.right', icon: 'text_align_right' },
+          { type: 'medium', command: 'format.wrap', icon: 'text_wrap' },
           { type: 'medium', command: 'format.merge', icon: 'merge' },
           { type: 'split', command: 'format.borders', icon: 'border_all' },
         ],
@@ -332,8 +332,9 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       arrow.className = 'btn split-arrow';
       arrow.title = `${cmd?.label ?? ''}: выбрать`;
       arrow.textContent = '▾';
-      arrow.addEventListener('mousedown', (e) => {
-        e.preventDefault();
+      // Меню — по click: на mousedown его тут же закрывает общий обработчик «щелчок мимо меню».
+      arrow.addEventListener('mousedown', (e) => e.preventDefault());
+      arrow.addEventListener('click', () => {
         const r = arrow.getBoundingClientRect();
         run(`${item.command}:menu`, `${Math.round(r.left)},${Math.round(r.bottom + 2)}`);
       });

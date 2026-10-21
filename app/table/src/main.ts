@@ -260,6 +260,11 @@ grid.onPointer = (row, column, phase, shift) => {
   return true;
 };
 
+grid.beforeSelect = () => {
+  if (editing) commitEdit(0, 0);
+  return !editing; // формула с ошибкой — ввод продолжается
+};
+
 editor.addEventListener('keydown', (e) => {
   if (!editing) { gridKey(e); return; }
   editKey(e);

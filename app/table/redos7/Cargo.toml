@@ -1,6 +1,6 @@
 [package]
 name = "ens-table-redos7"
-version = "0.1.10"
+version = "0.1.11"
 description = "ENS-Table для РЕД ОС 7: окно Chromium в режиме приложения и помощник для файлов и восстановления"
 edition = "2021"
 publish = false
