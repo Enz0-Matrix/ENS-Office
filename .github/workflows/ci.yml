@@ -85,6 +85,10 @@ jobs:
       - name: Сборка приложения
         working-directory: app/table
         run: npx tauri build --bundles ${{ matrix.bundles }}
+      - name: Версия для браузера одним файлом (для старых систем)
+        if: matrix.name == 'linux'
+        working-directory: app/table
+        run: ENS_SINGLE=1 npx vite build && node scripts/build-single.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: ens-table-${{ matrix.name }}
@@ -94,5 +98,6 @@ jobs:
             app/table/src-tauri/target/release/bundle/**/*.deb
             app/table/src-tauri/target/release/bundle/**/*.exe
             app/table/src-tauri/target/release/ens-table.exe
+            app/table/dist-single/ENS-Table_*_browser.html
           if-no-files-found: error
           retention-days: 30

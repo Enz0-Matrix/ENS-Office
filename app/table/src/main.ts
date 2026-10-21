@@ -1464,6 +1464,11 @@ initBackstage({
 });
 void hideBackstage;
 
+if (location.protocol === 'file:') {
+  // Версия одним файлом для браузера: сохранять на место браузер не умеет.
+  showToast('ENS-Table в браузере: «Сохранить» скачивает книгу в папку «Загрузки». Восстановление после сбоя — только в настольной версии.');
+}
+
 await desk.start({
   model: () => model,
   setModel,

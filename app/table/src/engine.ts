@@ -135,6 +135,16 @@ interface EngineStatic {
 const Engine = EngineModel as unknown as EngineStatic;
 
 export async function loadEngine(): Promise<void> {
+  // Версия «одним файлом» (для браузера на старых системах): движок
+  // вложен в страницу как base64 и не загружается отдельным файлом.
+  const embedded = (globalThis as { __ENS_WASM_B64__?: string }).__ENS_WASM_B64__;
+  if (embedded) {
+    const bin = atob(embedded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    await init({ module_or_path: bytes });
+    return;
+  }
   await init();
 }
 
