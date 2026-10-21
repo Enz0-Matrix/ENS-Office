@@ -11,6 +11,9 @@ export interface Settings {
   recognizeDates: boolean;
   /** Сортировка: пустые ячейки в конце (как Excel), в начале или как ноль. */
   sortBlanks: 'last' | 'first' | 'zero';
+  /** Кнопка «Границы»: что ставит по щелчку и какой линией. */
+  borderType: string;
+  borderStyle: string;
   /** Своя папка временных файлов восстановления ('' — в профиле пользователя). */
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
@@ -19,7 +22,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last',
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin',
 };
 
 export const settings: Settings = (() => {

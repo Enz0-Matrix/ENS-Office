@@ -818,22 +818,34 @@ function merge(kind: 'center' | 'plain' | 'across' | 'undo'): void {
 }
 
 /** Кнопка «Границы»: меню, как в Excel. */
+const BORDER_TYPES: [BorderType, string][] = [
+  ['All', 'Все границы'], ['Outer', 'Внешние границы'], ['Inner', 'Внутренние границы'],
+  ['Bottom', 'Нижняя граница'], ['Top', 'Верхняя граница'], ['Left', 'Левая граница'], ['Right', 'Правая граница'],
+  ['None', 'Нет границы'],
+];
+const BORDER_STYLES: [string, string][] = [
+  ['thin', 'тонкая'], ['medium', 'средняя'], ['thick', 'толстая'], ['double', 'двойная'], ['dashed', 'пунктир'], ['dotted', 'точки'],
+];
+
+/** Поставить границы: по умолчанию — последний выбор (сначала «Все границы», тонкая). */
+function applyBorders(type = settings.borderType as BorderType, st = settings.borderStyle): void {
+  const style = st === 'dashed' ? 'mediumdashed' : st;
+  try { model.setAreaWithBorder(selectionArea(), { item: { style, color: '#000000' }, type }); } catch (e) { showToast(String(e)); }
+  grid.render();
+  focusGrid();
+}
+
+/** Стрелка у кнопки «Границы»: какие границы и какой линией. Выбор запоминается. */
 function bordersMenu(x: number, y: number): void {
-  const set = (type: BorderType, st = 'thin') => {
-    try { model.setAreaWithBorder(selectionArea(), { item: { style: st, color: '#000000' }, type }); } catch (e) { showToast(String(e)); }
-    grid.render();
-    focusGrid();
-  };
   showMenu([
-    { label: 'Нижняя граница', run: () => set('Bottom') },
-    { label: 'Верхняя граница', run: () => set('Top') },
-    { label: 'Левая граница', run: () => set('Left') },
-    { label: 'Правая граница', run: () => set('Right') },
-    { label: 'Нет границы', separator: true, run: () => set('None') },
-    { label: 'Все границы', run: () => set('All') },
-    { label: 'Внешние границы', run: () => set('Outer') },
-    { label: 'Толстая внешняя граница', run: () => set('Outer', 'thick') },
-    { label: 'Внутренние границы', run: () => set('Inner') },
+    ...BORDER_TYPES.map(([type, label]) => ({
+      label: `${type === settings.borderType ? '● ' : ''}${label}`, separator: type === 'Bottom' || type === 'None',
+      run: () => { settings.borderType = type; saveSettings(); applyBorders(); },
+    })),
+    ...BORDER_STYLES.map(([st, label], i) => ({
+      label: `${st === settings.borderStyle ? '● ' : ''}Линия: ${label}`, separator: i === 0,
+      run: () => { settings.borderStyle = st; saveSettings(); showToast(`Линия границ: ${label}. Щелчок по кнопке «Границы» ставит «${BORDER_TYPES.find((b) => b[0] === settings.borderType)?.[1]}» этой линией.`); },
+    })),
   ], x, y);
 }
 
@@ -876,6 +888,48 @@ function freezeMenu(x: number, y: number): void {
 
 let lastPointer = { x: 200, y: 160 };
 document.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, y: e.clientY }; }, true);
+
+// --- Отменить / Повторить: видно, можно ли, и что сработало ---
+
+const qaUndo = $<HTMLButtonElement>('qa-undo');
+const qaRedo = $<HTMLButtonElement>('qa-redo');
+qaUndo.innerHTML = icon('arrow_undo', 20);
+qaRedo.innerHTML = icon('arrow_redo', 20);
+for (const [b, kind] of [[qaUndo, 'undo'], [qaRedo, 'redo']] as const) {
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', () => undoRedo(kind));
+}
+
+/** Значок «подмигивает», когда действие отменено или повторено. */
+function wink(kind: 'undo' | 'redo'): void {
+  const els = [kind === 'undo' ? qaUndo : qaRedo, ...document.querySelectorAll<HTMLElement>(`.btn[data-command="edit.${kind}"]`)];
+  for (const el of els) {
+    el.classList.remove('wink');
+    void el.offsetWidth; // перезапуск анимации
+    el.classList.add('wink');
+  }
+}
+
+function undoRedo(kind: 'undo' | 'redo'): void {
+  const can = kind === 'undo' ? model.canUndo() : model.canRedo();
+  if (!can) { showToast(kind === 'undo' ? 'Отменять нечего.' : 'Повторять нечего.'); return; }
+  if (kind === 'undo') model.undo(); else model.redo();
+  wink(kind);
+  grid.invalidateLayout();
+  updateFormulaBar();
+  updateStatus();
+  syncUndoState();
+}
+
+/** Нефритовые — когда можно, серые — когда нельзя. */
+function syncUndoState(): void {
+  const u = model.canUndo(), r = model.canRedo();
+  qaUndo.disabled = !u;
+  qaRedo.disabled = !r;
+  document.querySelectorAll<HTMLElement>('.btn[data-command="edit.undo"]').forEach((b) => b.classList.toggle('disabled', !u));
+  document.querySelectorAll<HTMLElement>('.btn[data-command="edit.redo"]').forEach((b) => b.classList.toggle('disabled', !r));
+}
+setInterval(syncUndoState, 400);
 
 // --- Данные: сортировка, фильтр, поиск ---
 
@@ -997,9 +1051,30 @@ function toggleFilter(): void {
   const s = grid.sel;
   const sel = usedSelection();
   if (!sel) { showToast('Выделите таблицу с данными, чтобы включить фильтр.'); return; }
-  // Как в Excel: фильтр на всю таблицу вокруг выделения, без пустого «хвоста» листа.
-  const r = s.r1 === s.r2 && s.c1 === s.c2 ? currentRegion(s.row, s.column) : currentRegion(sel.r1, sel.c1, sel);
-  setFilter(grid.sheet, { r1: r.r1, c1: r.c1, r2: r.r2, c2: r.c2, criteria: new Map() });
+  // Одна ячейка (или одна объединённая) — ищем шапку сами; иначе фильтр в выделенной строке.
+  const om = grid.mergeOf(s.row, s.column);
+  const single = (s.r1 === s.r2 && s.c1 === s.c2)
+    || (!!om && s.r1 === om.row && s.c1 === om.column && s.r2 === om.row + om.height - 1 && s.c2 === om.column + om.width - 1);
+  const region = single ? currentRegion(s.row, s.column) : currentRegion(sel.r1, sel.c1, sel);
+  let header: number, c1 = region.c1, c2 = region.c2;
+  if (!single) {
+    // Выделена строка шапки (или ячейки в ней) — фильтр ставим именно в неё.
+    header = sel.r1;
+    if (!(s.c1 === 1 && s.c2 === LAST_COLUMN)) { c1 = sel.c1; c2 = sel.c2; }
+  } else {
+    // Одна ячейка: пропускаем строки названия (объединены по ширине) и верхние
+    // этажи многострочной шапки (объединения, уходящие ниже), как сделал бы человек.
+    header = region.r1;
+    const merges = model.getMergedCells(grid.sheet);
+    for (let guard = 0; guard < 20 && header < region.r2; guard++) {
+      const inRow = merges.filter((m) => m.row <= header && m.row + m.height - 1 >= header && m.column <= region.c2 && m.column + m.width - 1 >= region.c1);
+      const title = inRow.some((m) => m.width > 1 && m.row === header && m.height === 1);
+      const goesDown = inRow.some((m) => m.row + m.height - 1 > header);
+      if (!title && !goesDown) break;
+      header++;
+    }
+  }
+  setFilter(grid.sheet, { r1: header, c1, r2: Math.max(region.r2, header), c2, criteria: new Map() });
 }
 
 initFilter({
@@ -1246,8 +1321,8 @@ register(
     run: () => void desk.save() },
   { id: 'file.saveAs', label: 'Сохранить как…', keywords: ['save as', 'сохранить под именем'], keys: ['F12', 'Ctrl+Shift+KeyS'],
     run: () => void desk.saveAs() },
-  { id: 'edit.undo', label: 'Отменить', keywords: ['undo'], keys: ['Ctrl+KeyZ'], run: () => { model.undo(); grid.invalidateLayout(); updateFormulaBar(); } },
-  { id: 'edit.redo', label: 'Повторить', keywords: ['redo'], keys: ['Ctrl+KeyY'], run: () => { model.redo(); grid.invalidateLayout(); updateFormulaBar(); } },
+  { id: 'edit.undo', label: 'Отменить', keywords: ['undo', 'назад', 'отмена'], keys: ['Ctrl+KeyZ'], run: () => undoRedo('undo') },
+  { id: 'edit.redo', label: 'Повторить', keywords: ['redo', 'вернуть'], keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => undoRedo('redo') },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
     const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); grid.render(); updateFormulaBar();
   } },
@@ -1288,8 +1363,13 @@ register(
   { id: 'format.merge', label: 'Объединить и поместить в центр', keywords: ['merge', 'объединить ячейки', 'объединение'],
     run: () => merge('center') },
   { id: 'format.unmerge', label: 'Отменить объединение ячеек', keywords: ['unmerge', 'разъединить'], run: () => merge('undo') },
-  { id: 'format.borders', label: 'Границы', keywords: ['borders', 'рамка', 'границы', 'обрамление'],
-    run: () => bordersMenu(lastPointer.x, lastPointer.y + 8) },
+  { id: 'format.borders', label: 'Границы (последний выбор)', keywords: ['borders', 'рамка', 'границы', 'обрамление'],
+    run: () => applyBorders() },
+  { id: 'format.borders:menu', label: 'Границы: выбрать вид и линию', keywords: ['тип линии', 'толщина границы'],
+    run: (at) => {
+      const [x, y] = (at ?? '').split(',').map(Number);
+      bordersMenu(Number.isFinite(x) ? x : lastPointer.x, Number.isFinite(y) ? y : lastPointer.y + 8);
+    } },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => { if (fmt) style('num_fmt', () => fmt); } },
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
     const name = nextSheetName(model);

@@ -163,8 +163,15 @@ export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel:
     root.id = 'print-root';
     document.body.append(root);
   }
-  root.innerHTML = `<style>@page { size: A4 ${opts.landscape ? 'landscape' : 'portrait'}; margin: ${mv}mm ${mh}mm; }</style>
-    <div class="print-zoom" style="zoom:${zoomFor(opts, t.width, t.height)}">${t.html}</div>`;
+  // Поля страницы — нулевые: тогда браузер не печатает в них свои дату, имя и
+  // путь к файлу. Наши поля — пустые строки шапки и подвала внешней таблицы
+  // (повторяются на каждой странице) и отступы слева/справа.
+  root.innerHTML = `<style>@page { size: A4 ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
+    <table class="print-page" style="padding: 0 ${mh}mm">
+      <thead><tr><td style="height:${mv}mm"></td></tr></thead>
+      <tfoot><tr><td style="height:${mv}mm"></td></tr></tfoot>
+      <tbody><tr><td><div class="print-zoom" style="zoom:${zoomFor(opts, t.width, t.height)}">${t.html}</div></td></tr></tbody>
+    </table>`;
   const old = document.title;
   document.title = title; // имя PDF по умолчанию
   document.body.classList.add('printing');

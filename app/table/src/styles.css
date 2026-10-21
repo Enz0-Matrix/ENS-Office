@@ -48,6 +48,23 @@ body { display: flex; flex-direction: column; }
 .btn:hover { background: #ececec; border-color: #dcdcdc; }
 .btn.on { background: #cfe9e2; border-color: #9ccfc3; }
 .btn.small { width: 28px; height: 28px; }
+.btn.medium { width: 34px; height: 34px; }
+.btn.medium svg { width: 22px; height: 22px; }
+.split.medium { display: inline-flex; align-items: stretch; }
+.split.medium .split-arrow { height: 34px; }
+/* Отменить / Повторить: нефритовые, когда доступны; серые, когда нет; «подмигивают» при срабатывании. */
+.quick-access { display: inline-flex; gap: 2px; margin-left: 2px; }
+.qa { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #fff; display: inline-flex;
+  align-items: center; justify-content: center; cursor: pointer; }
+.qa svg { width: 18px; height: 18px; fill: currentColor; }
+.qa:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+.qa:disabled { color: rgba(255,255,255,.4); cursor: default; }
+.btn[data-command="edit.undo"]:not(.disabled) svg, .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--accent); }
+.btn.disabled { opacity: .45; }
+.btn.disabled:hover { background: none; border-color: transparent; }
+@keyframes ens-wink { 0% { transform: scale(1); } 35% { transform: scale(1.28) rotate(-8deg); filter: drop-shadow(0 0 4px rgba(143, 230, 205, .9)); } 100% { transform: none; } }
+.wink svg { animation: ens-wink .45s ease-out; }
+@media (prefers-reduced-motion: reduce) { .wink svg { animation: none; } }
 .btn.large { flex-direction: column; width: 64px; height: 66px; gap: 4px; font-size: 12px; line-height: 1.1; text-align: center; }
 .btn.large svg { width: 28px; height: 28px; }
 .ribbon-select { height: 26px; font: inherit; margin-top: 2px; }
@@ -238,3 +255,8 @@ footer { display: flex; flex-direction: column; }
 .sort-level button { border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; height: 28px; }
 .sort-level button:hover { background: #f3e1e1; color: #a4262c; }
 .sort-add { border: 1px dashed var(--border); background: none; border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer; color: var(--accent-dark); margin-bottom: 8px; }
+
+.print-page { border-collapse: collapse; width: 100%; }
+.print-page > thead, .print-page > tfoot { display: table-header-group; }
+.print-page > tfoot { display: table-footer-group; }
+.print-page > * > tr > td { padding: 0; }

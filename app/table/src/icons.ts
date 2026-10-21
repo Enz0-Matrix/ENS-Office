@@ -50,6 +50,24 @@ import settings20 from '@fluentui/svg-icons/icons/settings_20_regular.svg?raw';
 import document24 from '@fluentui/svg-icons/icons/document_24_regular.svg?raw';
 import grid24 from '@fluentui/svg-icons/icons/grid_24_regular.svg?raw';
 
+import i_arrow_undo_20 from '@fluentui/svg-icons/icons/arrow_undo_20_regular.svg?raw';
+import i_arrow_redo_20 from '@fluentui/svg-icons/icons/arrow_redo_20_regular.svg?raw';
+import i_arrow_redo_24 from '@fluentui/svg-icons/icons/arrow_redo_24_regular.svg?raw';
+import i_location_24 from '@fluentui/svg-icons/icons/location_24_regular.svg?raw';
+import i_text_align_left_24 from '@fluentui/svg-icons/icons/text_align_left_24_regular.svg?raw';
+import i_text_align_center_24 from '@fluentui/svg-icons/icons/text_align_center_24_regular.svg?raw';
+import i_text_align_right_24 from '@fluentui/svg-icons/icons/text_align_right_24_regular.svg?raw';
+import i_align_top_24 from '@fluentui/svg-icons/icons/align_top_24_regular.svg?raw';
+import i_align_middle_24 from '@fluentui/svg-icons/icons/align_center_vertical_24_regular.svg?raw';
+import i_align_bottom_24 from '@fluentui/svg-icons/icons/align_bottom_24_regular.svg?raw';
+import i_text_wrap_24 from '@fluentui/svg-icons/icons/text_wrap_24_regular.svg?raw';
+import i_merge_24 from '@fluentui/svg-icons/icons/table_cells_merge_24_regular.svg?raw';
+import i_border_all_24 from '@fluentui/svg-icons/icons/border_all_24_regular.svg?raw';
+import i_sort_asc_24 from '@fluentui/svg-icons/icons/text_sort_ascending_24_regular.svg?raw';
+import i_filter_24 from '@fluentui/svg-icons/icons/filter_24_regular.svg?raw';
+import i_search_24 from '@fluentui/svg-icons/icons/search_24_regular.svg?raw';
+import i_eraser_24 from '@fluentui/svg-icons/icons/eraser_24_regular.svg?raw';
+
 export const ICONS: Record<string, string> = {
   'clipboard_paste_20': clipboardPaste20,
   'cut_20': cut20,
@@ -99,4 +117,21 @@ export const ICONS: Record<string, string> = {
   'document_24': document24,
   'arrow_autofit_width_24': arrowAutofitWidth24,
   'calendar_ltr_24': calendarLtr24,
+  'arrow_undo_20': i_arrow_undo_20,
+  'arrow_redo_20': i_arrow_redo_20,
+  'arrow_redo_24': i_arrow_redo_24,
+  'location_24': i_location_24,
+  'text_align_left_24': i_text_align_left_24,
+  'text_align_center_24': i_text_align_center_24,
+  'text_align_right_24': i_text_align_right_24,
+  'align_top_24': i_align_top_24,
+  'align_middle_24': i_align_middle_24,
+  'align_bottom_24': i_align_bottom_24,
+  'text_wrap_24': i_text_wrap_24,
+  'merge_24': i_merge_24,
+  'border_all_24': i_border_all_24,
+  'sort_asc_24': i_sort_asc_24,
+  'filter_24': i_filter_24,
+  'search_24': i_search_24,
+  'eraser_24': i_eraser_24,
 };

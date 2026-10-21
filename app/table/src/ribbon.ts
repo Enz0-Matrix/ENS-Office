@@ -10,7 +10,9 @@ export function icon(name: string, size: 20 | 24 = 20): string {
 }
 
 export type RibbonItem =
-  | { type: 'large' | 'small'; command: string; icon: string; label?: string; module?: string }
+  | { type: 'large' | 'medium' | 'small'; command: string; icon: string; label?: string; module?: string }
+  /** Кнопка с памятью: основная часть повторяет последний выбор, стрелка — меню (command + ':menu'). */
+  | { type: 'split'; command: string; icon: string }
   /** Кнопка с палитрой: основная часть применяет последний цвет, стрелка открывает палитру. */
   | { type: 'color'; command: string; icon: string; kind: 'fill' | 'font' }
   | { type: 'select'; command: string; options: { value: string; label: string }[]; width?: number }
@@ -99,6 +101,13 @@ export const TABS: RibbonTab[] = [
     label: 'Главная',
     groups: [
       {
+        name: 'Отмена',
+        items: [
+          { type: 'medium', command: 'edit.undo', icon: 'arrow_undo' },
+          { type: 'medium', command: 'edit.redo', icon: 'arrow_redo' },
+        ],
+      },
+      {
         name: 'Буфер обмена',
         items: [
           { type: 'large', command: 'clipboard.paste', icon: 'clipboard_paste', label: 'Вставить' },
@@ -121,15 +130,15 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Выравнивание',
         items: [
-          { type: 'small', command: 'align.left', icon: 'text_align_left' },
-          { type: 'small', command: 'align.center', icon: 'text_align_center' },
-          { type: 'small', command: 'align.right', icon: 'text_align_right' },
-          { type: 'small', command: 'align.top', icon: 'align_top' },
-          { type: 'small', command: 'align.middle', icon: 'align_middle' },
-          { type: 'small', command: 'align.bottom', icon: 'align_bottom' },
-          { type: 'small', command: 'format.wrap', icon: 'text_wrap' },
-          { type: 'small', command: 'format.merge', icon: 'merge' },
-          { type: 'small', command: 'format.borders', icon: 'border_all' },
+          { type: 'medium', command: 'align.top', icon: 'align_top' },
+          { type: 'medium', command: 'align.middle', icon: 'align_middle' },
+          { type: 'medium', command: 'align.bottom', icon: 'align_bottom' },
+          { type: 'medium', command: 'format.wrap', icon: 'text_wrap' },
+          { type: 'medium', command: 'align.left', icon: 'text_align_left' },
+          { type: 'medium', command: 'align.center', icon: 'text_align_center' },
+          { type: 'medium', command: 'align.right', icon: 'text_align_right' },
+          { type: 'medium', command: 'format.merge', icon: 'merge' },
+          { type: 'split', command: 'format.borders', icon: 'border_all' },
         ],
       },
       {
@@ -139,12 +148,12 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Редактирование',
         items: [
-          { type: 'small', command: 'edit.autosum', icon: 'autosum' },
-          { type: 'small', command: 'edit.insertFunction', icon: 'math_formula' },
-          { type: 'small', command: 'edit.clear', icon: 'eraser' },
-          { type: 'small', command: 'data.sortAsc', icon: 'sort_asc' },
-          { type: 'small', command: 'data.filter', icon: 'filter' },
-          { type: 'small', command: 'edit.find', icon: 'search' },
+          { type: 'medium', command: 'edit.autosum', icon: 'autosum' },
+          { type: 'medium', command: 'edit.insertFunction', icon: 'math_formula' },
+          { type: 'medium', command: 'edit.clear', icon: 'eraser' },
+          { type: 'medium', command: 'data.sortAsc', icon: 'sort_asc' },
+          { type: 'medium', command: 'data.filter', icon: 'filter' },
+          { type: 'medium', command: 'edit.find', icon: 'search' },
         ],
       },
     ],
@@ -193,7 +202,7 @@ export const TABS: RibbonTab[] = [
         name: 'Зависимости формул',
         items: [
           { type: 'large', command: 'nav.precedents', icon: 'arrow_previous', label: 'Влияющие ячейки' },
-          { type: 'large', command: 'nav.back', icon: 'arrow_hook_up_left', label: 'Вернуться к ячейке' },
+          { type: 'large', command: 'nav.back', icon: 'location', label: 'Вернуться к ячейке' },
         ],
       },
     ],
@@ -309,11 +318,34 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       sel.dataset.command = item.command;
       return sel;
     }
+    if (item.type === 'split') {
+      const wrap = document.createElement('div');
+      wrap.className = 'split medium';
+      const main = document.createElement('button');
+      main.className = 'btn medium';
+      main.title = cmd?.label ?? '';
+      main.innerHTML = icon(item.icon, 24);
+      main.dataset.command = item.command;
+      main.addEventListener('mousedown', (e) => e.preventDefault());
+      main.addEventListener('click', () => run(item.command));
+      const arrow = document.createElement('button');
+      arrow.className = 'btn split-arrow';
+      arrow.title = `${cmd?.label ?? ''}: выбрать`;
+      arrow.textContent = '▾';
+      arrow.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const r = arrow.getBoundingClientRect();
+        run(`${item.command}:menu`, `${Math.round(r.left)},${Math.round(r.bottom + 2)}`);
+      });
+      wrap.append(main, arrow);
+      return wrap;
+    }
     const b = document.createElement('button');
-    b.className = item.type === 'large' ? 'btn large' : 'btn small';
+    b.className = `btn ${item.type}`;
+    b.dataset.command = item.command;
     const keys = cmd?.keys?.length ? ` (${keyLabel(cmd.keys[0])})` : '';
     b.title = `${cmd?.label ?? item.command}${keys}`;
-    b.innerHTML = icon(item.icon, item.type === 'large' ? 24 : 20) +
+    b.innerHTML = icon(item.icon, item.type === 'small' ? 20 : 24) +
       (item.type === 'large' ? `<span>${item.label ?? cmd?.label ?? ''}</span>` : '');
     b.addEventListener('mousedown', (e) => e.preventDefault()); // не отнимать фокус у сетки
     b.addEventListener('click', () => run(item.command));
