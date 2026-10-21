@@ -31,6 +31,9 @@ jobs:
       - name: Частичный пересчёт со сверкой с полным (ENS_VERIFY_INCREMENTAL)
         working-directory: core/ironcalc
         run: ENS_VERIFY_INCREMENTAL=1 cargo test --lib -p ironcalc_base
+      - name: Чтение и запись xlsx (настоящие файлы Excel)
+        working-directory: core/ironcalc
+        run: cargo test -p ironcalc --lib --tests
 
   desktop:
     name: Сборка ${{ matrix.name }}
