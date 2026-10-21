@@ -1,6 +1,6 @@
 [package]
 name = "ens-table"
-version = "0.1.7"
+version = "0.1.8"
 description = "ENS-Table — редактор таблиц ENS-Office"
 edition = "2021"
 publish = false
@@ -8,6 +8,12 @@ publish = false
 [lib]
 name = "ens_table_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Команды Tauri. Версия для РЕД ОС 7 (app/table/redos7) берёт files.rs и
+# recovery.rs без этой возможности — только общие функции.
+default = ["tauri-shell"]
+tauri-shell = []
 
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }

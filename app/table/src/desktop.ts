@@ -3,7 +3,7 @@
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
 import { fromBytes, openXlsx, type Model } from './engine';
-import { ask, inspectFile, isDesktop, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { ask, beaconClose, inspectFile, isDesktop, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
 import { localeId, saveSettings, settings } from './settings';
 
 export interface Doc {
@@ -97,7 +97,11 @@ export async function newWindow(): Promise<void> {
 }
 
 export async function closeBook(): Promise<void> {
-  if (!isDesktop) return;
+  if (!isTauri) {
+    // Окно браузера закрывается его крестиком (вопрос о сохранении задаст браузер).
+    window.close();
+    return;
+  }
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().close(); // спросит «Сохранить изменения?»
 }
@@ -130,8 +134,12 @@ export async function start(h: Host): Promise<void> {
   setInterval(() => void tick(), 1000);
   if (isDesktop) {
     setInterval(() => void recovery.heartbeat().catch(() => {}), 30_000);
-    await setupClose();
-    await setupWindowButtons();
+    if (isTauri) {
+      await setupClose();
+      await setupWindowButtons();
+    } else {
+      setupCloseLocal();
+    }
   }
   const params = new URLSearchParams(location.search);
   const open = params.get('open');
@@ -382,6 +390,20 @@ async function setupWindowButtons(): Promise<void> {
   box.querySelector('[data-win="close"]')!.addEventListener('click', () => void win.close());
   await win.onResized(() => void sync());
   await sync();
+}
+
+// --- Закрытие окна в версии для РЕД ОС 7 (окно Chromium) ---
+
+function setupCloseLocal(): void {
+  // Несохранённые изменения: браузер спросит «Покинуть сайт?». Даже если
+  // закрыть — временные файлы останутся, и книгу предложат восстановить.
+  window.addEventListener('beforeunload', (e) => {
+    if (host.doc().dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+  window.addEventListener('pagehide', () => {
+    const doc = host.doc();
+    beaconClose(doc.id, !doc.dirty);
+  });
 }
 
 // --- Закрытие окна ---

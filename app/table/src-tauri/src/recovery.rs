@@ -22,6 +22,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "tauri-shell")]
 use tauri::ipc::{InvokeBody, Request, Response};
 
 pub struct Recovery {
@@ -123,6 +124,7 @@ fn write_synced(path: &Path, data: &[u8]) -> std::io::Result<()> {
     fs::rename(tmp, path)
 }
 
+#[cfg(feature = "tauri-shell")]
 fn raw(request: &Request<'_>) -> Result<Vec<u8>, String> {
     match request.body() {
         InvokeBody::Raw(b) => Ok(b.clone()),
@@ -130,6 +132,7 @@ fn raw(request: &Request<'_>) -> Result<Vec<u8>, String> {
     }
 }
 
+#[cfg(feature = "tauri-shell")]
 fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
     request
         .headers()
@@ -143,137 +146,162 @@ fn io_err(e: std::io::Error) -> String {
     format!("Папка восстановления недоступна: {e}")
 }
 
-// --- Команды ---
+// --- Действия (общие для оболочки Tauri и для версии РЕД ОС 7) ---
 
-/// Пульс сеанса (раз в 30 с из интерфейса).
-#[tauri::command]
-pub fn recovery_heartbeat(state: tauri::State<'_, Recovery>) -> Result<(), String> {
-    state.write_session(false).map_err(io_err)
-}
-
-/// Папка восстановления (настройка): профиль, рядом с файлом или своя/сетевая.
-#[tauri::command]
-pub fn recovery_set_root(state: tauri::State<'_, Recovery>, path: String) -> Result<(), String> {
-    let p = PathBuf::from(path);
-    fs::create_dir_all(&p).map_err(io_err)?;
-    *state.root.lock().map_err(|e| e.to_string())? = p;
-    state.write_session(false).map_err(io_err)?;
-    state.hold_alive_lock();
-    Ok(())
-}
-
-#[tauri::command]
-pub fn recovery_root(state: tauri::State<'_, Recovery>) -> String {
-    state.root().display().to_string()
-}
-
-/// Начать вести книгу: метаданные.
-#[tauri::command]
-pub fn recovery_begin(state: tauri::State<'_, Recovery>, id: String, meta: DocMeta) -> Result<(), String> {
-    let dir = state.doc_dir(&state.session, &id)?;
-    fs::create_dir_all(&dir).map_err(io_err)?;
-    write_synced(&dir.join("meta.json"), &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
-}
-
-/// Снимок книги (тело — байты книги). Журнал начинается заново.
-#[tauri::command]
-pub fn recovery_snapshot(state: tauri::State<'_, Recovery>, request: Request<'_>) -> Result<(), String> {
-    let id = header(&request, "id")?;
-    let data = raw(&request)?;
-    let dir = state.doc_dir(&state.session, &id)?;
-    fs::create_dir_all(&dir).map_err(io_err)?;
-    let snap = dir.join("snapshot.bin");
-    if snap.exists() {
-        let _ = fs::copy(&snap, dir.join("snapshot.prev.bin"));
+impl Recovery {
+    pub fn heartbeat(&self) -> Result<(), String> {
+        let state = self;
+        state.write_session(false).map_err(io_err)
     }
-    write_synced(&snap, &data).map_err(io_err)?;
-    let _ = fs::remove_file(dir.join("journal.bin"));
-    let meta_path = dir.join("meta.json");
-    let mut meta: DocMeta = fs::read(&meta_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-    meta.snapshot_ms = now_ms();
-    meta.journal_entries = 0;
-    write_synced(&meta_path, &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
-}
 
-/// Дописать правки в журнал (тело — правки движка с прошлого раза).
-#[tauri::command]
-pub fn recovery_append(state: tauri::State<'_, Recovery>, request: Request<'_>) -> Result<(), String> {
-    let id = header(&request, "id")?;
-    let data = raw(&request)?;
-    if data.is_empty() {
-        return Ok(());
+    pub fn set_root(&self, path: String) -> Result<(), String> {
+        let state = self;
+        let p = PathBuf::from(path);
+        fs::create_dir_all(&p).map_err(io_err)?;
+        *state.root.lock().map_err(|e| e.to_string())? = p;
+        state.write_session(false).map_err(io_err)?;
+        state.hold_alive_lock();
+        Ok(())
     }
-    let dir = state.doc_dir(&state.session, &id)?;
-    let mut f = OpenOptions::new().create(true).append(true).open(dir.join("journal.bin")).map_err(io_err)?;
-    f.write_all(&(data.len() as u32).to_le_bytes()).map_err(io_err)?;
-    f.write_all(&data).map_err(io_err)?;
-    f.sync_data().map_err(io_err)
-}
 
-/// Книгу сохранили и закрыли (или отказались сохранять): временные файлы не нужны.
-#[tauri::command]
-pub fn recovery_forget(state: tauri::State<'_, Recovery>, id: String) -> Result<(), String> {
-    let dir = state.doc_dir(&state.session, &id)?;
-    if dir.exists() {
-        fs::remove_dir_all(dir).map_err(io_err)?;
+    pub fn root_text(&self) -> String {
+        let state = self;
+        state.root().display().to_string()
     }
-    Ok(())
-}
 
-/// Нормальное завершение программы.
-#[tauri::command]
-pub fn recovery_end_session(state: tauri::State<'_, Recovery>) -> Result<(), String> {
-    let dir = state.session_dir(&state.session);
-    let has_docs = fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).any(|e| e.path().is_dir())).unwrap_or(false);
-    if let Ok(mut alive) = state.alive.lock() {
-        *alive = None;
+    pub fn begin(&self, id: String, meta: DocMeta) -> Result<(), String> {
+        let state = self;
+        let dir = state.doc_dir(&state.session, &id)?;
+        fs::create_dir_all(&dir).map_err(io_err)?;
+        write_synced(&dir.join("meta.json"), &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
     }
-    if has_docs {
-        // Остались книги, по которым пользователь не решил: помечаем, но храним.
-        state.write_session(true).map_err(io_err)
-    } else {
-        fs::remove_dir_all(dir).map_err(io_err)
-    }
-}
 
-/// Книги, которые можно восстановить: из упавших сеансов и отложенные («решить позже»).
-#[tauri::command]
-pub fn recovery_list(state: tauri::State<'_, Recovery>) -> Result<Vec<RecoverableDoc>, String> {
-    let sessions = state.root().join("sessions");
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(&sessions) else { return Ok(out) };
-    for s in entries.filter_map(|e| e.ok()) {
-        let session = s.file_name().to_string_lossy().to_string();
-        if session == state.session {
-            continue;
+    pub fn snapshot(&self, id: String, data: Vec<u8>) -> Result<(), String> {
+        let state = self;
+        let dir = state.doc_dir(&state.session, &id)?;
+        fs::create_dir_all(&dir).map_err(io_err)?;
+        let snap = dir.join("snapshot.bin");
+        if snap.exists() {
+            let _ = fs::copy(&snap, dir.join("snapshot.prev.bin"));
         }
-        let info: Option<SessionInfo> = fs::read(s.path().join("session.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
-        let Some(info) = info else { continue };
-        if !info.clean_exit && session_alive(&s.path(), info.heartbeat_ms) {
-            continue; // другой работающий экземпляр программы
+        write_synced(&snap, &data).map_err(io_err)?;
+        let _ = fs::remove_file(dir.join("journal.bin"));
+        let meta_path = dir.join("meta.json");
+        let mut meta: DocMeta = fs::read(&meta_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        meta.snapshot_ms = now_ms();
+        meta.journal_entries = 0;
+        write_synced(&meta_path, &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
+    }
+
+    pub fn append(&self, id: String, data: Vec<u8>) -> Result<(), String> {
+        let state = self;
+        if data.is_empty() {
+            return Ok(());
         }
-        let Ok(docs) = fs::read_dir(s.path()) else { continue };
-        for d in docs.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
-            let meta: DocMeta = fs::read(d.path().join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-            if !d.path().join("snapshot.bin").exists() {
+        let dir = state.doc_dir(&state.session, &id)?;
+        let mut f = OpenOptions::new().create(true).append(true).open(dir.join("journal.bin")).map_err(io_err)?;
+        f.write_all(&(data.len() as u32).to_le_bytes()).map_err(io_err)?;
+        f.write_all(&data).map_err(io_err)?;
+        f.sync_data().map_err(io_err)
+    }
+
+    pub fn forget(&self, id: String) -> Result<(), String> {
+        let state = self;
+        let dir = state.doc_dir(&state.session, &id)?;
+        if dir.exists() {
+            fs::remove_dir_all(dir).map_err(io_err)?;
+        }
+        Ok(())
+    }
+
+    pub fn end_session(&self) -> Result<(), String> {
+        let state = self;
+        let dir = state.session_dir(&state.session);
+        let has_docs = fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).any(|e| e.path().is_dir())).unwrap_or(false);
+        if let Ok(mut alive) = state.alive.lock() {
+            *alive = None;
+        }
+        if has_docs {
+            // Остались книги, по которым пользователь не решил: помечаем, но храним.
+            state.write_session(true).map_err(io_err)
+        } else {
+            fs::remove_dir_all(dir).map_err(io_err)
+        }
+    }
+
+    pub fn list(&self) -> Result<Vec<RecoverableDoc>, String> {
+        let state = self;
+        let sessions = state.root().join("sessions");
+        let mut out = Vec::new();
+        let Ok(entries) = fs::read_dir(&sessions) else { return Ok(out) };
+        for s in entries.filter_map(|e| e.ok()) {
+            let session = s.file_name().to_string_lossy().to_string();
+            if session == state.session {
                 continue;
             }
-            let source = PathBuf::from(&meta.source_path);
-            let source_exists = !meta.source_path.is_empty() && source.exists();
-            let source_now = fs::metadata(&source).and_then(|m| m.modified()).ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
-            out.push(RecoverableDoc {
-                session: session.clone(),
-                id: d.file_name().to_string_lossy().to_string(),
-                source_changed: source_exists && source_now.abs_diff(meta.source_modified_ms) > 2000,
-                meta,
-                source_exists,
-                crashed_ms: info.heartbeat_ms,
-            });
+            let info: Option<SessionInfo> = fs::read(s.path().join("session.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+            let Some(info) = info else { continue };
+            if !info.clean_exit && session_alive(&s.path(), info.heartbeat_ms) {
+                continue; // другой работающий экземпляр программы
+            }
+            let Ok(docs) = fs::read_dir(s.path()) else { continue };
+            for d in docs.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
+                let meta: DocMeta = fs::read(d.path().join("meta.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+                if !d.path().join("snapshot.bin").exists() {
+                    continue;
+                }
+                let source = PathBuf::from(&meta.source_path);
+                let source_exists = !meta.source_path.is_empty() && source.exists();
+                let source_now = fs::metadata(&source).and_then(|m| m.modified()).ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
+                out.push(RecoverableDoc {
+                    session: session.clone(),
+                    id: d.file_name().to_string_lossy().to_string(),
+                    source_changed: source_exists && source_now.abs_diff(meta.source_modified_ms) > 2000,
+                    meta,
+                    source_exists,
+                    crashed_ms: info.heartbeat_ms,
+                });
+            }
         }
+        out.sort_by_key(|d| std::cmp::Reverse(d.crashed_ms));
+        Ok(out)
     }
-    out.sort_by_key(|d| std::cmp::Reverse(d.crashed_ms));
-    Ok(out)
+
+    pub fn load_snapshot(&self, session: String, id: String) -> Result<Vec<u8>, String> {
+        let state = self;
+        let dir = state.doc_dir(&session, &id)?;
+        fs::read(dir.join("snapshot.bin")).map_err(io_err)
+    }
+
+    pub fn load_journal(&self, session: String, id: String) -> Result<Vec<u8>, String> {
+        let state = self;
+        let dir = state.doc_dir(&session, &id)?;
+        let data = fs::read(dir.join("journal.bin")).unwrap_or_default();
+        let mut end = 0usize;
+        while end + 4 <= data.len() {
+            let len = u32::from_le_bytes([data[end], data[end + 1], data[end + 2], data[end + 3]]) as usize;
+            if end + 4 + len > data.len() {
+                break;
+            }
+            end += 4 + len;
+        }
+        Ok(data[..end].to_vec())
+    }
+
+    pub fn discard(&self, session: String, id: String) -> Result<(), String> {
+        let state = self;
+        let dir = state.doc_dir(&session, &id)?;
+        if dir.exists() {
+            fs::remove_dir_all(&dir).map_err(io_err)?;
+        }
+        let session_dir = state.session_dir(&session);
+        let empty = fs::read_dir(&session_dir).map(|d| !d.filter_map(|e| e.ok()).any(|e| e.path().is_dir())).unwrap_or(true);
+        if empty {
+            let _ = fs::remove_dir_all(session_dir);
+        }
+        Ok(())
+    }
 }
 
 /// Работает ли ещё программа, которая ведёт этот сеанс.
@@ -285,43 +313,82 @@ fn session_alive(dir: &Path, heartbeat_ms: u64) -> bool {
     }
 }
 
-/// Снимок восстанавливаемой книги.
+// --- Команды оболочки Tauri ---
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_heartbeat(state: tauri::State<'_, Recovery>) -> Result<(), String> {
+    state.heartbeat()
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_set_root(state: tauri::State<'_, Recovery>, path: String) -> Result<(), String> {
+    state.set_root(path)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_root(state: tauri::State<'_, Recovery>) -> String {
+    state.root_text()
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_begin(state: tauri::State<'_, Recovery>, id: String, meta: DocMeta) -> Result<(), String> {
+    state.begin(id, meta)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_snapshot(state: tauri::State<'_, Recovery>, request: Request<'_>) -> Result<(), String> {
+    let id = header(&request, "id")?;
+    let data = raw(&request)?;
+    state.snapshot(id, data)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_append(state: tauri::State<'_, Recovery>, request: Request<'_>) -> Result<(), String> {
+    let id = header(&request, "id")?;
+    let data = raw(&request)?;
+    state.append(id, data)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_forget(state: tauri::State<'_, Recovery>, id: String) -> Result<(), String> {
+    state.forget(id)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_end_session(state: tauri::State<'_, Recovery>) -> Result<(), String> {
+    state.end_session()
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_list(state: tauri::State<'_, Recovery>) -> Result<Vec<RecoverableDoc>, String> {
+    state.list()
+}
+
+#[cfg(feature = "tauri-shell")]
 #[tauri::command]
 pub fn recovery_load_snapshot(state: tauri::State<'_, Recovery>, session: String, id: String) -> Result<Response, String> {
-    let dir = state.doc_dir(&session, &id)?;
-    fs::read(dir.join("snapshot.bin")).map(Response::new).map_err(io_err)
+    state.load_snapshot(session, id).map(Response::new)
 }
 
-/// Журнал правок восстанавливаемой книги (как записан: [длина][байты] …).
-/// Недописанная последняя запись (сбой посреди записи) отбрасывается.
+#[cfg(feature = "tauri-shell")]
 #[tauri::command]
 pub fn recovery_load_journal(state: tauri::State<'_, Recovery>, session: String, id: String) -> Result<Response, String> {
-    let dir = state.doc_dir(&session, &id)?;
-    let data = fs::read(dir.join("journal.bin")).unwrap_or_default();
-    let mut end = 0usize;
-    while end + 4 <= data.len() {
-        let len = u32::from_le_bytes([data[end], data[end + 1], data[end + 2], data[end + 3]]) as usize;
-        if end + 4 + len > data.len() {
-            break;
-        }
-        end += 4 + len;
-    }
-    Ok(Response::new(data[..end].to_vec()))
+    state.load_journal(session, id).map(Response::new)
 }
 
-/// Удалить временные файлы книги (решение пользователя).
+#[cfg(feature = "tauri-shell")]
 #[tauri::command]
 pub fn recovery_discard(state: tauri::State<'_, Recovery>, session: String, id: String) -> Result<(), String> {
-    let dir = state.doc_dir(&session, &id)?;
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(io_err)?;
-    }
-    let session_dir = state.session_dir(&session);
-    let empty = fs::read_dir(&session_dir).map(|d| !d.filter_map(|e| e.ok()).any(|e| e.path().is_dir())).unwrap_or(true);
-    if empty {
-        let _ = fs::remove_dir_all(session_dir);
-    }
-    Ok(())
+    state.discard(session, id)
 }
 
 #[cfg(test)]

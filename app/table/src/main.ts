@@ -13,7 +13,7 @@ import { icon, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
 import * as desk from './desktop';
-import { isDesktop } from './platform';
+import { isDesktop, isTauri } from './platform';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const LAST_ROW = 1_048_576;
@@ -1049,7 +1049,7 @@ function syncDocTitle(): void {
   const mark = doc.dirty ? ' *' : '';
   document.title = `${doc.title}${mark} — ENS-Table`;
   $('doc-name').textContent = `${doc.title}${mark}`;
-  if (isDesktop) {
+  if (isTauri) {
     void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
       getCurrentWindow().setTitle(`${doc.title}${mark} — ENS-Table`)).catch(() => {});
   }

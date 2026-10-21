@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ENS-Table
+GenericName=Электронные таблицы
+Comment=Редактор таблиц ENS-Office (совместим с Excel)
+Exec=ens-table-r7 %f
+Icon=ens-table-r7
+Terminal=false
+Categories=Office;Spreadsheet;
+MimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.ms-excel.sheet.macroEnabled.12;
+StartupWMClass=ENS-Table
+Keywords=excel;xlsx;таблица;
