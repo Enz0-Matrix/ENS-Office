@@ -5,6 +5,7 @@ import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { printSheet, renderPreview } from './print';
 import { exampleFor, type FunctionExample } from './examples';
+import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -688,6 +689,7 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
   if (!header) {
     items.push({ label: 'Сортировка от А до Я', separator: true, run: () => sortBy(s.column, false) });
     items.push({ label: 'Сортировка от Я до А', run: () => sortBy(s.column, true) });
+    items.push({ label: 'Настраиваемая сортировка…', run: () => sortBy(s.column, false, true) });
     items.push({ label: filterOf(grid.sheet) ? 'Снять фильтр' : 'Фильтр', run: toggleFilter });
   }
   if (header !== 'column' && !fullCols) {
@@ -878,9 +880,19 @@ document.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, 
 // --- Данные: сортировка, фильтр, поиск ---
 
 /** «Текущая область», как Ctrl+A в Excel: сплошной блок данных вокруг ячейки. */
-function currentRegion(row: number, column: number): { r1: number; c1: number; r2: number; c2: number } {
-  let r1 = row, r2 = row, c1 = column, c2 = column;
-  const filled = (r: number, c: number) => r >= 1 && c >= 1 && model.getFormattedCellValue(grid.sheet, r, c) !== '';
+type Rect = { r1: number; c1: number; r2: number; c2: number };
+
+function currentRegion(row: number, column: number, start?: Rect): Rect {
+  let { r1, c1, r2, c2 } = start ?? { r1: row, c1: column, r2: row, c2: column };
+  // Заполненность берём списками строк по столбцам (один вызов движка на столбец),
+  // а не вопросом о каждой ячейке: быстро и на больших таблицах.
+  const byColumn = new Map<number, Set<number>>();
+  const filled = (r: number, c: number) => {
+    if (r < 1 || c < 1) return false;
+    let rows = byColumn.get(c);
+    if (!rows) { rows = new Set(model.getRowsWithData(grid.sheet, c)); byColumn.set(c, rows); }
+    return rows.has(r);
+  };
   for (let grow = true, guard = 0; grow && guard < 10_000; guard++) {
     grow = false;
     for (let c = c1 - 1; c <= c2 + 1; c++) {
@@ -907,32 +919,86 @@ function hasHeader(r: { r1: number; c1: number; r2: number; c2: number }): boole
   return text && numberBelow;
 }
 
-function sortBy(column: number, descending: boolean): void {
+/** Выделение без пустого «хвоста»: весь столбец — это только его заполненная часть. */
+function usedSelection(): Rect | null {
+  const s = grid.sel;
+  const d = model.getSheetDimension(grid.sheet);
+  const r = { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, d[2]), c2: Math.min(s.c2, d[3]) };
+  return r.r2 < r.r1 || r.c2 < r.c1 ? null : r;
+}
+
+const BLANKS_CODE = { last: 0, first: 1, zero: 2 } as const;
+
+/** Сортировка, как в Excel. По умолчанию строки переезжают целиком (вся таблица);
+ *  если выделен только столбец, а рядом есть данные — спрашиваем, как в Excel.
+ *  custom — окно «Настраиваемая сортировка» (уровни, заголовки, пустые). */
+async function sortBy(column: number, descending: boolean, custom = false): Promise<void> {
   const s = grid.sel;
   const f = filterOf(grid.sheet);
-  let area;
+  let range: Rect;
+  let header: boolean;
+  let expand = true;
+  let canExpand = false;
   if (f) {
-    area = { sheet: grid.sheet, row: f.r1 + 1, column: f.c1, width: f.c2 - f.c1 + 1, height: f.r2 - f.r1 };
+    range = { r1: f.r1, c1: f.c1, r2: f.r2, c2: f.c2 };
+    header = true;
   } else {
+    const sel = usedSelection();
+    if (!sel) { showToast('В выделении нет данных для сортировки.'); return; }
     const single = s.r1 === s.r2 && s.c1 === s.c2;
-    const r = single ? currentRegion(s.row, s.column) : { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, 1_048_576), c2: s.c2 };
-    const top = single && hasHeader(r) ? r.r1 + 1 : r.r1;
-    area = { sheet: grid.sheet, row: top, column: r.c1, width: r.c2 - r.c1 + 1, height: r.r2 - top + 1 };
+    const region = single ? currentRegion(s.row, s.column) : currentRegion(sel.r1, sel.c1, sel);
+    if (single) {
+      range = region;
+    } else {
+      canExpand = region.c1 < sel.c1 || region.c2 > sel.c2;
+      if (canExpand && !custom) {
+        const answer = await askExpand();
+        if (!answer) return;
+        if (answer === 'custom') custom = true;
+        else expand = answer === 'expand';
+      }
+      range = expand ? { r1: Math.min(sel.r1, region.r1), c1: region.c1, r2: Math.max(sel.r2, region.r2), c2: region.c2 } : sel;
+    }
+    header = hasHeader(range);
   }
-  if (area.height < 2) return;
+  let request: SortRequest = { levels: [{ column, descending }], header, blanks: settings.sortBlanks, expand };
+  if (custom) {
+    const cols = [];
+    for (let c = range.c1; c <= range.c2; c++) cols.push({ column: c, title: columnTitle(c, header ? model.getFormattedCellValue(grid.sheet, range.r1, c) : '') });
+    const answer = await customSort(cols, request, canExpand);
+    if (!answer) { focusGrid(); return; }
+    request = answer;
+    settings.sortBlanks = answer.blanks;
+    saveSettings();
+    if (canExpand && !answer.expand) {
+      const sel = usedSelection()!;
+      range = { ...sel };
+    }
+  }
+  const top = request.header ? range.r1 + 1 : range.r1;
+  const area = { sheet: grid.sheet, row: top, column: range.c1, width: range.c2 - range.c1 + 1, height: range.r2 - top + 1 };
+  if (area.height < 2) { focusGrid(); return; }
+  const keys = request.levels
+    .filter((l) => l.column >= area.column && l.column < area.column + area.width)
+    .flatMap((l) => [l.column, l.descending ? 1 : 0]);
+  if (!keys.length) keys.push(Math.min(Math.max(column, area.column), area.column + area.width - 1), descending ? 1 : 0);
   try {
-    model.sortRange(area, Math.min(Math.max(column, area.column), area.column + area.width - 1), descending);
+    model.sortRangeBy(area, keys, BLANKS_CODE[request.blanks]);
   } catch (e) {
     showToast(`Не удалось отсортировать: ${e}`);
   }
   grid.render();
   updateFormulaBar();
+  focusGrid();
 }
 
 function toggleFilter(): void {
   if (filterOf(grid.sheet)) { setFilter(grid.sheet, null); return; }
   const s = grid.sel;
-  const r = s.r1 === s.r2 && s.c1 === s.c2 ? currentRegion(s.row, s.column) : { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 };
+  const sel = usedSelection();
+  if (!sel) { showToast('Выделите таблицу с данными, чтобы включить фильтр.'); return; }
+  // Как в Excel: фильтр на всю таблицу вокруг выделения, без пустого «хвоста» листа.
+  const r = s.r1 === s.r2 && s.c1 === s.c2 ? currentRegion(s.row, s.column) : currentRegion(sel.r1, sel.c1, sel);
   setFilter(grid.sheet, { r1: r.r1, c1: r.c1, r2: r.r2, c2: r.c2, criteria: new Map() });
 }
 
@@ -1180,8 +1246,8 @@ register(
     run: () => void desk.save() },
   { id: 'file.saveAs', label: 'Сохранить как…', keywords: ['save as', 'сохранить под именем'], keys: ['F12', 'Ctrl+Shift+KeyS'],
     run: () => void desk.saveAs() },
-  { id: 'edit.undo', label: 'Отменить', keywords: ['undo'], keys: ['Ctrl+KeyZ'], run: () => { model.undo(); grid.render(); updateFormulaBar(); } },
-  { id: 'edit.redo', label: 'Повторить', keywords: ['redo'], keys: ['Ctrl+KeyY'], run: () => { model.redo(); grid.render(); updateFormulaBar(); } },
+  { id: 'edit.undo', label: 'Отменить', keywords: ['undo'], keys: ['Ctrl+KeyZ'], run: () => { model.undo(); grid.invalidateLayout(); updateFormulaBar(); } },
+  { id: 'edit.redo', label: 'Повторить', keywords: ['redo'], keys: ['Ctrl+KeyY'], run: () => { model.redo(); grid.invalidateLayout(); updateFormulaBar(); } },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
     const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); grid.render(); updateFormulaBar();
   } },
@@ -1245,6 +1311,8 @@ register(
     run: () => sortBy(grid.sel.column, false) },
   { id: 'data.sortDesc', label: 'Сортировка от Я до А (по убыванию)', keywords: ['sort descending', 'по убыванию'],
     run: () => sortBy(grid.sel.column, true) },
+  { id: 'data.sortCustom', label: 'Настраиваемая сортировка…', keywords: ['custom sort', 'сортировка по нескольким столбцам', 'уровни сортировки'],
+    run: () => sortBy(grid.sel.column, false, true) },
   { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
     checked: () => !!filterOf(grid.sheet), run: toggleFilter },
   { id: 'clipboard.pasteSpecial', label: 'Специальная вставка', keywords: ['paste special', 'вставить значения', 'транспонировать'],

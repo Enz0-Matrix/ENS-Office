@@ -227,3 +227,14 @@ footer { display: flex; flex-direction: column; }
 .print-paper { width: 100%; max-width: 560px; background: #fff; overflow: hidden; border-radius: 2px;
   box-shadow: 0 4px 18px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.05); }
 .print-sheet { transform-origin: 0 0; box-sizing: border-box; overflow: hidden; }
+
+/* --- Окна сортировки --- */
+.sort-modal { width: min(560px, 94vw); }
+.sort-choice { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; line-height: 1.35; }
+.sort-row { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin: 10px 0; color: var(--muted); }
+.sort-row select, .sort-level select { height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font: inherit; color: var(--text); background: #fff; }
+.sort-levels { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.sort-level { display: grid; grid-template-columns: 110px 1fr 1fr 28px; align-items: center; gap: 8px; }
+.sort-level button { border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; height: 28px; }
+.sort-level button:hover { background: #f3e1e1; color: #a4262c; }
+.sort-add { border: 1px dashed var(--border); background: none; border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer; color: var(--accent-dark); margin-bottom: 8px; }

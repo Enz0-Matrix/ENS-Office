@@ -9,6 +9,8 @@ export interface Settings {
   autosaveMinutes: number;
   /** Распознавать даты при вводе в ячейки «Общий» («22.08» → дата). */
   recognizeDates: boolean;
+  /** Сортировка: пустые ячейки в конце (как Excel), в начале или как ноль. */
+  sortBlanks: 'last' | 'first' | 'zero';
   /** Своя папка временных файлов восстановления ('' — в профиле пользователя). */
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
@@ -17,7 +19,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [],
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last',
 };
 
 export const settings: Settings = (() => {

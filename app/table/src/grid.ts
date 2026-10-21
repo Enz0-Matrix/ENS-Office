@@ -96,7 +96,6 @@ export class Grid {
   private readonly ctx: CanvasRenderingContext2D;
   private headerW = 50;
   private colX: number[] = [0];
-  private rowY: number[] = [0];
   private extentRows = 1000;
   private extentCols = 52;
   private dragging = false;
@@ -163,31 +162,63 @@ export class Grid {
     return this.x(column + 1) - this.x(column);
   }
 
-  private rowHeight(row: number): number {
-    if (this.resizing?.kind === 'row' && this.resizing.index === row) return this.resizing.size;
-    try {
-      return Math.max(0, Math.round(this.model().getRowHeight(this.sheet, row) * ROW_SCALE));
-    } catch {
-      return ROW_H;
+  // Высоты строк: у большинства строк высота стандартная, поэтому храним только
+  // нестандартные (номера по возрастанию) и считаем положение любой строки
+  // двоичным поиском — без вопросов к движку о каждой из миллиона строк.
+  private customRows: number[] = [];
+  private customH: number[] = [];
+  /** acc[k] — сумма отклонений от стандартной высоты у первых k нестандартных строк. */
+  private customAcc: number[] = [0];
+  private layoutLoaded = false;
+
+  private loadRowLayout(): void {
+    let flat: ArrayLike<number> = [];
+    try { flat = this.model().getRowLayout(this.sheet); } catch { /* нет листа */ }
+    const pairs: [number, number][] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) {
+      const h = Math.max(0, Math.round(flat[i + 1] * ROW_SCALE));
+      if (h !== ROW_H) pairs.push([flat[i], h]);
     }
+    pairs.sort((a, b) => a[0] - b[0]);
+    this.customRows = pairs.map((p) => p[0]);
+    this.customH = pairs.map((p) => p[1]);
+    this.customAcc = [0];
+    for (const [, h] of pairs) this.customAcc.push(this.customAcc[this.customAcc.length - 1] + h - ROW_H);
+    this.layoutLoaded = true;
+  }
+
+  /** Сколько нестандартных строк выше строки row. */
+  private customBefore(row: number): number {
+    if (!this.layoutLoaded) this.loadRowLayout();
+    let lo = 0, hi = this.customRows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.customRows[mid] < row) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  private baseHeight(row: number): number {
+    const k = this.customBefore(row);
+    return this.customRows[k] === row ? this.customH[k] : ROW_H;
   }
 
   /** Верхняя граница строки в пикселях листа (без заголовка столбцов). */
   private y(row: number): number {
-    while (this.rowY.length <= row) {
-      const r = this.rowY.length;
-      this.rowY.push(this.rowY[r - 1] + this.rowHeight(r));
-    }
-    return this.rowY[row - 1];
+    let v = (row - 1) * ROW_H + this.customAcc[this.customBefore(row)];
+    const z = this.resizing;
+    if (z?.kind === 'row' && z.index < row) v += z.size - this.baseHeight(z.index);
+    return v;
   }
 
   private height(row: number): number {
-    return this.y(row + 1) - this.y(row);
+    const z = this.resizing;
+    if (z?.kind === 'row' && z.index === row) return z.size;
+    return this.baseHeight(row);
   }
 
   private rowAt(py: number): number {
-    let lo = 1, hi = Math.max(2, this.extentRows + 1);
-    while (this.y(hi) <= py && hi < LAST_ROW) hi = Math.min(LAST_ROW, hi * 2);
+    let lo = 1, hi = LAST_ROW;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
       if (this.y(mid) <= py) lo = mid; else hi = mid - 1;
@@ -211,15 +242,18 @@ export class Grid {
   /** Ширины столбцов могли измениться (новый файл, лист). */
   invalidateLayout(): void {
     this.colX = [0];
-    this.rowY = [0];
+    this.layoutLoaded = false;
     this.readFrozen();
     this.updateExtent();
     this.render();
   }
 
   private updateExtent(): void {
-    this.extentRows = Math.min(LAST_ROW, Math.max(1000, this.sel.r2 + 200, this.extentRows));
-    this.extentCols = Math.min(LAST_COLUMN, Math.max(52, this.sel.c2 + 10, this.extentCols));
+    // Выделен весь столбец — не растягиваем лист до миллионной строки.
+    const last = this.sel.r1 === 1 && this.sel.r2 === LAST_ROW ? this.sel.row : this.sel.r2;
+    this.extentRows = Math.min(LAST_ROW, Math.max(1000, last + 200, this.extentRows));
+    const lastCol = this.sel.c1 === 1 && this.sel.c2 === LAST_COLUMN ? this.sel.column : this.sel.c2;
+    this.extentCols = Math.min(LAST_COLUMN, Math.max(52, lastCol + 10, this.extentCols));
     this.spacer.style.height = `${HEADER_H + this.y(this.extentRows + 1)}px`;
     this.spacer.style.width = `${this.headerW + this.x(this.extentCols + 1)}px`;
   }
@@ -491,7 +525,6 @@ export class Grid {
       const pos = z.kind === 'column' ? e.clientX : e.clientY;
       z.size = Math.max(z.kind === 'column' ? 8 : 6, Math.round(z.startSize + pos - z.start));
       this.colX = [0];
-      this.rowY = [0];
       this.render();
       return;
     }

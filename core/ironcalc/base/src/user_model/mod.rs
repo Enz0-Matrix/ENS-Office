@@ -22,4 +22,4 @@ pub use ui::SelectedView;
 
 pub use clipboard::ClipboardData;
 pub use common::BorderArea;
-pub use ens_tools::{parse_filter_range, FindOptions, FoundCell, FILTER_DATABASE};
+pub use ens_tools::{parse_filter_range, Blanks, FindOptions, FoundCell, FILTER_DATABASE};

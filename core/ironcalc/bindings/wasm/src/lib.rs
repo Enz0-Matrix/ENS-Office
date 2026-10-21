@@ -14,7 +14,7 @@ use ironcalc_base::{
     },
     types::{CellType, Color, Link, Style, StyleIncludes},
     worksheet::NavigationDirection,
-    BorderArea, ClipboardData, FindOptions, FoundCell, UserModel as BaseModel,
+    Blanks, BorderArea, ClipboardData, FindOptions, FoundCell, UserModel as BaseModel,
 };
 
 fn to_js_error(error: String) -> JsError {
@@ -617,6 +617,27 @@ impl Model {
         let range: (i32, i32, i32, i32) =
             serde_wasm_bindgen::from_value(source_range).map_err(|e| to_js_error(e.to_string()))?;
         self.model.paste_values(source_sheet, range, transpose).map_err(to_js_error)
+    }
+
+    /// ENS-Office: sort by several columns. `keys` = [column, descending (0/1), …];
+    /// `blanks`: 0 — at the end, 1 — at the beginning, 2 — as zero.
+    #[wasm_bindgen(js_name = "sortRangeBy")]
+    pub fn sort_range_by(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] area: JsValue,
+        keys: Vec<i32>,
+        blanks: u8,
+    ) -> Result<(), JsError> {
+        let area: Area = serde_wasm_bindgen::from_value(area).map_err(|e| to_js_error(e.to_string()))?;
+        let keys: Vec<(i32, bool)> = keys.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1] != 0)).collect();
+        let blanks = match blanks { 1 => Blanks::First, 2 => Blanks::AsZero, _ => Blanks::Last };
+        self.model.sort_range_by(&area, &keys, blanks).map_err(to_js_error)
+    }
+
+    /// ENS-Office: rows with a non-default height: [row, height, …] (hidden — 0).
+    #[wasm_bindgen(js_name = "getRowLayout")]
+    pub fn get_row_layout(&self, sheet: u32) -> Result<Vec<f64>, JsError> {
+        self.model.get_row_layout(sheet).map_err(to_js_error)
     }
 
     /// ENS-Office: sort the rows of `area` by `key_column` (one undo step).

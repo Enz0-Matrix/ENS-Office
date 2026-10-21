@@ -90,14 +90,50 @@ fn compare(a: &CellValue, b: &CellValue) -> Ordering {
     }
 }
 
+/// Where rows with an empty sort key go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blanks {
+    /// At the end, in both orders (as Excel).
+    Last,
+    /// At the beginning.
+    First,
+    /// Empty counts as 0: it sorts among the numbers.
+    AsZero,
+}
+
 impl UserModel<'_> {
+    /// ENS-Office: heights of the rows that differ from the default, for the grid:
+    /// `[row, height, row, height, …]` (hidden rows have height 0). The grid
+    /// computes positions from this without asking for every row.
+    pub fn get_row_layout(&self, sheet: u32) -> Result<Vec<f64>, String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let mut out = Vec::with_capacity(ws.rows.len() * 2);
+        for r in &ws.rows {
+            out.push(f64::from(r.r));
+            out.push(if r.hidden { 0.0 } else { r.height * crate::constants::ROW_HEIGHT_FACTOR });
+        }
+        Ok(out)
+    }
+
     /// Sorts the rows of `area` by the values in `key_column` (a column of the
     /// sheet inside the area). Formulas move with their rows and their relative
     /// references are adjusted, as in Excel. Blank keys stay at the end.
     pub fn sort_range(&mut self, area: &Area, key_column: i32, descending: bool) -> Result<(), String> {
+        self.sort_range_by(area, &[(key_column, descending)], Blanks::Last)
+    }
+
+    /// Sorts the rows of `area` by several columns (`(column, descending)`, the
+    /// first one decides, the next ones break ties). `blanks` says where rows
+    /// with an empty key go.
+    pub fn sort_range_by(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks) -> Result<(), String> {
         let sheet = area.sheet;
-        if key_column < area.column || key_column >= area.column + area.width {
-            return Err("Столбец сортировки вне диапазона".to_string());
+        if keys.is_empty() {
+            return Ok(());
+        }
+        for &(key_column, _) in keys {
+            if key_column < area.column || key_column >= area.column + area.width {
+                return Err("Столбец сортировки вне диапазона".to_string());
+            }
         }
         let (r1, c1) = (area.row, area.column);
         let (r2, c2) = (area.row + area.height - 1, area.column + area.width - 1);
@@ -105,19 +141,35 @@ impl UserModel<'_> {
             return Err("Нельзя сортировать диапазон с объединёнными ячейками".to_string());
         }
         let mut rows: Vec<i32> = (r1..=r2).collect();
-        let keys: Vec<CellValue> = rows
+        // values[k][i] — key k of row r1 + i
+        let values: Vec<Vec<CellValue>> = keys
             .iter()
-            .map(|&r| self.model.get_cell_value_by_index(sheet, r, key_column).unwrap_or(CellValue::None))
+            .map(|&(column, _)| {
+                rows.iter()
+                    .map(|&r| match self.model.get_cell_value_by_index(sheet, r, column).unwrap_or(CellValue::None) {
+                        // "Пустые как ноль": строки не разъезжаются — пустое стоит среди чисел как 0.
+                        CellValue::None if blanks == Blanks::AsZero => CellValue::Number(0.0),
+                        v => v,
+                    })
+                    .collect()
+            })
             .collect();
         rows.sort_by(|&a, &b| {
-            let (ka, kb) = (&keys[(a - r1) as usize], &keys[(b - r1) as usize]);
-            match (ka, kb) {
-                (CellValue::None, CellValue::None) => Ordering::Equal,
-                (CellValue::None, _) => Ordering::Greater,
-                (_, CellValue::None) => Ordering::Less,
-                _ if descending => compare(kb, ka),
-                _ => compare(ka, kb),
+            for (k, &(_, descending)) in keys.iter().enumerate() {
+                let (ka, kb) = (&values[k][(a - r1) as usize], &values[k][(b - r1) as usize]);
+                let first_blank = if blanks == Blanks::First { Ordering::Less } else { Ordering::Greater };
+                let o = match (ka, kb) {
+                    (CellValue::None, CellValue::None) => Ordering::Equal,
+                    (CellValue::None, _) => first_blank,
+                    (_, CellValue::None) => first_blank.reverse(),
+                    _ if descending => compare(kb, ka),
+                    _ => compare(ka, kb),
+                };
+                if o != Ordering::Equal {
+                    return o;
+                }
             }
+            Ordering::Equal
         });
         if rows.iter().enumerate().all(|(i, &r)| r == r1 + i as i32) {
             return Ok(()); // already sorted
@@ -374,6 +426,30 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_sort_by_two_columns_and_blank_modes() {
+        let mut m = model();
+        // Отдел, Сумма
+        for (r, d, s) in [(1, "Б", "5"), (2, "А", "7"), (3, "Б", "1"), (4, "", "3"), (5, "А", "2")] {
+            m.set_user_input(0, r, 1, d).unwrap();
+            m.set_user_input(0, r, 2, s).unwrap();
+        }
+        let area = Area { sheet: 0, row: 1, column: 1, width: 2, height: 5 };
+        let col = |m: &UserModel, c| (1..=5).map(|r| m.get_formatted_cell_value(0, r, c).unwrap()).collect::<Vec<_>>();
+        m.sort_range_by(&area, &[(1, false), (2, true)], Blanks::Last).unwrap();
+        assert_eq!(col(&m, 1), ["А", "А", "Б", "Б", ""]);
+        assert_eq!(col(&m, 2), ["7", "2", "5", "1", "3"]);
+        m.sort_range_by(&area, &[(1, false)], Blanks::First).unwrap();
+        assert_eq!(col(&m, 1), ["", "А", "А", "Б", "Б"]);
+        // Пустые как ноль: среди чисел, по возрастанию — перед 1.
+        m.range_clear_contents(&Area { sheet: 0, row: 3, column: 2, width: 1, height: 1 }).unwrap();
+        m.sort_range_by(&area, &[(2, false)], Blanks::AsZero).unwrap();
+        assert_eq!(col(&m, 2)[0], "");
+        m.sort_range_by(&area, &[(2, true)], Blanks::AsZero).unwrap();
+        assert_eq!(col(&m, 2)[4], "");
+        assert!(m.get_row_layout(0).unwrap().is_empty());
     }
 
     #[test]

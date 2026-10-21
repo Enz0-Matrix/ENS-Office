@@ -165,6 +165,7 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'data.sortAsc', icon: 'sort_asc', label: 'От А до Я' },
           { type: 'large', command: 'data.sortDesc', icon: 'sort_desc', label: 'От Я до А' },
+          { type: 'large', command: 'data.sortCustom', icon: 'arrow_sort', label: 'Сортировка…' },
           { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
         ],
       },

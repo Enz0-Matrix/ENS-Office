@@ -60,6 +60,10 @@ export interface Model {
   getMergedCells(sheet: number): MergedCell[];
   /** Занятая часть листа: [первая строка, первый столбец, последняя строка, последний столбец]. */
   getSheetDimension(sheet: number): number[];
+  /** Строки с нестандартной высотой: [строка, высота, …] (скрытые — 0). */
+  getRowLayout(sheet: number): Float64Array;
+  /** Сортировка по нескольким столбцам: keys = [столбец, по убыванию 0/1, …]; blanks: 0 — в конце, 1 — в начале, 2 — как ноль. */
+  sortRangeBy(area: Area, keys: number[], blanks: number): void;
   getAutoFilter(sheet: number): number[];
   setAutoFilter(sheet: number, range: number[]): void;
   sortRange(area: Area, keyColumn: number, descending: boolean): void;
