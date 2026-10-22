@@ -1,4 +1,5 @@
 import './styles.css';
+import './themes.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
@@ -8,6 +9,7 @@ import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
+import { applyTheme, THEMES } from './themes';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -1564,6 +1566,8 @@ register(
     run: () => { void editRule(null, { range: rectRef(selectionRect()) }).then(() => focusGrid()); } },
   { id: 'format.conditional:manage', label: 'Условное форматирование: управление правилами', keywords: ['manage rules', 'удалить правила'],
     run: () => { void manageRules(); } },
+  { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'постапокалипсис', 'дизайн'],
+    run: () => themeMenu() },
   { id: 'format.cells', label: 'Формат ячеек…', keywords: ['format cells', 'числовой формат', 'дата', 'процент', 'разрядность'], keys: ['Ctrl+Digit1'],
     run: () => openFormatCells() },
   { id: 'format.decimalsMore', label: 'Увеличить разрядность', keywords: ['increase decimal', 'знаки после запятой', 'десятичные'],
@@ -1796,6 +1800,22 @@ window.addEventListener('keydown', (e) => {
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
 onRibbonDrawn(syncBordersButton);
+applyTheme(settings.theme, grid, settings.themeMotion);
+
+/** «Вид → Тема»: выбор темы оформления (книга и печать не меняются). */
+function themeMenu(): void {
+  const b = document.querySelector<HTMLElement>('.btn[data-command="view.theme"]')?.getBoundingClientRect();
+  showMenu([
+    ...THEMES.map((t) => ({
+      label: `${t.name} — ${t.note}`, checked: t.id === settings.theme, icon: '',
+      run: () => { settings.theme = t.id; saveSettings(); applyTheme(t.id, grid, settings.themeMotion); },
+    })),
+    {
+      label: settings.themeMotion ? 'Выключить анимацию темы' : 'Включить анимацию темы', separator: true,
+      run: () => { settings.themeMotion = !settings.themeMotion; saveSettings(); applyTheme(settings.theme, grid, settings.themeMotion); },
+    },
+  ], b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
+}
 /** Списки ленты (формат, шрифт, размер) показывают значения активной ячейки. */
 function syncNumberFormat(): void {
   const st = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style;

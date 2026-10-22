@@ -1,0 +1,104 @@
+/* ===================================================================
+   Темы оформления. Меняют только вид программы: книга и печать — как есть.
+   Анимация — по флажку (data-theme-still) и не при «уменьшить движение».
+   =================================================================== */
+
+/* --- «Пустошь» (постапокалипсис): ржавый металл, пыль, предупредительные
+       полосы; лист — пожелтевшая бумага из бункера. --- */
+:root[data-theme="wasteland"] {
+  --accent: #c2571a;
+  --accent-dark: #7a3410;
+  --bg: #24211c;
+  --panel: #2f2b24;
+  --border: #514938;
+  --text: #e6dcc3;
+  --muted: #b3a585;
+  --hazard: #e0a800;
+  --toxic: #9bc53d;
+  --stencil: Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --brand-bg:
+    radial-gradient(ellipse 120px 26px at 18% 60%, rgba(139,58,26,.55), transparent 70%),
+    radial-gradient(ellipse 90px 20px at 72% 30%, rgba(160,82,30,.45), transparent 70%),
+    repeating-linear-gradient(100deg, rgba(255,255,255,.035) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(10deg, rgba(0,0,0,.18) 0 2px, transparent 2px 11px),
+    linear-gradient(180deg, #3d3226 0%, #2a231c 100%);
+}
+[data-theme="wasteland"] body { background: var(--bg); }
+[data-theme="wasteland"] .titlebar { position: relative; color: #efe2c4; text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+/* Предупредительная полоса под заголовком. */
+[data-theme="wasteland"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; z-index: 2; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, var(--hazard) 0 9px, #1b1915 9px 18px);
+}
+[data-theme="wasteland"] .app-mark {
+  font-family: var(--stencil); letter-spacing: 2px; color: #ffcf70;
+  text-shadow: 0 0 6px rgba(255,170,60,.7), 0 0 1px #000;
+}
+/* Мерцает, как вывеска на последнем генераторе. */
+@keyframes ens-flicker { 0%, 91%, 95%, 100% { opacity: 1; } 92% { opacity: .35; } 93% { opacity: .9; } 94% { opacity: .2; } }
+[data-theme="wasteland"]:not([data-theme-still]) .app-mark { animation: ens-flicker 6s infinite steps(1); }
+[data-theme="wasteland"] .search { background: #1d1b17; border: 1px solid #514938; color: var(--muted); }
+[data-theme="wasteland"] .search input { color: var(--text); }
+[data-theme="wasteland"] .tabs { padding-top: 8px; background: repeating-linear-gradient(90deg, rgba(255,255,255,.02) 0 1px, transparent 1px 5px), var(--bg); }
+[data-theme="wasteland"] .tab { color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-family: var(--stencil); }
+[data-theme="wasteland"] .tab:hover { background: #352f27; color: var(--text); }
+[data-theme="wasteland"] .tab.active { color: #ffcf70; border-bottom-color: var(--hazard); }
+[data-theme="wasteland"] .tab.file { color: var(--toxic); }
+/* Лента — лист железа с заклёпками и ржавым подтёком. */
+[data-theme="wasteland"] .ribbon {
+  border-color: #4a4334; box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 2px 0 rgba(0,0,0,.35);
+  background:
+    radial-gradient(circle at 8px 8px, #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 8px) 8px, #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at 8px calc(100% - 8px), #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 8px) calc(100% - 8px), #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(ellipse 200px 40px at 30% 100%, rgba(139,58,26,.28), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 4px),
+    #2f2b24;
+}
+[data-theme="wasteland"] .group { border-right-color: #463f31; }
+[data-theme="wasteland"] .group-name { color: #9c8f6f; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-family: var(--stencil); }
+[data-theme="wasteland"] .btn { color: var(--text); }
+[data-theme="wasteland"] .btn svg { fill: currentColor; }
+[data-theme="wasteland"] .btn:hover { background: #3d352a; border-color: #6e5a3a; box-shadow: 0 0 8px rgba(255,140,40,.35); }
+[data-theme="wasteland"] .btn.active, [data-theme="wasteland"] .btn.on { background: #5a3418; border-color: var(--accent); color: #ffcf70; }
+[data-theme="wasteland"] .btn[data-command="edit.undo"]:not(.disabled) svg,
+[data-theme="wasteland"] .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--toxic); }
+[data-theme="wasteland"] select,
+[data-theme="wasteland"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { background: #1d1b17; color: var(--text); border-color: #514938; }
+[data-theme="wasteland"] .formula-bar { background: var(--bg); }
+[data-theme="wasteland"] .name-box, [data-theme="wasteland"] .formula-wrap { background: #1d1b17; color: #ffcf70; border-color: #514938; }
+[data-theme="wasteland"] .formula, [data-theme="wasteland"] .fx { color: #ffcf70; }
+[data-theme="wasteland"] .cell-editor { background: #fbf3dc; color: #2b2418; -webkit-text-fill-color: #2b2418; border-color: var(--accent); }
+[data-theme="wasteland"] .sheet-tabs { background: var(--bg); }
+[data-theme="wasteland"] .sheet-tab { color: var(--muted); }
+[data-theme="wasteland"] .sheet-tab.active { background: #f2e8cf; color: #6e2c10; border-color: #514938; border-top-color: #f2e8cf; box-shadow: inset 0 -3px var(--hazard); }
+/* Строка состояния — счётчик Гейгера. */
+[data-theme="wasteland"] .statusbar { background: #1b1915; color: var(--toxic); font-family: var(--stencil); }
+[data-theme="wasteland"] .statusbar::before { content: "\2622"; color: var(--hazard); margin-right: 6px; }
+[data-theme="wasteland"] .stat { background: #2a2620; color: var(--text); }
+/* Окна и меню — тёмные металлические таблички с жёлтой кромкой. */
+[data-theme="wasteland"] .modal, [data-theme="wasteland"] .context-menu, [data-theme="wasteland"] .cf-menu,
+[data-theme="wasteland"] .palette, [data-theme="wasteland"] .backstage {
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px), #2f2b24;
+  color: var(--text); border-color: #5a4f3b;
+}
+[data-theme="wasteland"] .modal { border: 1px solid #5a4f3b; border-top: 4px solid var(--hazard); }
+[data-theme="wasteland"] .modal h2 { color: #ffcf70; font-family: var(--stencil); letter-spacing: .04em; }
+[data-theme="wasteland"] .modal p, [data-theme="wasteland"] .group-name { color: var(--muted); }
+[data-theme="wasteland"] .modal button, [data-theme="wasteland"] .cf-menu button { color: var(--text); background-color: #3a342a; border-color: #5a4f3b; }
+[data-theme="wasteland"] .context-menu > button { color: var(--text); background-color: transparent; }
+[data-theme="wasteland"] .modal button:hover, [data-theme="wasteland"] .context-menu > button:hover, [data-theme="wasteland"] .cf-menu button:hover { background-color: #4a3d2c; }
+[data-theme="wasteland"] .modal button.primary { background: var(--accent); border-color: #e07a2c; color: #fff; }
+[data-theme="wasteland"] .context-menu > button.checked { background: #4a3420; }
+[data-theme="wasteland"] .context-menu > button .menu-icon { color: #ffcf70; }
+[data-theme="wasteland"] .overlay { background: rgba(10,8,4,.55); }
+[data-theme="wasteland"] .toast { background: #1b1915; color: var(--toxic); border: 1px solid #514938; font-family: var(--stencil); }
+[data-theme="wasteland"] .fmt-cats button.active, [data-theme="wasteland"] .fmt-list button.active, [data-theme="wasteland"] .cf-row.active { background: #5a3418 !important; color: #ffcf70; }
+[data-theme="wasteland"] .fmt-cats button:hover, [data-theme="wasteland"] .fmt-list button:hover, [data-theme="wasteland"] .cf-row:hover { background: #3d352a; }
+[data-theme="wasteland"] .fmt-sample, [data-theme="wasteland"] .cf-preview, [data-theme="wasteland"] .cf-table, [data-theme="wasteland"] .fmt-list { border-color: #5a4f3b; }
+[data-theme="wasteland"] .fmt-sample b { color: #ffcf70; }
+[data-theme="wasteland"] .format-chip { background: #2f2b24; color: var(--text); border-color: #5a4f3b; }
+[data-theme="wasteland"] ::-webkit-scrollbar { width: 12px; height: 12px; background: #24211c; }
+[data-theme="wasteland"] ::-webkit-scrollbar-thumb { background: linear-gradient(90deg, #6b3a17, #8b4a1f); border-radius: 6px; border: 2px solid #24211c; }
+@media (prefers-reduced-motion: reduce) { [data-theme="wasteland"] .app-mark { animation: none; } }

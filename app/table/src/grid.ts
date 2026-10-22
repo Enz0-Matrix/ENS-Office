@@ -35,7 +35,32 @@ export interface GridTheme {
   selectionFill: string;
   headerActiveFill: string;
   headerActiveText: string;
+  /** Лист без заливки, линии сетки, заголовки строк и столбцов (темы оформления). */
+  sheetBg: string;
+  gridLine: string;
+  headerBg: string;
+  headerLine: string;
+  headerText: string;
+  cornerBg: string;
+  cornerLine: string;
 }
+
+/** Классическая тема сетки (нефритовая). */
+export const CLASSIC_GRID: GridTheme = {
+  activeBorder: '#2b7a6b',
+  activeBorderInactive: '#6fae9f',
+  activeWidth: 3,
+  selectionFill: 'rgba(43,122,107,0.12)',
+  headerActiveFill: '#d3ebe5',
+  headerActiveText: '#1d5a4f',
+  sheetBg: '#ffffff',
+  gridLine: '#e1e1e1',
+  headerBg: '#f5f5f5',
+  headerLine: '#d4d4d4',
+  headerText: '#444',
+  cornerBg: '#e8e8e8',
+  cornerLine: '#c8c8c8',
+};
 
 const ROW_H = 22;
 const HEADER_H = 22;
@@ -54,14 +79,7 @@ export class Grid {
   /** Идёт Ctrl+щелчок: новое выделение добавляется к прежним, а не заменяет их. */
   private ctrlPick = false;
   focusCell: FocusCellOptions = { enabled: false, mode: 'shade', extent: 'toCell', color: '#2b7a6b' };
-  theme: GridTheme = {
-    activeBorder: '#2b7a6b',
-    activeBorderInactive: '#6fae9f',
-    activeWidth: 3,
-    selectionFill: 'rgba(43,122,107,0.12)',
-    headerActiveFill: '#d3ebe5',
-    headerActiveText: '#1d5a4f',
-  };
+  theme: GridTheme = { ...CLASSIC_GRID };
   /** Окно приложения в фокусе (влияет только на яркость выделения). */
   windowActive = true;
   onSelect: (sel: Selection) => void = () => {};
@@ -644,7 +662,7 @@ export class Grid {
     const hw = Math.max(40, 12 + 8 * String(rN).length);
     if (hw !== this.headerW) { this.headerW = hw; this.updateExtent(); }
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = this.theme.sheetBg;
     ctx.fillRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
@@ -680,7 +698,7 @@ export class Grid {
 
     // Линии сетки — под заливкой: залитые ячейки их скрывают, как в Excel.
     if (gridLines) {
-      ctx.strokeStyle = '#e1e1e1';
+      ctx.strokeStyle = this.theme.gridLine;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let r = ra; r <= rb + 1; r++) {
@@ -712,7 +730,7 @@ export class Grid {
     // Заливка (объединённая ячейка без заливки — белая: внутри нет линий сетки).
     for (const cell of cells) {
       const color = styleOf(cell.r, cell.c)?.fill?.color;
-      const fill = color ? model.resolveColor(color) : cell.merged ? '#ffffff' : '';
+      const fill = color ? model.resolveColor(color) : cell.merged ? this.theme.sheetBg : '';
       if (fill) { ctx.fillStyle = fill; ctx.fillRect(cell.x, cell.y, cell.w, cell.h); }
     }
 
@@ -842,7 +860,7 @@ export class Grid {
     if (shown(s.r2, s.c2) && s.r2 < LAST_ROW && s.c2 < LAST_COLUMN) {
       const b = this.cellRect(s.r2, s.c2);
       this.handle = { x: b.x + b.w, y: b.y + b.h };
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = this.theme.sheetBg;
       ctx.fillRect(this.handle.x - 4, this.handle.y - 4, 8, 8);
       ctx.fillStyle = border;
       ctx.fillRect(this.handle.x - 3, this.handle.y - 3, 6, 6);
@@ -1107,13 +1125,13 @@ export class Grid {
 
   private drawHeaders(rowBands: [number, number][], colBands: [number, number][], W: number, H: number): void {
     const ctx = this.ctx, s = this.sel;
-    ctx.fillStyle = '#f5f5f5';
+    ctx.fillStyle = this.theme.headerBg;
     ctx.fillRect(0, 0, W, HEADER_H);
     ctx.fillRect(0, 0, this.headerW, H);
     ctx.font = '12px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#d4d4d4';
+    ctx.strokeStyle = this.theme.headerLine;
     ctx.lineWidth = 1;
     for (const [c0, cN] of colBands) {
     // Прокручиваемые заголовки не заходят под закреплённые.
@@ -1129,7 +1147,7 @@ export class Grid {
         ctx.fillStyle = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
         ctx.fillRect(x, HEADER_H - 2, w, 2);
       }
-      ctx.fillStyle = inSel ? this.theme.headerActiveText : '#444';
+      ctx.fillStyle = inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${c === s.column ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(columnName(c), x + w / 2, HEADER_H / 2);
       ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, 0); ctx.lineTo(Math.round(x + w) + 0.5, HEADER_H); ctx.stroke();
@@ -1151,7 +1169,7 @@ export class Grid {
       }
       // Как в Excel: номера строк под действующим фильтром — синие.
       const filtered = this.filter && this.filter.active.size > 0 && r > this.filter.r1 && r <= this.filter.r2;
-      ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : '#444';
+      ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.headerW / 2, y + h / 2);
       ctx.beginPath(); ctx.moveTo(0, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
@@ -1176,9 +1194,9 @@ export class Grid {
       else { const ly = Math.round(at.y + at.h) + 0.5; ctx.moveTo(0, ly); ctx.lineTo(W, ly); }
       ctx.stroke(); ctx.setLineDash([]);
     }
-    ctx.fillStyle = '#e8e8e8';
+    ctx.fillStyle = this.theme.cornerBg;
     ctx.fillRect(0, 0, this.headerW, HEADER_H);
-    ctx.strokeStyle = '#c8c8c8';
+    ctx.strokeStyle = this.theme.cornerLine;
     ctx.beginPath();
     ctx.moveTo(0, HEADER_H + 0.5); ctx.lineTo(W, HEADER_H + 0.5);
     ctx.moveTo(this.headerW + 0.5, 0); ctx.lineTo(this.headerW + 0.5, H);

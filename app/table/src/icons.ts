@@ -68,6 +68,7 @@ import i_filter_24 from '@fluentui/svg-icons/icons/filter_24_regular.svg?raw';
 import i_search_24 from '@fluentui/svg-icons/icons/search_24_regular.svg?raw';
 import i_eraser_24 from '@fluentui/svg-icons/icons/eraser_24_regular.svg?raw';
 import i_color_24 from '@fluentui/svg-icons/icons/color_24_regular.svg?raw';
+import i_paint_brush_24 from '@fluentui/svg-icons/icons/paint_brush_24_regular.svg?raw';
 
 function numIcon(body: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="currentColor" font-family="Inter, Segoe UI, sans-serif">${body}</svg>`;
@@ -147,4 +148,5 @@ export const ICONS: Record<string, string> = {
   'num_dec_less_20': numIcon('<text x="1" y="16" font-size="11" font-weight="700">,0</text><text x="12" y="8" font-size="11" font-weight="700">−</text>'),
   'num_format_20': numIcon('<rect x="1.5" y="3.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="10" y="13.5" text-anchor="middle" font-size="8.5" font-weight="700">1,23</text>'),
   'color_24': i_color_24,
+  'paint_brush_24': i_paint_brush_24,
 };

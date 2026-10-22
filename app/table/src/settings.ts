@@ -14,6 +14,9 @@ export interface Settings {
   /** Кнопка «Границы»: что ставит по щелчку и какой линией. */
   borderType: string;
   borderStyle: string;
+  /** Тема оформления (themes.ts) и анимация в ней (мерцание и т. п.). */
+  theme: string;
+  themeMotion: boolean;
   /** Своя папка временных файлов восстановления ('' — в профиле пользователя). */
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
@@ -22,7 +25,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin',
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true,
 };
 
 export const settings: Settings = (() => {
