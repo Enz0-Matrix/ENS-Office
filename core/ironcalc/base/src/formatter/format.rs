@@ -1032,6 +1032,10 @@ fn parse_number(
     }
     let mut chars = String::from("");
     let mut group_separator_index = Vec::new();
+    // ENS-Office: where the group separator is a (non-breaking) space, as in
+    // Russian, people type and paste ordinary spaces: "1 234 567,89".
+    let spaced = group_separator.is_whitespace();
+    let is_group = |x: char| x == group_separator || (spaced && (x == ' ' || x == '\u{a0}' || x == '\u{202f}'));
     // get the sign
     let sign = if characters[0] == '-' {
         position += 1;
@@ -1047,7 +1051,7 @@ fn parse_number(
         return Err("Cannot parse number".to_string());
     }
 
-    if characters[position] == group_separator {
+    if is_group(characters[position]) {
         return Err("Cannot parse number".to_string());
     }
 
@@ -1056,7 +1060,7 @@ fn parse_number(
         let x = characters[position];
         if x.is_ascii_digit() {
             chars.push(x);
-        } else if x == group_separator {
+        } else if is_group(x) {
             group_separator_index.push(chars.len());
         } else {
             break;

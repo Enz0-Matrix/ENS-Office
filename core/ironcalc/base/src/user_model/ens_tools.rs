@@ -137,6 +137,21 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// Position in the undo history, for [`Self::merge_undo_since`].
+    pub fn undo_mark(&self) -> usize {
+        self.history.undo_stack.len()
+    }
+
+    /// Joins every undo step made since `mark` into one, so one Ctrl+Z undoes
+    /// an action applied to several ranges (a Ctrl selection) at once.
+    pub fn merge_undo_since(&mut self, mark: usize) {
+        let stack = &mut self.history.undo_stack;
+        if stack.len() > mark + 1 {
+            let merged: Vec<Diff> = stack.drain(mark..).flatten().collect();
+            stack.push(merged);
+        }
+    }
+
     /// The cell's value shown with number format `code`, without changing the
     /// workbook (the sample in the "Format cells" dialog). Text and booleans are
     /// shown as they are; an empty cell gives "".
@@ -560,6 +575,22 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_merge_undo_steps() {
+        let mut m = model();
+        m.set_user_input(0, 1, 1, "x").unwrap();
+        let mark = m.undo_mark();
+        m.set_user_input(0, 2, 1, "a").unwrap();
+        m.set_user_input(0, 3, 1, "b").unwrap();
+        m.merge_undo_since(mark);
+        m.undo().unwrap();
+        assert_eq!(m.get_formatted_cell_value(0, 2, 1).unwrap(), "");
+        assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "");
+        assert_eq!(m.get_formatted_cell_value(0, 1, 1).unwrap(), "x");
+        m.redo().unwrap();
+        assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "b");
     }
 
     #[test]

@@ -12,7 +12,7 @@ import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from '
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid } from './grid';
-import { icon, renderRibbon } from './ribbon';
+import { icon, onRibbonDrawn, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
 import * as desk from './desktop';
@@ -40,6 +40,26 @@ const status = $('status-stats');
 
 let editing = false;
 
+/** Выделено несколько диапазонов (Ctrl+щелчок): действие — для каждого, как в Excel,
+ *  а Ctrl+Z отменяет его целиком. Без них — просто fn(). */
+function forEachRange(fn: () => void): void {
+  const extra = grid.extraRanges;
+  if (!extra.length) { fn(); return; }
+  const keep = grid.sel;
+  const mark = model.undoMark();
+  try {
+    for (const r of [...extra, keep]) {
+      grid.sel = { row: r.r1, column: r.c1, r1: r.r1, c1: r.c1, r2: r.r2, c2: r.c2 };
+      fn();
+    }
+  } finally {
+    grid.sel = keep;
+    grid.extraRanges = extra;
+    model.mergeUndoSince(mark);
+  }
+  grid.invalidateLayout();
+}
+
 function selectionArea(): Area {
   const s = grid.sel;
   return { sheet: grid.sheet, row: s.r1, column: s.c1, width: s.c2 - s.c1 + 1, height: s.r2 - s.r1 + 1 };
@@ -54,7 +74,14 @@ function placeEditor(): void {
   editor.style.left = `${host.left + r.x}px`;
   editor.style.top = `${host.top + r.y}px`;
   editor.style.width = `${r.w}px`;
-  editor.style.height = `${r.h}px`;
+  // Шрифт — как у ячейки, высота — не меньше строки текста: в низких строках
+  // (файлы с мелким шрифтом) набираемый текст иначе обрезался и был не виден.
+  let font = { sz: 11, b: false, i: false, name: '' };
+  try { font = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font; } catch { /* по умолчанию */ }
+  const px = Math.round((font.sz || 11) * 1.33);
+  editor.style.font = `${font.i ? 'italic ' : ''}${font.b ? 'bold ' : ''}${px}px ${fontStack(font.name)}`;
+  editor.style.lineHeight = '1.2';
+  editor.style.height = `${Math.max(r.h, Math.ceil(px * 1.2) + 2)}px`;
   if (editing && settings.expandEditor) growEditor();
 }
 
@@ -649,7 +676,11 @@ function sheetMenu(index: number, x: number, y: number): void {
   placeMenu(menu, x, y, true);
 }
 
-interface MenuItem { label: string; run: () => void; disabled?: boolean; keys?: string; separator?: boolean }
+interface MenuItem {
+  label: string; run: () => void; disabled?: boolean; keys?: string; separator?: boolean;
+  /** Значок слева (свой SVG) и отметка выбранного пункта. */
+  icon?: string; checked?: boolean;
+}
 
 /** Контекстное меню: пункты; separator — черта перед пунктом. */
 function showMenu(items: MenuItem[], x: number, y: number): HTMLElement {
@@ -658,7 +689,9 @@ function showMenu(items: MenuItem[], x: number, y: number): HTMLElement {
   for (const it of items) {
     if (it.separator) menu.append(Object.assign(document.createElement('hr'), { className: 'menu-sep' }));
     const b = document.createElement('button');
-    b.innerHTML = `<span>${escapeHtml(it.label)}</span>${it.keys ? `<small>${escapeHtml(it.keys)}</small>` : ''}`;
+    const ic = it.icon !== undefined ? `<i class="menu-icon">${it.icon}</i>` : '';
+    b.innerHTML = `${ic}<span>${escapeHtml(it.label)}</span>${it.keys ? `<small>${escapeHtml(it.keys)}</small>` : ''}`;
+    if (it.checked) b.classList.add('checked');
     b.disabled = !!it.disabled;
     b.addEventListener('click', () => { menu.hidden = true; it.run(); });
     menu.append(b);
@@ -804,7 +837,12 @@ function fitRows(r1: number, r2: number): void {
 }
 
 /** Объединение ячеек, как в Excel: если данных несколько — останется левое верхнее значение. */
+/** Объединение — для каждого выделенного диапазона (Ctrl): каждый станет своей ячейкой. */
 function merge(kind: 'center' | 'plain' | 'across' | 'undo'): void {
+  forEachRange(() => mergeOne(kind));
+}
+
+function mergeOne(kind: 'center' | 'plain' | 'across' | 'undo'): void {
   const area = selectionArea();
   const s = grid.sel;
   const inside = model.getMergedCells(grid.sheet).filter((m) => m.row <= s.r2 && m.row + m.height - 1 >= s.r1 && m.column <= s.c2 && m.column + m.width - 1 >= s.c1);
@@ -849,21 +887,59 @@ const BORDER_STYLES: [string, string][] = [
 /** Поставить границы: по умолчанию — последний выбор (сначала «Все границы», тонкая). */
 function applyBorders(type = settings.borderType as BorderType, st = settings.borderStyle): void {
   const style = st === 'dashed' ? 'mediumdashed' : st;
-  try { model.setAreaWithBorder(selectionArea(), { item: { style, color: '#000000' }, type }); } catch (e) { showToast(String(e)); }
+  try { forEachRange(() => model.setAreaWithBorder(selectionArea(), { item: { style, color: '#000000' }, type })); } catch (e) { showToast(String(e)); }
   grid.render();
   focusGrid();
+}
+
+/** Линия образца: тонкая, средняя, толстая, двойная, пунктир, точки. */
+function borderLine(st: string, x1: number, y1: number, x2: number, y2: number): string {
+  const w = st === 'thick' ? 3 : st === 'medium' ? 2 : 1.3;
+  const dash = st === 'dashed' ? ' stroke-dasharray="3 2"' : st === 'dotted' ? ' stroke-dasharray="1.2 1.6"' : '';
+  if (st === 'double') {
+    const dx = y1 === y2 ? 0 : 1.3, dy = y1 === y2 ? 1.3 : 0;
+    return `<path d="M${x1 - dx} ${y1 - dy}L${x2 - dx} ${y2 - dy}M${x1 + dx} ${y1 + dy}L${x2 + dx} ${y2 + dy}" stroke="currentColor" stroke-width="0.9"/>`;
+  }
+  return `<path d="M${x1} ${y1}L${x2} ${y2}" stroke="currentColor" stroke-width="${w}"${dash}/>`;
+}
+
+/** Значок «Границ»: какие границы и какой линией (на кнопке и в меню). */
+function borderIcon(type: BorderType, st: string): string {
+  const a = 3, b = 17, c = 10;
+  const sides: Record<string, [number, number, number, number]> = {
+    top: [a, a, b, a], bottom: [a, b, b, b], left: [a, a, a, b], right: [b, a, b, b], h: [a, c, b, c], v: [c, a, c, b],
+  };
+  const on: Record<string, string[]> = {
+    All: ['top', 'bottom', 'left', 'right', 'h', 'v'], Outer: ['top', 'bottom', 'left', 'right'], Inner: ['h', 'v'],
+    Top: ['top'], Bottom: ['bottom'], Left: ['left'], Right: ['right'], None: [],
+  };
+  const guide = Object.values(sides).map(([x1, y1, x2, y2]) => `M${x1} ${y1}L${x2} ${y2}`).join('');
+  const lines = (on[type] ?? []).map((k) => borderLine(st, ...sides[k])).join('');
+  return `<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="${guide}" stroke="currentColor" stroke-width="0.7" stroke-dasharray="1 1.5" opacity=".45"/>${lines}</svg>`;
+}
+
+/** Кнопка «Границы» показывает текущий выбор. */
+function syncBordersButton(): void {
+  const b = document.querySelector<HTMLElement>('.btn[data-command="format.borders"]');
+  if (!b) return;
+  b.innerHTML = borderIcon(settings.borderType as BorderType, settings.borderStyle);
+  const t = BORDER_TYPES.find((x) => x[0] === settings.borderType)?.[1] ?? '';
+  const l = BORDER_STYLES.find((x) => x[0] === settings.borderStyle)?.[1] ?? '';
+  b.title = `Границы: ${t.toLowerCase()}, линия ${l}`;
 }
 
 /** Стрелка у кнопки «Границы»: какие границы и какой линией. Выбор запоминается. */
 function bordersMenu(x: number, y: number): void {
   showMenu([
     ...BORDER_TYPES.map(([type, label]) => ({
-      label: `${type === settings.borderType ? '● ' : ''}${label}`, separator: type === 'Bottom' || type === 'None',
-      run: () => { settings.borderType = type; saveSettings(); applyBorders(); },
+      label, icon: borderIcon(type, settings.borderStyle), checked: type === settings.borderType,
+      separator: type === 'Bottom' || type === 'None',
+      run: () => { settings.borderType = type; saveSettings(); syncBordersButton(); applyBorders(); },
     })),
     ...BORDER_STYLES.map(([st, label], i) => ({
-      label: `${st === settings.borderStyle ? '● ' : ''}Линия: ${label}`, separator: i === 0,
-      run: () => { settings.borderStyle = st; saveSettings(); showToast(`Линия границ: ${label}. Щелчок по кнопке «Границы» ставит «${BORDER_TYPES.find((b) => b[0] === settings.borderType)?.[1]}» этой линией.`); },
+      label: `Линия: ${label}`, icon: `<svg width="20" height="20" viewBox="0 0 20 20" fill="none">${borderLine(st, 2, 10, 18, 10)}</svg>`,
+      checked: st === settings.borderStyle, separator: i === 0,
+      run: () => { settings.borderStyle = st; saveSettings(); syncBordersButton(); showToast(`Линия границ: ${label}. Щелчок по кнопке «Границы» ставит «${BORDER_TYPES.find((b) => b[0] === settings.borderType)?.[1]}» этой линией.`); },
     })),
   ], x, y);
 }
@@ -1303,6 +1379,20 @@ const sameText = (a: string, b: string) => a.replace(/\r\n?/g, '\n').trim() === 
 
 /** Вставка: своё — через движок (формулы, форматы), чужое — как текст. */
 function paste(text: string): void {
+  if (grid.extraRanges.length) {
+    // Несколько диапазонов (Ctrl): скопированное — в каждый; вырезанное — только в одно место.
+    if (clip?.cut) { showToast('Вырезанное вставляется в одно место: выделите один диапазон.'); return; }
+    const extra = grid.extraRanges, keep = grid.sel;
+    forEachRange(() => pasteHere(text));
+    grid.sel = keep;
+    grid.extraRanges = extra;
+    grid.render();
+    return;
+  }
+  pasteHere(text);
+}
+
+function pasteHere(text: string): void {
   if (clip && sameText(text, clip.text)) {
     const c = clip;
     const [r1, c1, r2, c2] = c.range;
@@ -1374,7 +1464,8 @@ function pasteText(text: string): void {
 function style(path: string, value: (current: boolean) => string, flag?: (s: ReturnType<Model['getCellStyle']>['style']) => boolean): void {
   const s = grid.sel;
   const current = flag ? flag(model.getCellStyle(grid.sheet, s.row, s.column).style) : false;
-  model.updateRangeStyle(selectionArea(), path, value(current));
+  const v = value(current);
+  forEachRange(() => model.updateRangeStyle(selectionArea(), path, v));
   grid.render();
   refreshRibbon();
   syncNumberFormat();
@@ -1420,7 +1511,8 @@ register(
   { id: 'edit.undo', label: 'Отменить', keywords: ['undo', 'назад', 'отмена'], keys: ['Ctrl+KeyZ'], run: () => undoRedo('undo') },
   { id: 'edit.redo', label: 'Повторить', keywords: ['redo', 'вернуть'], keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => undoRedo('redo') },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
-    const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); grid.render(); updateFormulaBar();
+    forEachRange(() => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); });
+    grid.render(); updateFormulaBar();
   } },
   { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм', 'итог'], keys: ['Alt+Equal'], run: autosum },
   { id: 'edit.insertFunction', label: 'Вставить функцию', keywords: ['insert function', 'функция', 'fx', 'мастер функций'], keys: ['Shift+F3'],
@@ -1483,7 +1575,7 @@ register(
   { id: 'format.percent', label: 'Процентный формат', keywords: ['percent', 'процент'], keys: ['Ctrl+Shift+Digit5'],
     run: () => style('num_fmt', () => '0%') },
   { id: 'format.currency', label: 'Денежный формат (₽)', keywords: ['currency', 'рубли', 'деньги'], keys: ['Ctrl+Shift+Digit4'],
-    run: () => style('num_fmt', () => '#,##0.00 "₽"') },
+    run: () => style('num_fmt', () => '#,##0.00 "₽";[Red]-#,##0.00 "₽"') },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => {
     if (fmt === ':more') { syncNumberFormat(); openFormatCells(); return; }
     if (fmt) style('num_fmt', () => fmt);
@@ -1703,6 +1795,7 @@ window.addEventListener('keydown', (e) => {
 // --- Запуск ---
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
+onRibbonDrawn(syncBordersButton);
 /** Списки ленты (формат, шрифт, размер) показывают значения активной ячейки. */
 function syncNumberFormat(): void {
   const st = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style;

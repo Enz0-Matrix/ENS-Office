@@ -89,12 +89,15 @@ export function shownDecimals(shown: string): number {
 
 const zeros = (n: number) => '0'.repeat(Math.max(0, n));
 
+/** По умолчанию — разряды и отрицательные красным (по желанию пользователя). */
+export const withRed = (base: string) => `${base};[Red]-${base}`;
+
 /** «Увеличить/уменьшить разрядность»: delta = +1 или −1. null — к этому формату неприменимо. */
 export function changeDecimals(code: string, delta: number, shown: string): string | null {
   if (isText(code) || isDateTime(code)) return null;
   if (isGeneral(code)) {
     const n = Math.max(0, shownDecimals(shown) + delta);
-    return n ? `0.${zeros(n)}` : '0';
+    return withRed(n ? `#,##0.${zeros(n)}` : '#,##0');
   }
   return mapSections(code, (s) => mapNumber(s, (int, frac) => {
     const n = Math.max(0, (frac?.length ?? 0) + delta);
@@ -114,7 +117,7 @@ export function toggleGrouping(code: string, shown: string): string | null {
   if (isText(code) || isDateTime(code)) return null;
   if (isGeneral(code)) {
     const n = shownDecimals(shown);
-    return n ? `#,##0.${zeros(n)}` : '#,##0';
+    return withRed(n ? `#,##0.${zeros(n)}` : '#,##0');
   }
   const on = !hasGrouping(code);
   return mapSections(code, (s) => mapNumber(s, (int, frac) => {
@@ -169,11 +172,12 @@ function numberCode(n: Num, kind: 'number' | 'currency'): string {
 
 /** Разбор существующего кода в категорию и настройки окна. */
 function classify(code: string): { cat: Category; num: Num } {
-  const num: Num = { decimals: 2, grouping: true, negative: 'minus', symbol: '₽' };
+  const num: Num = { decimals: 2, grouping: true, negative: 'redMinus', symbol: '₽' };
   if (isGeneral(code)) return { cat: 'general', num };
   if (isText(code)) return { cat: 'text', num };
   if (DATE_CODES.includes(code)) return { cat: 'date', num };
   if (TIME_CODES.includes(code)) return { cat: 'time', num };
+  num.negative = 'minus'; // у существующего кода — как в нём записано
   const first = sections(code)[0];
   let decimals = 0;
   mapNumber(first, (_i, frac) => { decimals = frac?.length ?? 0; return ''; });

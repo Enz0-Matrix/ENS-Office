@@ -219,7 +219,7 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
 /// ```
 pub struct UserModel<'a> {
     pub(crate) model: Model<'a>,
-    history: History,
+    pub(crate) history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
 }

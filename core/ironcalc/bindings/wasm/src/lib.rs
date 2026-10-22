@@ -422,6 +422,18 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: метка в истории отмены — для склейки шагов.
+    #[wasm_bindgen(js_name = "undoMark")]
+    pub fn undo_mark(&self) -> u32 {
+        self.model.undo_mark() as u32
+    }
+
+    /// ENS-Office: все шаги после метки — одной отменой (действие на несколько диапазонов).
+    #[wasm_bindgen(js_name = "mergeUndoSince")]
+    pub fn merge_undo_since(&mut self, mark: u32) {
+        self.model.merge_undo_since(mark as usize);
+    }
+
     /// ENS-Office: значение ячейки в формате `code`, книга не меняется (образец в «Формате ячеек»).
     #[wasm_bindgen(js_name = "formatCellValueAs")]
     pub fn format_cell_value_as(&self, sheet: u32, row: i32, column: i32, code: &str) -> Result<String, JsError> {

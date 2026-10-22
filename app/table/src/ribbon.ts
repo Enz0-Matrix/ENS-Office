@@ -5,6 +5,10 @@ import { command, keyLabel, run } from './commands';
 import { ICONS } from './icons';
 import { OFFICE_FONTS } from './fonts';
 
+/** Вызывается после перерисовки вкладки: кнопки с живым видом (например, «Границы») обновляют значок. */
+let afterDraw: () => void = () => {};
+export function onRibbonDrawn(f: () => void): void { afterDraw = f; f(); }
+
 export function icon(name: string, size: 20 | 24 = 20): string {
   return ICONS[`${name}_${size}`] ?? ICONS[`${name}_${size === 20 ? 24 : 20}`] ?? '';
 }
@@ -31,8 +35,8 @@ export interface RibbonTab {
 
 export const NUMBER_FORMATS = [
   { value: 'general', label: 'Общий' },
-  { value: '#,##0.00', label: 'Числовой' },
-  { value: '#,##0.00 "₽"', label: 'Денежный' },
+  { value: '#,##0.00;[Red]-#,##0.00', label: 'Числовой' },
+  { value: '#,##0.00 "₽";[Red]-#,##0.00 "₽"', label: 'Денежный' },
   { value: 'dd.mm.yyyy', label: 'Краткая дата' },
   { value: 'd mmmm yyyy', label: 'Длинная дата' },
   { value: 'hh:mm:ss', label: 'Время' },
@@ -291,6 +295,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       bodyEl.append(g);
     }
     refresh();
+    afterDraw();
   }
 
   function renderItem(item: RibbonItem): HTMLElement {

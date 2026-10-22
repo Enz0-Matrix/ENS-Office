@@ -116,6 +116,9 @@ export interface Model {
   setColumnsWidth(sheet: number, columnStart: number, columnEnd: number, width: number): void;
   setRowsHeight(sheet: number, rowStart: number, rowEnd: number, height: number): void;
   insertRows(sheet: number, row: number, count: number): void;
+  /** Склейка шагов отмены: всё после метки отменяется одним Ctrl+Z. */
+  undoMark(): number;
+  mergeUndoSince(mark: number): void;
   /** Цвет из числового формата ([Red]…): номер палитры Excel 1..56, 0 — нет. */
   getFormattedCellColor(sheet: number, row: number, column: number): number;
   /** Значение ячейки в формате code, книга не меняется (образец). */

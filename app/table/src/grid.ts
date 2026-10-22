@@ -49,6 +49,10 @@ const LAST_COLUMN = 16_384;
 export class Grid {
   sheet = 0;
   sel: Selection = { row: 1, column: 1, r1: 1, c1: 1, r2: 1, c2: 1 };
+  /** Ещё выделенные диапазоны (Ctrl+щелчок, как в Excel); sel — последний, с активной ячейкой. */
+  extraRanges: { r1: number; c1: number; r2: number; c2: number }[] = [];
+  /** Идёт Ctrl+щелчок: новое выделение добавляется к прежним, а не заменяет их. */
+  private ctrlPick = false;
   focusCell: FocusCellOptions = { enabled: false, mode: 'shade', extent: 'toCell', color: '#2b7a6b' };
   theme: GridTheme = {
     activeBorder: '#2b7a6b',
@@ -349,6 +353,7 @@ export class Grid {
   corner = { row: 1, column: 1 };
 
   select(row: number, column: number, extend = false): void {
+    if (!extend && !this.ctrlPick) this.extraRanges = [];
     row = Math.min(LAST_ROW, Math.max(1, row));
     column = Math.min(LAST_COLUMN, Math.max(1, column));
     const s = this.sel;
@@ -374,6 +379,7 @@ export class Grid {
   }
 
   selectRange(r1: number, c1: number, r2: number, c2: number): void {
+    if (!this.ctrlPick) this.extraRanges = [];
     this.sel = { row: r1, column: c1, r1, c1, r2, c2 };
     this.corner = { row: r2, column: c2 };
     this.ensureVisible(r1, c1);
@@ -384,6 +390,7 @@ export class Grid {
 
   /** Выделить целые столбцы (строки) от anchor до to, не прокручивая лист к началу. */
   selectLines(kind: 'row' | 'column', anchor: number, to: number): void {
+    if (!this.ctrlPick && !this.headerDrag) this.extraRanges = [];
     const a = Math.min(anchor, to), b = Math.max(anchor, to);
     const s = this.sel;
     if (kind === 'column') {
@@ -538,6 +545,13 @@ export class Grid {
     // выделяется заново и протяжка превращает щелчок в диапазон.
     if (!this.beforeSelect()) { e.preventDefault(); return; }
     this.scroller.focus();
+    // Ctrl+щелчок: прежнее выделение остаётся, новое добавляется к нему.
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey;
+    if (ctrl) {
+      const s = this.sel;
+      this.extraRanges = [...this.extraRanges, { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
+      this.ctrlPick = true;
+    }
     if (h.header === 'column' || h.header === 'row') {
       // Несколько столбцов (строк): протянуть по заголовкам или Shift+щелчок.
       const kind = h.header, s = this.sel;
@@ -550,6 +564,7 @@ export class Grid {
       this.select(h.row, h.column, e.shiftKey);
       this.dragging = true;
     }
+    this.ctrlPick = false;
   }
 
   private mouseMove(e: MouseEvent): void {
@@ -701,6 +716,14 @@ export class Grid {
       if (fill) { ctx.fillStyle = fill; ctx.fillRect(cell.x, cell.y, cell.w, cell.h); }
     }
 
+    // Ещё выделенные диапазоны (Ctrl+щелчок) — той же заливкой.
+    for (const x of this.extraRanges) {
+      if (x.r2 < ra || x.r1 > rb || x.c2 < ca || x.c1 > cb) continue;
+      const a = this.cellRect(Math.max(x.r1, ra), Math.max(x.c1, ca));
+      const b = this.cellRect(Math.min(x.r2, rb), Math.min(x.c2, cb));
+      ctx.fillStyle = this.theme.selectionFill;
+      ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
+    }
     // Выделенный диапазон (кроме активной ячейки).
     if ((s.r1 !== s.r2 || s.c1 !== s.c2) && s.r2 >= ra && s.r1 <= rb && s.c2 >= ca && s.c1 <= cb) {
       const a = this.cellRect(Math.max(s.r1, ra), Math.max(s.c1, ca));

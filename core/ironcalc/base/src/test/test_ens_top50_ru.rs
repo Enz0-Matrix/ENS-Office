@@ -140,6 +140,24 @@ fn ens_display_rounding_and_text_format_ru() {
 }
 
 #[test]
+fn ens_numbers_with_spaces_are_numbers() {
+    let mut m = UserModel::new_empty("model", "ru", "UTC", "ru").unwrap();
+    for (row, input, shown, value) in [
+        (1, "1 234 567,89", "1 234 567,89", "1234567,89"),
+        (2, "-12 345", "-12 345", "-12345"),
+        (3, "1\u{a0}234", "1 234", "1234"),
+    ] {
+        m.set_user_input(0, row, 1, input).unwrap();
+        assert_eq!(m.get_cell_type(0, row, 1).unwrap(), crate::types::CellType::Number, "{input}");
+        assert_eq!(m.get_cell_content(0, row, 1).unwrap(), value, "{input}");
+        assert_eq!(m.get_formatted_cell_value(0, row, 1).unwrap().replace('\u{a0}', " "), shown, "{input}");
+    }
+    // Не число: группы не по три цифры — остаётся текстом.
+    m.set_user_input(0, 4, 1, "12 34").unwrap();
+    assert_eq!(m.get_cell_type(0, 4, 1).unwrap(), crate::types::CellType::Text);
+}
+
+#[test]
 fn ens_russian_dates_and_locale_tags() {
     let mut m = UserModel::new_empty("model", "ru", "UTC", "ru").unwrap();
     let area = |r| crate::expressions::types::Area { sheet: 0, row: r, column: 1, width: 1, height: 1 };
