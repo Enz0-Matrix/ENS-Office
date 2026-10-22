@@ -9,7 +9,7 @@ import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
-import { applyTheme, THEMES } from './themes';
+import { applyTheme, systemReducesMotion, THEMES } from './themes';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -1853,19 +1853,29 @@ window.addEventListener('keydown', (e) => {
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
 onRibbonDrawn(syncBordersButton);
-applyTheme(settings.theme, grid, settings.themeMotion);
+const setTheme = () => applyTheme(settings.theme, grid, settings.themeMotion, settings.themeMotionForced);
+setTheme();
 
 /** «Вид → Тема»: выбор темы оформления (книга и печать не меняются). */
 function themeMenu(): void {
   const b = document.querySelector<HTMLElement>('.btn[data-command="view.theme"]')?.getBoundingClientRect();
+  const reduce = systemReducesMotion();
+  const moving = settings.themeMotion && (!reduce || settings.themeMotionForced);
   showMenu([
     ...THEMES.map((t) => ({
       label: `${t.name} — ${t.note}`, checked: t.id === settings.theme, icon: '',
-      run: () => { settings.theme = t.id; saveSettings(); applyTheme(t.id, grid, settings.themeMotion); },
+      run: () => { settings.theme = t.id; saveSettings(); setTheme(); },
     })),
     {
-      label: settings.themeMotion ? 'Выключить анимацию темы' : 'Включить анимацию темы', separator: true,
-      run: () => { settings.themeMotion = !settings.themeMotion; saveSettings(); applyTheme(settings.theme, grid, settings.themeMotion); },
+      // Анимация идёт, если включена и система не просит «уменьшить движение» (или включили вопреки ей).
+      label: moving ? 'Выключить анимацию темы' : reduce ? 'Включить анимацию темы (в системе она уменьшена)' : 'Включить анимацию темы',
+      separator: true,
+      run: () => {
+        settings.themeMotion = !moving;
+        settings.themeMotionForced = !moving && reduce;
+        saveSettings();
+        setTheme();
+      },
     },
   ], b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
 }

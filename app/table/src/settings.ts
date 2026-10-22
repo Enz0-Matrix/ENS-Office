@@ -20,6 +20,8 @@ export interface Settings {
   /** Тема оформления (themes.ts) и анимация в ней (мерцание и т. п.). */
   theme: string;
   themeMotion: boolean;
+  /** Анимацию включили вручную, хотя в системе стоит «уменьшить движение». */
+  themeMotionForced: boolean;
   /** Своя папка временных файлов восстановления ('' — в профиле пользователя). */
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
@@ -28,7 +30,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {
