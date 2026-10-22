@@ -146,6 +146,10 @@ export const TABS: RibbonTab[] = [
         items: [{ type: 'select', command: 'format.number', options: NUMBER_FORMATS, width: 130 }],
       },
       {
+        name: 'Стили',
+        items: [{ type: 'large', command: 'format.conditional', icon: 'color', label: 'Условное форматирование' }],
+      },
+      {
         name: 'Редактирование',
         items: [
           { type: 'medium', command: 'edit.autosum', icon: 'autosum' },

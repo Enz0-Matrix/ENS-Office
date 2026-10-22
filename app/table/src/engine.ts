@@ -26,8 +26,25 @@ export interface CellStyle {
 export interface ExtendedStyle {
   style: CellStyle;
   data_bar?: { positive_color?: Color; negative_color?: Color; is_gradient: boolean; value: number; axis_position: number; show_value: boolean } | null;
-  icon?: unknown;
+  /** Набор значков: какой значок и каким цветом. */
+  icon?: { icon: string; color?: Color; show_value: boolean } | null;
+  /** Оценка: count закрашенных значков из max. */
+  rating?: { icon: string; count: number; max: number; color?: Color; show_value: boolean } | null;
 }
+
+/** Формат правила условного форматирования (разница к стилю ячейки). */
+export interface Dxf {
+  font?: { b?: boolean; i?: boolean; u?: boolean; strike?: boolean; color?: Color } | null;
+  fill?: { color?: Color } | null;
+  border?: unknown;
+  num_fmt?: unknown;
+  alignment?: unknown;
+}
+
+/** Правило условного форматирования, как его хранит движок (поле type — вид правила). */
+export type CfRule = { type: string } & Record<string, unknown>;
+
+export interface CfView { index: number; range: string; cf_rule: CfRule; priority: number }
 
 export interface MergedCell { row: number; column: number; width: number; height: number }
 
@@ -62,11 +79,20 @@ export interface Model {
   getSheetDimension(sheet: number): number[];
   /** Строки с нестандартной высотой: [строка, высота, …] (скрытые — 0). */
   getRowLayout(sheet: number): Float64Array;
-  /** Сортировка по нескольким столбцам: keys = [столбец, по убыванию 0/1, …]; blanks: 0 — в конце, 1 — в начале, 2 — как ноль. */
-  sortRangeBy(area: Area, keys: number[], blanks: number): void;
+  /** Сортировка по нескольким столбцам: keys = [столбец, по убыванию 0/1, …]; blanks: 0 — в конце, 1 — в начале, 2 — как ноль;
+   *  visibleOnly — скрытые строки (отобранные фильтром) остаются на местах. */
+  sortRangeBy(area: Area, keys: number[], blanks: number, visibleOnly: boolean): void;
   getAutoFilter(sheet: number): number[];
   setAutoFilter(sheet: number, range: number[]): void;
   sortRange(area: Area, keyColumn: number, descending: boolean): void;
+  /** Условное форматирование: правила листа, сначала главные; index — для изменения и удаления. */
+  getConditionalFormattingList(sheet: number): CfView[];
+  getDxfForConditionalFormatting(sheet: number, index: number): Dxf | null;
+  addConditionalFormatting(sheet: number, range: string, rule: CfRule): void;
+  updateConditionalFormatting(sheet: number, index: number, range: string, rule: CfRule): void;
+  deleteConditionalFormatting(sheet: number, index: number): void;
+  raiseConditionalFormattingPriority(sheet: number, index: number): void;
+  lowerConditionalFormattingPriority(sheet: number, index: number): void;
   findAll(text: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean, sheet: number): { sheet: number; row: number; column: number }[];
   replaceAll(text: string, replacement: string, matchCase: boolean, wholeCell: boolean, sheet: number, onlyRow: number, onlyColumn: number): number;
   pasteValues(sourceSheet: number, source: [number, number, number, number], transpose: boolean): void;

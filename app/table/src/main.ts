@@ -6,6 +6,7 @@ import { initFind, showFind } from './findreplace';
 import { printSheet, renderPreview } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
+import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -1042,7 +1043,8 @@ async function sortBy(column: number, descending: boolean, custom = false): Prom
     .flatMap((l) => [l.column, l.descending ? 1 : 0]);
   if (!keys.length) keys.push(Math.min(Math.max(column, area.column), area.column + area.width - 1), descending ? 1 : 0);
   try {
-    model.sortRangeBy(area, keys, BLANKS_CODE[request.blanks]);
+    // При фильтре, как в Excel, переставляются только видимые строки.
+    model.sortRangeBy(area, keys, BLANKS_CODE[request.blanks], !!f);
   } catch (e) {
     showToast(`Не удалось отсортировать: ${e}`);
   }
@@ -1088,6 +1090,34 @@ initFilter({
   sort: (column, descending) => sortBy(column, descending),
   changed: () => { syncFilter(); updateStatus(); },
 });
+/** Выделение для правил: целые строки и столбцы — до конца данных (но не меньше активной ячейки). */
+function selectionRect(): Rect {
+  const s = grid.sel, d = model.getSheetDimension(grid.sheet);
+  return {
+    r1: s.r1, c1: s.c1,
+    r2: s.r2 === LAST_ROW ? Math.max(d[2], s.r1) : s.r2,
+    c2: s.c2 === LAST_COLUMN ? Math.max(d[3], s.c1) : s.c2,
+  };
+}
+
+initConditional({
+  model: () => model,
+  sheet: () => grid.sheet,
+  sheetName: () => model.getWorksheetsProperties()[grid.sheet].name,
+  selection: selectionRect,
+  render: () => grid.render(),
+  toast: showToast,
+  focus: focusGrid,
+});
+
+/** Меню «Условное форматирование» — под кнопкой на ленте (или у указателя). */
+function openConditionalMenu(): void {
+  const b = document.querySelector<HTMLElement>('.btn[data-command="format.conditional"]');
+  const r = b?.getBoundingClientRect();
+  if (r && r.width) conditionalMenu(r.left, r.bottom + 2);
+  else conditionalMenu(lastPointer.x, lastPointer.y + 8);
+}
+
 // После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
 grid.onFilterButton = (column, x, y) => setTimeout(() => openFilterPopup(column, x, y));
 
@@ -1375,6 +1405,12 @@ register(
       const [x, y] = (at ?? '').split(',').map(Number);
       bordersMenu(Number.isFinite(x) ? x : lastPointer.x, Number.isFinite(y) ? y : lastPointer.y + 8);
     } },
+  { id: 'format.conditional', label: 'Условное форматирование', keywords: ['conditional formatting', 'выделить ячейки', 'правила', 'гистограмма', 'цветовая шкала', 'значки'],
+    run: () => openConditionalMenu() },
+  { id: 'format.conditional:new', label: 'Условное форматирование: создать правило', keywords: ['new rule', 'условие'],
+    run: () => { void editRule(null, { range: rectRef(selectionRect()) }).then(() => focusGrid()); } },
+  { id: 'format.conditional:manage', label: 'Условное форматирование: управление правилами', keywords: ['manage rules', 'удалить правила'],
+    run: () => { void manageRules(); } },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => { if (fmt) style('num_fmt', () => fmt); } },
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
     const name = nextSheetName(model);

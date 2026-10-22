@@ -681,9 +681,27 @@ export class Grid {
       if (bar) this.drawDataBar(bar, cell);
     }
 
+    // Значки условного форматирования (наборы значков и оценки) — слева в ячейке.
+    const iconW = new Map<number, number>();
+    for (const cell of cells) {
+      const ext = extOf(cell.r, cell.c);
+      if (!ext?.icon && !ext?.rating) continue;
+      const size = Math.max(8, Math.min(14, cell.h - 6));
+      const cy = cell.y + cell.h / 2;
+      if (ext.icon) {
+        this.drawCfIcon(ext.icon.icon, model.resolveColor(ext.icon.color ?? '#808080') || '#808080', cell.x + 3, cy, size, true);
+        iconW.set(cell.r * 16_385 + cell.c, size + 5);
+      } else if (ext.rating) {
+        const color = model.resolveColor(ext.rating.color ?? '#FFC000') || '#FFC000';
+        for (let i = 0; i < ext.rating.max; i++) this.drawCfIcon(ext.rating.icon, color, cell.x + 3 + i * (size + 1), cy, size, i < ext.rating.count);
+        iconW.set(cell.r * 16_385 + cell.c, ext.rating.max * (size + 1) + 4);
+      }
+    }
+
     // Текст.
     for (const cell of cells) {
-      if (extOf(cell.r, cell.c)?.data_bar?.show_value === false) continue;
+      const ext = extOf(cell.r, cell.c);
+      if (ext?.data_bar?.show_value === false || ext?.icon?.show_value === false || ext?.rating?.show_value === false) continue;
       const text = textOf(cell.r, cell.c);
       if (!text) continue;
       const style = styleOf(cell.r, cell.c);
@@ -703,7 +721,9 @@ export class Grid {
           for (let c = cell.c - 1; c >= ca && !textOf(cell.r, c) && !mergeAt(cell.r, c); c--) spillL = this.sx(c);
         }
       }
-      this.drawText(text, style, align, cell, spillL, spillR);
+      const shift = iconW.get(cell.r * 16_385 + cell.c) ?? 0;
+      const tc = shift ? { ...cell, x: cell.x + shift, w: Math.max(0, cell.w - shift) } : cell;
+      this.drawText(text, style, align, tc, Math.max(spillL, tc.x), spillR);
     }
 
     // Границы — поверх всего.
@@ -879,6 +899,76 @@ export class Grid {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(0, Math.round(len) - 1), h - 1);
+  }
+
+  /** Значок условного форматирования (как в Excel, своим рисунком): x — левый край, cy — середина по высоте. */
+  private drawCfIcon(name: string, color: string, x: number, cy: number, s: number, filled: boolean): void {
+    const ctx = this.ctx;
+    const h = s / 2, cx = x + h, t = cy - h, b = cy + h;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.5, s / 7);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    const arrow = (angle: number) => {
+      ctx.translate(cx, cy);
+      ctx.rotate(angle);
+      ctx.moveTo(0, -h); ctx.lineTo(h, 0); ctx.lineTo(h * 0.35, 0); ctx.lineTo(h * 0.35, h);
+      ctx.lineTo(-h * 0.35, h); ctx.lineTo(-h * 0.35, 0); ctx.lineTo(-h, 0); ctx.closePath();
+      ctx.fill();
+    };
+    const fillOrRing = () => { if (filled) ctx.fill(); else { ctx.lineWidth = 1; ctx.stroke(); } };
+    switch (name) {
+      case 'ArrowUp': arrow(0); break;
+      case 'ArrowAngleUp': arrow(Math.PI / 4); break;
+      case 'ArrowRight': arrow(Math.PI / 2); break;
+      case 'ArrowAngleDown': arrow((3 * Math.PI) / 4); break;
+      case 'ArrowDown': arrow(Math.PI); break;
+      case 'TriangleUp': case 'TriangleUpFilled':
+        ctx.moveTo(cx, t + 1); ctx.lineTo(x + s, b - 2); ctx.lineTo(x, b - 2); ctx.closePath(); ctx.fill(); break;
+      case 'TriangleDown': case 'TriangleDownFilled':
+        ctx.moveTo(x, t + 2); ctx.lineTo(x + s, t + 2); ctx.lineTo(cx, b - 1); ctx.closePath(); ctx.fill(); break;
+      case 'FlatRectangle': ctx.fillRect(x, cy - s / 6, s, s / 3); break;
+      case 'Rhombus': ctx.moveTo(cx, t); ctx.lineTo(x + s, cy); ctx.lineTo(cx, b); ctx.lineTo(x, cy); ctx.closePath(); ctx.fill(); break;
+      case 'Flag':
+        ctx.moveTo(x + 2, b); ctx.lineTo(x + 2, t); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x + 2, t); ctx.lineTo(x + s, t + s * 0.28); ctx.lineTo(x + 2, t + s * 0.56); ctx.closePath(); ctx.fill(); break;
+      case 'Check':
+        ctx.moveTo(x + 1, cy); ctx.lineTo(x + s * 0.4, b - 2); ctx.lineTo(x + s - 1, t + 2); ctx.stroke(); break;
+      case 'Cross':
+        ctx.moveTo(x + 2, t + 2); ctx.lineTo(x + s - 2, b - 2); ctx.moveTo(x + s - 2, t + 2); ctx.lineTo(x + 2, b - 2); ctx.stroke(); break;
+      case 'Exclamation':
+        ctx.moveTo(cx, t + 1); ctx.lineTo(cx, cy + s * 0.15); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, b - 1.5, ctx.lineWidth * 0.7, 0, Math.PI * 2); ctx.fill(); break;
+      case 'Star':
+        for (let i = 0; i < 10; i++) {
+          const r = i % 2 ? h * 0.45 : h, a = -Math.PI / 2 + (i * Math.PI) / 5;
+          const px = cx + r * Math.cos(a), py = cy + r * Math.sin(a);
+          if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+        }
+        ctx.closePath();
+        fillOrRing();
+        break;
+      case 'Heart':
+        ctx.moveTo(cx, b - 1);
+        ctx.bezierCurveTo(x - 1, cy, x + 1, t, cx, t + s * 0.3);
+        ctx.bezierCurveTo(x + s - 1, t, x + s + 1, cy, cx, b - 1);
+        fillOrRing();
+        break;
+      case 'ThumbsUp': case 'ThumbsDown':
+        ctx.translate(cx, cy);
+        if (name === 'ThumbsDown') ctx.rotate(Math.PI);
+        ctx.fillRect(-h, -h * 0.1, h * 0.5, h * 1.1);
+        ctx.fillRect(-h * 0.4, -h * 0.1, h * 1.3, h * 1.1);
+        ctx.fillRect(-h * 0.3, -h, h * 0.55, h);
+        break;
+      default: // Circle и прочие — кружок
+        ctx.arc(cx, cy, h - 0.5, 0, Math.PI * 2);
+        fillOrRing();
+    }
+    ctx.restore();
   }
 
   /** Границы ячейки из файла: тонкая, средняя, толстая, двойная, пунктир. */

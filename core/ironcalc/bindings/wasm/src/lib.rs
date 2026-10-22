@@ -621,17 +621,19 @@ impl Model {
 
     /// ENS-Office: sort by several columns. `keys` = [column, descending (0/1), …];
     /// `blanks`: 0 — at the end, 1 — at the beginning, 2 — as zero.
+    /// `visible_only`: hidden (filtered out) rows stay in place.
     #[wasm_bindgen(js_name = "sortRangeBy")]
     pub fn sort_range_by(
         &mut self,
         #[wasm_bindgen(unchecked_param_type = "Area")] area: JsValue,
         keys: Vec<i32>,
         blanks: u8,
+        visible_only: bool,
     ) -> Result<(), JsError> {
         let area: Area = serde_wasm_bindgen::from_value(area).map_err(|e| to_js_error(e.to_string()))?;
         let keys: Vec<(i32, bool)> = keys.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1] != 0)).collect();
         let blanks = match blanks { 1 => Blanks::First, 2 => Blanks::AsZero, _ => Blanks::Last };
-        self.model.sort_range_by(&area, &keys, blanks).map_err(to_js_error)
+        self.model.sort_range_by_rows(&area, &keys, blanks, visible_only).map_err(to_js_error)
     }
 
     /// ENS-Office: rows with a non-default height: [row, height, …] (hidden — 0).

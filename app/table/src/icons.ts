@@ -67,6 +67,7 @@ import i_sort_asc_24 from '@fluentui/svg-icons/icons/text_sort_ascending_24_regu
 import i_filter_24 from '@fluentui/svg-icons/icons/filter_24_regular.svg?raw';
 import i_search_24 from '@fluentui/svg-icons/icons/search_24_regular.svg?raw';
 import i_eraser_24 from '@fluentui/svg-icons/icons/eraser_24_regular.svg?raw';
+import i_color_24 from '@fluentui/svg-icons/icons/color_24_regular.svg?raw';
 
 export const ICONS: Record<string, string> = {
   'clipboard_paste_20': clipboardPaste20,
@@ -134,4 +135,5 @@ export const ICONS: Record<string, string> = {
   'filter_24': i_filter_24,
   'search_24': i_search_24,
   'eraser_24': i_eraser_24,
+  'color_24': i_color_24,
 };

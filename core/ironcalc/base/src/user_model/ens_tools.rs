@@ -126,6 +126,14 @@ impl UserModel<'_> {
     /// first one decides, the next ones break ties). `blanks` says where rows
     /// with an empty key go.
     pub fn sort_range_by(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks) -> Result<(), String> {
+        self.sort_range_by_rows(area, keys, blanks, false)
+    }
+
+    /// As [`Self::sort_range_by`]; with `skip_hidden` the hidden rows (rows
+    /// filtered out by the autofilter) stay where they are and only the
+    /// visible rows are reordered among themselves, as Excel does with an
+    /// active filter.
+    pub fn sort_range_by_rows(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks, skip_hidden: bool) -> Result<(), String> {
         let sheet = area.sheet;
         if keys.is_empty() {
             return Ok(());
@@ -140,12 +148,18 @@ impl UserModel<'_> {
         if self.model.get_merged_cells(sheet)?.iter().any(|m| m.intersects(r1, c1, area.width, area.height)) {
             return Err("Нельзя сортировать диапазон с объединёнными ячейками".to_string());
         }
-        let mut rows: Vec<i32> = (r1..=r2).collect();
-        // values[k][i] — key k of row r1 + i
+        let hidden: std::collections::HashSet<i32> = if skip_hidden {
+            self.model.workbook.worksheet(sheet)?.rows.iter().filter(|r| r.hidden).map(|r| r.r).collect()
+        } else {
+            Default::default()
+        };
+        // The rows that take part; a sorted row goes to the slot of its position.
+        let slots: Vec<i32> = (r1..=r2).filter(|r| !hidden.contains(r)).collect();
+        // values[k][i] — key k of row slots[i]
         let values: Vec<Vec<CellValue>> = keys
             .iter()
             .map(|&(column, _)| {
-                rows.iter()
+                slots.iter()
                     .map(|&r| match self.model.get_cell_value_by_index(sheet, r, column).unwrap_or(CellValue::None) {
                         // "Пустые как ноль": строки не разъезжаются — пустое стоит среди чисел как 0.
                         CellValue::None if blanks == Blanks::AsZero => CellValue::Number(0.0),
@@ -154,9 +168,10 @@ impl UserModel<'_> {
                     .collect()
             })
             .collect();
-        rows.sort_by(|&a, &b| {
+        let mut order: Vec<usize> = (0..slots.len()).collect();
+        order.sort_by(|&a, &b| {
             for (k, &(_, descending)) in keys.iter().enumerate() {
-                let (ka, kb) = (&values[k][(a - r1) as usize], &values[k][(b - r1) as usize]);
+                let (ka, kb) = (&values[k][a], &values[k][b]);
                 let first_blank = if blanks == Blanks::First { Ordering::Less } else { Ordering::Greater };
                 let o = match (ka, kb) {
                     (CellValue::None, CellValue::None) => Ordering::Equal,
@@ -171,13 +186,16 @@ impl UserModel<'_> {
             }
             Ordering::Equal
         });
-        if rows.iter().enumerate().all(|(i, &r)| r == r1 + i as i32) {
+        if order.iter().enumerate().all(|(i, &j)| i == j) {
             return Ok(()); // already sorted
         }
         // Read everything first: the target rows are also sources.
         let mut planned = Vec::new();
-        for (i, &source_row) in rows.iter().enumerate() {
-            let target_row = r1 + i as i32;
+        for (i, &j) in order.iter().enumerate() {
+            let (source_row, target_row) = (slots[j], slots[i]);
+            if source_row == target_row {
+                continue;
+            }
             for column in c1..=c2 {
                 let content = self.model.get_localized_cell_content(sheet, source_row, column)?;
                 let source = CellReferenceIndex { sheet, row: source_row, column };
@@ -426,6 +444,29 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_sort_visible_rows_only() {
+        let mut m = model();
+        // Строки 2 и 4 скрыты фильтром: они остаются на местах.
+        for (r, v) in [(1, "50"), (2, "1"), (3, "30"), (4, "2"), (5, "10")] {
+            m.set_user_input(0, r, 1, v).unwrap();
+            m.set_user_input(0, r, 2, &format!("=A{r}*2")).unwrap();
+        }
+        m.set_rows_hidden(0, 2, 2, true).unwrap();
+        m.set_rows_hidden(0, 4, 4, true).unwrap();
+        let area = Area { sheet: 0, row: 1, column: 1, width: 2, height: 5 };
+        m.sort_range_by_rows(&area, &[(1, false)], Blanks::Last, true).unwrap();
+        let col = |m: &UserModel, c| (1..=5).map(|r| m.get_formatted_cell_value(0, r, c).unwrap()).collect::<Vec<_>>();
+        assert_eq!(col(&m, 1), ["10", "1", "30", "2", "50"]);
+        assert_eq!(col(&m, 2), ["20", "2", "60", "4", "100"]);
+        assert_eq!(m.get_cell_content(0, 1, 2).unwrap(), "=A1*2");
+        m.undo().unwrap();
+        assert_eq!(col(&m, 1), ["50", "1", "30", "2", "10"]);
+        // Без skip_hidden — все строки, как раньше.
+        m.sort_range_by(&area, &[(1, false)], Blanks::Last).unwrap();
+        assert_eq!(col(&m, 1), ["1", "2", "10", "30", "50"]);
     }
 
     #[test]
