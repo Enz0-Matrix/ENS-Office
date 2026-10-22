@@ -373,6 +373,10 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
         let alignment = if alignment_nodes.len() == 1 {
             let alignment_node = alignment_nodes[0];
             let wrap_text = get_bool_false(alignment_node, "wrapText");
+            let text_rotation = alignment_node
+                .attribute("textRotation")
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0);
 
             let horizontal = match alignment_node.attribute("horizontal") {
                 Some("center") => HorizontalAlignment::Center,
@@ -403,6 +407,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
                 horizontal,
                 vertical,
                 wrap_text,
+                text_rotation,
             })
         } else {
             None
@@ -570,6 +575,7 @@ pub(super) fn parse_dxf(
                     horizontal,
                     vertical,
                     wrap_text,
+                    text_rotation: 0,
                 });
             }
             _ => {}

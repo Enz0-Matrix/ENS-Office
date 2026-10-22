@@ -174,6 +174,19 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
                 style.alignment = Some(alignment)
             }
         },
+        // ENS-Office: text direction (Excel's textRotation).
+        "alignment.text_rotation" => {
+            let v = value.parse::<i32>().map_err(|_| format!("Invalid text rotation: '{value}'."))?;
+            if !(0..=180).contains(&v) && v != 255 {
+                return Err(format!("Invalid text rotation: '{value}'."));
+            }
+            match style.alignment {
+                Some(ref mut s) => s.text_rotation = v,
+                None => {
+                    style.alignment = Some(Alignment { text_rotation: v, ..Default::default() });
+                }
+            }
+        }
         "alignment.wrap_text" => match style.alignment {
             Some(ref mut s) => s.wrap_text = boolean(value)?,
             None => {
@@ -1238,6 +1251,8 @@ impl<'a> UserModel<'a> {
                         custom_width: col.custom_width,
                         style: col.style,
                         hidden: col.hidden,
+                        outline_level: col.outline_level,
+                        collapsed: col.collapsed,
                     });
                     break;
                 }

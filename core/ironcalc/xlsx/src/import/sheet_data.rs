@@ -289,6 +289,8 @@ impl SheetDataReader<'_, '_> {
         let mut style = 0;
         let mut custom_format = false;
         let mut hidden = false;
+        let mut outline_level: u8 = 0;
+        let mut collapsed = false;
         for attribute in element.attributes() {
             let attribute = attribute?;
             let value = attribute_value_of(&attribute)?;
@@ -302,6 +304,8 @@ impl SheetDataReader<'_, '_> {
                 "s" => style = value.parse::<i32>().unwrap_or(0),
                 "customFormat" => custom_format = parse_bool_with_default(Some(&value), false),
                 "hidden" => hidden = parse_bool_with_default(Some(&value), false),
+                "outlineLevel" => outline_level = value.parse::<u8>().unwrap_or(0).min(7),
+                "collapsed" => collapsed = parse_bool_with_default(Some(&value), false),
                 _ => {}
             }
         }
@@ -309,7 +313,7 @@ impl SheetDataReader<'_, '_> {
             // The height of the row is always the visible height of the row.
             // If custom_height is false the height was computed automatically,
             // for example because a cell has many lines or a larger font.
-            if custom_height || custom_format || style != 0 || has_height_attribute || hidden {
+            if custom_height || custom_format || style != 0 || has_height_attribute || hidden || outline_level > 0 || collapsed {
                 self.rows.push(Row {
                     r: index,
                     height,
@@ -317,6 +321,8 @@ impl SheetDataReader<'_, '_> {
                     custom_height,
                     custom_format,
                     hidden,
+                    outline_level,
+                    collapsed,
                 });
             }
         }

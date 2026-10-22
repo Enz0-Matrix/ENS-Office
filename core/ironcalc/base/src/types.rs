@@ -292,6 +292,10 @@ pub struct Row {
     pub custom_height: bool,
     pub s: i32,
     pub hidden: bool,
+    /// ENS-Office: outline (grouping) level, 0..7, as Excel's `outlineLevel`.
+    pub outline_level: u8,
+    /// ENS-Office: the group that ends next to this row is collapsed (Excel's `collapsed`).
+    pub collapsed: bool,
 }
 
 // ECMA-376-1:2016 section 18.3.1.13
@@ -306,6 +310,10 @@ pub struct Col {
     pub custom_width: bool,
     pub hidden: bool,
     pub style: Option<i32>,
+    /// ENS-Office: outline (grouping) level, 0..7, as Excel's `outlineLevel`.
+    pub outline_level: u8,
+    /// ENS-Office: the group that ends next to this column is collapsed.
+    pub collapsed: bool,
 }
 
 /// Cell type enum matching Excel TYPE() function values.
@@ -735,9 +743,18 @@ impl Display for VerticalAlignment {
     }
 }
 
+fn is_zero_rotation(v: &i32) -> bool {
+    *v == 0
+}
+
 // 1762
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Default)]
 pub struct Alignment {
+    /// ENS-Office: text direction, as Excel's `textRotation`: 0..90 counter-clockwise,
+    /// 91..180 clockwise (90 + angle), 255 — letters stacked vertically.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero_rotation")]
+    pub text_rotation: i32,
     #[serde(default)]
     #[serde(skip_serializing_if = "HorizontalAlignment::is_default")]
     pub horizontal: HorizontalAlignment,

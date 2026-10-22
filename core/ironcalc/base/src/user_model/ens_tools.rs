@@ -137,6 +137,87 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// ENS-Office: outline (grouping) of rows, `[row, level, collapsed (0/1), …]`
+    /// for the rows in a group or carrying a "collapsed" flag.
+    pub fn get_row_outline(&self, sheet: u32) -> Result<Vec<i32>, String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let mut rows: Vec<&crate::types::Row> = ws.rows.iter().filter(|r| r.outline_level > 0 || r.collapsed).collect();
+        rows.sort_by_key(|r| r.r);
+        Ok(rows.iter().flat_map(|r| [r.r, i32::from(r.outline_level), i32::from(r.collapsed)]).collect())
+    }
+
+    /// ENS-Office: outline (grouping) of columns, `[column, level, collapsed (0/1), …]`.
+    pub fn get_column_outline(&self, sheet: u32) -> Result<Vec<i32>, String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let mut out = Vec::new();
+        for c in ws.cols.iter().filter(|c| c.outline_level > 0 || c.collapsed) {
+            for column in c.min..=c.max.min(c.min + 1000) {
+                out.extend([column, i32::from(c.outline_level), i32::from(c.collapsed)]);
+            }
+        }
+        Ok(out)
+    }
+
+    /// ENS-Office: sets the outline level of rows `r1..=r2` (one undo step).
+    pub fn set_rows_outline(&mut self, sheet: u32, r1: i32, r2: i32, level: u8) -> Result<(), String> {
+        let mut diff_list = Vec::new();
+        for row in r1..=r2 {
+            let ws = self.model.workbook.worksheet_mut(sheet)?;
+            let old = ws.row_outline(row);
+            let new = (level.min(7), old.1);
+            if old != new {
+                ws.set_row_outline(row, new.0, new.1)?;
+                diff_list.push(Diff::SetRowOutline { sheet, row, new_value: new, old_value: old });
+            }
+        }
+        if !diff_list.is_empty() {
+            self.push_diff_list(diff_list);
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: marks the group ending next to `row` as collapsed or not.
+    pub fn set_row_collapsed(&mut self, sheet: u32, row: i32, collapsed: bool) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        let old = ws.row_outline(row);
+        let new = (old.0, collapsed);
+        if old != new {
+            ws.set_row_outline(row, new.0, new.1)?;
+            self.push_diff_list(vec![Diff::SetRowOutline { sheet, row, new_value: new, old_value: old }]);
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: sets the outline level of columns `c1..=c2` (one undo step).
+    pub fn set_columns_outline(&mut self, sheet: u32, c1: i32, c2: i32, level: u8) -> Result<(), String> {
+        let mut diff_list = Vec::new();
+        for column in c1..=c2 {
+            let ws = self.model.workbook.worksheet_mut(sheet)?;
+            let old = ws.column_outline(column);
+            let new = (level.min(7), old.1);
+            if old != new {
+                ws.set_column_outline(column, new.0, new.1)?;
+                diff_list.push(Diff::SetColumnOutline { sheet, column, new_value: new, old_value: old });
+            }
+        }
+        if !diff_list.is_empty() {
+            self.push_diff_list(diff_list);
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: marks the column group ending next to `column` as collapsed or not.
+    pub fn set_column_collapsed(&mut self, sheet: u32, column: i32, collapsed: bool) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        let old = ws.column_outline(column);
+        let new = (old.0, collapsed);
+        if old != new {
+            ws.set_column_outline(column, new.0, new.1)?;
+            self.push_diff_list(vec![Diff::SetColumnOutline { sheet, column, new_value: new, old_value: old }]);
+        }
+        Ok(())
+    }
+
     /// New workbooks: cells are centred vertically by default (the user's wish;
     /// Excel's default is "bottom"). Changes the workbook's default cell format,
     /// so it is saved to xlsx and Excel shows the same. Not an undo step.
@@ -587,6 +668,38 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_row_and_column_outline() {
+        let mut m = model();
+        m.set_rows_outline(0, 2, 4, 1).unwrap();
+        m.set_rows_outline(0, 3, 3, 2).unwrap();
+        m.set_row_collapsed(0, 5, true).unwrap();
+        assert_eq!(m.get_row_outline(0).unwrap(), [2, 1, 0, 3, 2, 0, 4, 1, 0, 5, 0, 1]);
+        m.undo().unwrap();
+        assert_eq!(m.get_row_outline(0).unwrap(), [2, 1, 0, 3, 2, 0, 4, 1, 0]);
+        m.set_columns_width(0, 2, 6, 120.0).unwrap();
+        m.set_columns_outline(0, 3, 4, 1).unwrap();
+        assert_eq!(m.get_column_outline(0).unwrap(), [3, 1, 0, 4, 1, 0]);
+        assert_eq!(m.get_column_width(0, 5).unwrap(), 120.0);
+        assert_eq!(m.get_column_width(0, 3).unwrap(), 120.0);
+        m.undo().unwrap();
+        assert!(m.get_column_outline(0).unwrap().is_empty());
+        // Вставка строки над группой сдвигает её вместе со строками.
+        m.insert_rows(0, 1, 1).unwrap();
+        assert_eq!(&m.get_row_outline(0).unwrap()[..3], [3, 1, 0]);
+    }
+
+    #[test]
+    fn ens_text_rotation_style() {
+        let mut m = model();
+        let area = Area { sheet: 0, row: 1, column: 1, width: 1, height: 1 };
+        m.update_range_style(&area, "alignment.text_rotation", "90").unwrap();
+        assert_eq!(m.get_cell_style(0, 1, 1).unwrap().alignment.unwrap().text_rotation, 90);
+        assert!(m.update_range_style(&area, "alignment.text_rotation", "200").is_err());
+        m.update_range_style(&area, "alignment.text_rotation", "255").unwrap();
+        assert_eq!(m.get_cell_style(0, 1, 1).unwrap().alignment.unwrap().text_rotation, 255);
     }
 
     #[test]

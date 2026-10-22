@@ -146,6 +146,7 @@ export const TABS: RibbonTab[] = [
           { type: 'medium', command: 'align.center', icon: 'text_align_center' },
           { type: 'medium', command: 'align.right', icon: 'text_align_right' },
           { type: 'medium', command: 'format.wrap', icon: 'text_wrap' },
+          { type: 'medium', command: 'format.rotate', icon: 'text_direction_rotate_90_left' },
           { type: 'medium', command: 'format.merge', icon: 'merge' },
           { type: 'split', command: 'format.borders', icon: 'border_all' },
         ],
@@ -200,6 +201,13 @@ export const TABS: RibbonTab[] = [
         ],
       },
       {
+        name: 'Структура',
+        items: [
+          { type: 'large', command: 'data.group', icon: 'group', label: 'Сгруппировать' },
+          { type: 'large', command: 'data.ungroup', icon: 'group_list', label: 'Разгруппировать' },
+        ],
+      },
+      {
         name: 'Поиск',
         items: [
           { type: 'large', command: 'edit.find', icon: 'search', label: 'Найти' },
@@ -246,6 +254,18 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Оформление',
         items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }],
+      },
+      {
+        name: 'Скрытое',
+        items: [{
+          type: 'select', command: 'view.hidden', width: 190,
+          options: [
+            { value: 'ask', label: 'Скрытое: спрашивать' },
+            { value: 'excel', label: 'Скрытое: как в Excel' },
+            { value: 'all', label: 'Скрытое: всегда со всеми' },
+            { value: 'visible', label: 'Скрытое: только видимые' },
+          ],
+        }],
       },
       {
         name: 'Ввод',

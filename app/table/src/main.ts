@@ -10,11 +10,11 @@ import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
-import { applyTheme, systemReducesMotion, THEMES } from './themes';
+import { allThemes, applyTheme, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
 import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
-import { Grid } from './grid';
+import { Grid, type OutlineGroup } from './grid';
 import { icon, onRibbonDrawn, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
@@ -804,10 +804,10 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
       run: () => structure(() => model.insertColumns(grid.sheet, s.c1, cols)) });
   }
   if (header !== 'column' && !fullCols) {
-    items.push({ label: rows > 1 ? `Удалить строки (${rows})` : 'Удалить строку', run: () => structure(() => model.deleteRows(grid.sheet, s.r1, rows)) });
+    items.push({ label: rows > 1 ? `Удалить строки (${rows})` : 'Удалить строку', run: () => void deleteLines('row') });
   }
   if (header !== 'row' && !fullRows) {
-    items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => structure(() => model.deleteColumns(grid.sheet, s.c1, cols)) });
+    items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => void deleteLines('column') });
   }
   items.push({ label: 'Очистить содержимое', keys: keysOf('edit.clear'), run: () => run('edit.clear') });
   if (!header) items.push({ label: 'Формат ячеек…', keys: keysOf('format.cells'), run: () => run('format.cells') });
@@ -959,7 +959,8 @@ const BORDER_STYLES: [string, string][] = [
 /** Поставить границы: по умолчанию — последний выбор (сначала «Все границы», тонкая). */
 function applyBorders(type = settings.borderType as BorderType, st = settings.borderStyle): void {
   const style = st === 'dashed' ? 'mediumdashed' : st;
-  try { forEachRange(() => model.setAreaWithBorder(selectionArea(), { item: { style, color: '#000000' }, type })); } catch (e) { showToast(String(e)); }
+  void onTargets('Границы', () => model.setAreaWithBorder(selectionArea(), { item: { style, color: '#000000' }, type }))
+    .catch((e) => showToast(String(e))).then(() => grid.render());
   grid.render();
   focusGrid();
 }
@@ -1090,6 +1091,7 @@ function undoRedo(kind: 'undo' | 'redo'): void {
 
 /** Нефритовые — когда можно, серые — когда нельзя. */
 function syncUndoState(): void {
+  syncOutline();
   const u = model.canUndo(), r = model.canRedo();
   qaUndo.disabled = !u;
   qaRedo.disabled = !r;
@@ -1540,10 +1542,280 @@ function style(path: string, value: (current: boolean) => string, flag?: (s: Ret
   const s = grid.sel;
   const current = flag ? flag(model.getCellStyle(grid.sheet, s.row, s.column).style) : false;
   const v = value(current);
-  forEachRange(() => model.updateRangeStyle(selectionArea(), path, v));
+  void onTargets('Оформление', () => model.updateRangeStyle(selectionArea(), path, v)).then(() => {
+    grid.render();
+    refreshRibbon();
+    syncNumberFormat();
+  });
+}
+
+
+// --- Группировка строк и столбцов (структура), как в Excel ---
+// Уровни хранит движок (outlineLevel в xlsx); «свернуть» — скрыть строки группы
+// и поставить метку «свёрнуто» у итоговой строки (под группой).
+
+let outlineKey = '';
+function syncOutline(force = false): void {
+  let rows: ArrayLike<number> = [], cols: ArrayLike<number> = [];
+  try { rows = model.getRowOutline(grid.sheet); cols = model.getColumnOutline(grid.sheet); } catch { /* старый движок */ }
+  const key = `${grid.sheet}|${Array.from(rows).join()}|${Array.from(cols).join()}`;
+  if (!force && key === outlineKey) return;
+  outlineKey = key;
+  grid.setOutline(rows, cols);
+}
+
+function outlineMap(kind: 'row' | 'column'): Map<number, { level: number; collapsed: boolean }> {
+  const a = kind === 'row' ? model.getRowOutline(grid.sheet) : model.getColumnOutline(grid.sheet);
+  const m = new Map<number, { level: number; collapsed: boolean }>();
+  for (let i = 0; i + 2 < a.length; i += 3) m.set(a[i], { level: a[i + 1], collapsed: a[i + 2] === 1 });
+  return m;
+}
+
+const hideLines = (kind: 'row' | 'column', a: number, b: number, hidden: boolean) =>
+  kind === 'row' ? model.setRowsHidden(grid.sheet, a, b, hidden) : model.setColumnsHidden(grid.sheet, a, b, hidden);
+const setLinesCollapsed = (kind: 'row' | 'column', i: number, c: boolean) =>
+  kind === 'row' ? model.setRowCollapsed(grid.sheet, i, c) : model.setColumnCollapsed(grid.sheet, i, c);
+
+/** Что группировать: выделены столбцы целиком — столбцы, иначе строки. */
+function outlineTarget(): { kind: 'row' | 'column'; a: number; b: number } {
+  const s = grid.sel;
+  if (s.r1 === 1 && s.r2 === LAST_ROW && !(s.c1 === 1 && s.c2 === LAST_COLUMN)) return { kind: 'column', a: s.c1, b: s.c2 };
+  return { kind: 'row', a: s.r1, b: Math.min(s.r2, LAST_ROW - 1) };
+}
+
+/** Сгруппировать (delta = 1) или разгруппировать (−1) строки/столбцы a..b. */
+function changeOutline(delta: 1 | -1): void {
+  const { kind, a, b } = outlineTarget();
+  if (b - a > 100_000) { showToast('Слишком большой диапазон для группировки.'); return; }
+  const levels = outlineMap(kind);
+  const mark = model.undoMark();
+  try {
+    if (delta < 0 && levels.get(b + 1)?.collapsed) {
+      // Разгруппировать свёрнутую группу — строки снова видны.
+      hideLines(kind, a, b, false);
+      setLinesCollapsed(kind, b + 1, false);
+    }
+    for (let i = a; i <= b;) {
+      const lv = levels.get(i)?.level ?? 0;
+      let j = i;
+      while (j + 1 <= b && (levels.get(j + 1)?.level ?? 0) === lv) j++;
+      const nl = Math.max(0, Math.min(7, lv + delta));
+      if (nl !== lv) {
+        if (kind === 'row') model.setRowsOutline(grid.sheet, i, j, nl);
+        else model.setColumnsOutline(grid.sheet, i, j, nl);
+      }
+      i = j + 1;
+    }
+    if (delta > 0 && [...levels.values()].every((x) => x.level < 7) === false) showToast('Больше 7 уровней групп нельзя (как в Excel).');
+  } catch (e) {
+    showToast(`Не получилось: ${e}`);
+  }
+  model.mergeUndoSince(mark);
+  grid.invalidateLayout();
+  syncOutline(true);
+  focusGrid();
+}
+
+/** «+/−»: свернуть или развернуть группу (вложенные свёрнутые остаются свёрнутыми). */
+function toggleGroup(g: OutlineGroup, collapse: boolean): void {
+  const mark = model.undoMark();
+  try {
+    if (collapse) {
+      hideLines(g.kind, g.a, g.b, true);
+      setLinesCollapsed(g.kind, g.b + 1, true);
+    } else {
+      hideLines(g.kind, g.a, g.b, false);
+      setLinesCollapsed(g.kind, g.b + 1, false);
+      const groups = g.kind === 'row' ? grid.rowGroups : grid.colGroups;
+      for (const n of groups) {
+        if (n.level > g.level && n.a >= g.a && n.b <= g.b && n.collapsed) hideLines(g.kind, n.a, n.b, true);
+      }
+    }
+  } catch (e) {
+    showToast(`Не получилось: ${e}`);
+  }
+  model.mergeUndoSince(mark);
+  grid.invalidateLayout();
+  syncOutline(true);
+}
+
+/** Кнопки уровней «1 2 3»: видны уровни меньше n, группы уровня n и глубже — свёрнуты. */
+function showOutlineLevel(kind: 'row' | 'column', n: number): void {
+  const groups = kind === 'row' ? grid.rowGroups : grid.colGroups;
+  const mark = model.undoMark();
+  try {
+    for (const g of groups) hideLines(kind, g.a, g.b, false);
+    for (const g of groups) setLinesCollapsed(kind, g.b + 1, g.level >= n);
+    for (const g of groups) if (g.level >= n) hideLines(kind, g.a, g.b, true);
+  } catch (e) {
+    showToast(`Не получилось: ${e}`);
+  }
+  model.mergeUndoSince(mark);
+  grid.invalidateLayout();
+  syncOutline(true);
+}
+
+grid.onOutlineToggle = (g, collapse) => toggleGroup(g, collapse);
+grid.onOutlineLevel = (kind, n) => showOutlineLevel(kind, n);
+
+// --- Скрытые строки и столбцы: что делать, когда действие их задевает ---
+// По умолчанию — как в Excel (скрытые фильтром не трогаем, свёрнутые и
+// скрытые вручную — вместе со всеми), но с вопросом; выбор можно запомнить.
+
+type HiddenChoice = 'all' | 'visible';
+
+function hiddenIn(r: Rect): { rows: number; cols: number; filtered: boolean } {
+  const d = model.getSheetDimension(grid.sheet);
+  const r2 = Math.min(r.r2, Math.max(d[2], r.r1)), c2 = Math.min(r.c2, Math.max(d[3], r.c1));
+  let rows = 0, cols = 0, filtered = false;
+  for (let i = r.r1; i <= Math.min(r2, r.r1 + 200_000); i++) {
+    if (model.getRowHeight(grid.sheet, i) === 0) {
+      rows++;
+      const f = filterAt(grid.sheet, i, r.c1);
+      if (f && f.criteria.size) filtered = true;
+    }
+  }
+  for (let j = r.c1; j <= Math.min(c2, r.c1 + 16_384); j++) if (model.getColumnWidth(grid.sheet, j) === 0) cols++;
+  return { rows, cols, filtered };
+}
+
+/** Видимые части прямоугольника: полосы видимых строк × полосы видимых столбцов. */
+function visibleParts(r: Rect): Rect[] {
+  const d = model.getSheetDimension(grid.sheet);
+  const r2 = Math.min(r.r2, Math.max(d[2], r.r1)), c2 = Math.min(r.c2, Math.max(d[3], r.c1));
+  const runs = (a: number, b: number, hidden: (i: number) => boolean) => {
+    const out: [number, number][] = [];
+    let start = 0;
+    for (let i = a; i <= b + 1; i++) {
+      const vis = i <= b && !hidden(i);
+      if (vis && !start) start = i;
+      if (!vis && start) { out.push([start, i - 1]); start = 0; }
+    }
+    return out;
+  };
+  const rr = runs(r.r1, r2, (i) => model.getRowHeight(grid.sheet, i) === 0);
+  const cc = runs(r.c1, c2, (j) => model.getColumnWidth(grid.sheet, j) === 0);
+  return rr.flatMap(([a, b]) => cc.map(([x, y]) => ({ r1: a, c1: x, r2: b, c2: y })));
+}
+
+function askHidden(what: string, info: { rows: number; cols: number; filtered: boolean }): Promise<HiddenChoice | null> {
+  const excel: HiddenChoice = info.filtered ? 'visible' : 'all';
+  if (settings.hiddenPolicy === 'all' || settings.hiddenPolicy === 'visible') return Promise.resolve(settings.hiddenPolicy);
+  if (settings.hiddenPolicy === 'excel') return Promise.resolve(excel);
+  const parts = [info.rows ? `строк: ${info.rows}` : '', info.cols ? `столбцов: ${info.cols}` : ''].filter(Boolean).join(', ');
+  const o = $('recovery');
+  o.innerHTML = `<div class="modal small hidden-ask">
+    <h2>${escapeHtml(what)}: есть скрытое</h2>
+    <p>В выделении скрыто ${parts}${info.filtered ? ' (часть — фильтром)' : ''}.
+       Что делать с ними? Как в Excel — «${excel === 'all' ? 'вместе со скрытыми' : 'только видимые'}».</p>
+    <label class="sort-choice"><input type="checkbox" data-remember> Запомнить выбор (изменить можно: «Вид → Скрытое»)</label>
+    <div class="rec-actions">
+      <button data-act="all" class="${excel === 'all' ? 'primary' : ''}">Вместе со скрытыми</button>
+      <button data-act="visible" class="${excel === 'visible' ? 'primary' : ''}">Только видимые</button>
+      <button data-act="cancel">Отмена</button>
+    </div></div>`;
+  o.hidden = false;
+  const m = o.querySelector<HTMLElement>('.modal')!;
+  return new Promise((resolve) => {
+    const done = (v: HiddenChoice | null) => {
+      if (v && m.querySelector<HTMLInputElement>('[data-remember]')!.checked) { settings.hiddenPolicy = v; saveSettings(); refreshRibbon(); }
+      o.hidden = true;
+      resolve(v);
+      focusGrid();
+    };
+    m.addEventListener('click', (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (act === 'all' || act === 'visible') done(act);
+      else if (act === 'cancel') done(null);
+    });
+    m.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') done(null);
+      if (e.key === 'Enter') { e.preventDefault(); done(excel); }
+    });
+    m.querySelector<HTMLButtonElement>(`[data-act="${excel}"]`)!.focus();
+  });
+}
+
+/** Действие на выделение с учётом скрытого (и выделения с Ctrl): fn — для одного диапазона. */
+async function onTargets(what: string, fn: () => void): Promise<void> {
+  const keepSel = grid.sel, keepExtra = grid.extraRanges;
+  const ranges: Rect[] = [...keepExtra, { r1: keepSel.r1, c1: keepSel.c1, r2: keepSel.r2, c2: keepSel.c2 }];
+  const info = ranges.map(hiddenIn).reduce((x, y) => ({ rows: x.rows + y.rows, cols: x.cols + y.cols, filtered: x.filtered || y.filtered }));
+  let choice: HiddenChoice = 'all';
+  if (info.rows || info.cols) {
+    const c = await askHidden(what, info);
+    if (!c) return;
+    choice = c;
+  }
+  if (choice === 'all') { forEachRange(fn); return; }
+  const parts = ranges.flatMap(visibleParts);
+  if (!parts.length) return;
+  const last = parts[parts.length - 1];
+  grid.extraRanges = parts.slice(0, -1);
+  grid.sel = { row: last.r1, column: last.c1, ...last };
+  try {
+    forEachRange(fn);
+  } finally {
+    grid.sel = keepSel;
+    grid.extraRanges = keepExtra;
+  }
   grid.render();
-  refreshRibbon();
-  syncNumberFormat();
+}
+
+/** Удалить строки (столбцы) выделения — со скрытыми или только видимые. */
+async function deleteLines(kind: 'row' | 'column'): Promise<void> {
+  const s = grid.sel;
+  const rect: Rect = kind === 'row' ? { r1: s.r1, c1: 1, r2: s.r2, c2: 1 } : { r1: 1, c1: s.c1, r2: 1, c2: s.c2 };
+  const info = kind === 'row' ? { ...hiddenIn({ ...rect, c2: 1 }), cols: 0 } : { ...hiddenIn({ ...rect, r2: 1 }), rows: 0 };
+  let choice: HiddenChoice = 'all';
+  if (info.rows || info.cols) {
+    const c = await askHidden(kind === 'row' ? 'Удаление строк' : 'Удаление столбцов', info);
+    if (!c) return;
+    choice = c;
+  }
+  const mark = model.undoMark();
+  structure(() => {
+    if (choice === 'all') {
+      if (kind === 'row') model.deleteRows(grid.sheet, s.r1, s.r2 - s.r1 + 1);
+      else model.deleteColumns(grid.sheet, s.c1, s.c2 - s.c1 + 1);
+      return;
+    }
+    // Только видимые: полосы с конца, чтобы номера впереди не сдвигались.
+    const parts = visibleParts(kind === 'row' ? { r1: s.r1, c1: 1, r2: s.r2, c2: 1 } : { r1: 1, c1: s.c1, r2: 1, c2: s.c2 });
+    for (const p of parts.reverse()) {
+      if (kind === 'row') model.deleteRows(grid.sheet, p.r1, p.r2 - p.r1 + 1);
+      else model.deleteColumns(grid.sheet, p.c1, p.c2 - p.c1 + 1);
+    }
+  });
+  model.mergeUndoSince(mark);
+  syncOutline(true);
+}
+
+// --- Направление текста (поворот), как в Excel ---
+const ROTATIONS: [number, string][] = [
+  [0, 'Обычный текст'], [45, 'Против часовой стрелки (45°)'], [135, 'По часовой стрелке (−45°)'],
+  [255, 'Вертикальный текст (буквы столбиком)'], [90, 'Повернуть текст вверх (90°)'], [180, 'Повернуть текст вниз (−90°)'],
+];
+
+function rotationMenu(x: number, y: number): void {
+  const cur = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.text_rotation ?? 0;
+  showMenu([
+    ...ROTATIONS.map(([v, label]) => ({
+      label, checked: v === cur,
+      run: () => { style('alignment.text_rotation', () => String(v)); fitRows(grid.sel.r1, grid.sel.r2); },
+    })),
+    {
+      label: 'Свой угол…', separator: true,
+      run: () => {
+        const a = prompt('Угол поворота текста, градусы (от −90 до 90; плюс — против часовой стрелки):', '30');
+        const n = Math.round(Number(a?.replace(',', '.')));
+        if (a === null || !Number.isFinite(n) || n < -90 || n > 90) return;
+        style('alignment.text_rotation', () => String(n >= 0 ? n : 90 - n));
+        fitRows(grid.sel.r1, grid.sel.r2);
+      },
+    },
+  ], x, y);
 }
 
 /** Кнопки «Разряды», «Разрядность»: новый код от текущего формата активной ячейки — на всё выделение. */
@@ -1586,8 +1858,8 @@ register(
   { id: 'edit.undo', label: 'Отменить', keywords: ['undo', 'назад', 'отмена'], keys: ['Ctrl+KeyZ'], run: () => undoRedo('undo') },
   { id: 'edit.redo', label: 'Повторить', keywords: ['redo', 'вернуть'], keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => undoRedo('redo') },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
-    forEachRange(() => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); });
-    grid.render(); updateFormulaBar();
+    void onTargets('Очистка', () => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); })
+      .then(() => { grid.render(); updateFormulaBar(); });
   } },
   { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм', 'итог'], keys: ['Alt+Equal'], run: autosum },
   { id: 'edit.insertFunction', label: 'Вставить функцию', keywords: ['insert function', 'функция', 'fx', 'мастер функций'], keys: ['Shift+F3'],
@@ -1622,6 +1894,17 @@ register(
   { id: 'align.bottom', label: 'По нижнему краю', keywords: ['align bottom', 'внизу'], run: () => style('alignment.vertical', () => 'bottom') },
   { id: 'view.formulaBar', label: 'Развернуть или свернуть строку формул', keywords: ['formula bar', 'строка формул', 'высота'], keys: ['Ctrl+Shift+KeyU'],
     run: () => toggleFormulaHeight() },
+  { id: 'data.group', label: 'Сгруппировать', keywords: ['group', 'группа', 'свернуть', 'структура'], keys: ['Shift+Alt+ArrowRight'],
+    run: () => changeOutline(1) },
+  { id: 'data.ungroup', label: 'Разгруппировать', keywords: ['ungroup', 'группа', 'структура'], keys: ['Shift+Alt+ArrowLeft'],
+    run: () => changeOutline(-1) },
+  { id: 'format.rotate', label: 'Направление текста', keywords: ['text direction', 'поворот текста', 'вертикально', 'под углом', 'ориентация'],
+    run: () => {
+      const b = document.querySelector<HTMLElement>('.btn[data-command="format.rotate"]')?.getBoundingClientRect();
+      rotationMenu(b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
+    } },
+  { id: 'view.hidden', label: 'Скрытое: что делать при действиях', keywords: ['скрытые строки', 'видимые', 'hidden'],
+    run: (v) => { if (v) { settings.hiddenPolicy = v as typeof settings.hiddenPolicy; saveSettings(); } } },
   { id: 'format.wrap', label: 'Перенос текста', keywords: ['wrap text', 'перенос', 'переносить по словам'],
     checked: () => !!model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.wrap_text,
     run: () => { style('alignment.wrap_text', (cur) => String(!cur), (st) => !!st.alignment?.wrap_text); fitRows(grid.sel.r1, grid.sel.r2); } },
@@ -1876,17 +2159,58 @@ window.addEventListener('keydown', (e) => {
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
 onRibbonDrawn(syncBordersButton);
 const setTheme = () => applyTheme(settings.theme, grid, settings.themeMotion, settings.themeMotionForced);
+setCustomThemes(settings.customThemes);
 setTheme();
+
+/** «Загрузить тему из файла…»: файл .json (образец — «Сохранить образец темы»). */
+function loadThemeFile(): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.enstheme,application/json';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const t = parseThemeFile(await file.text());
+    if (typeof t === 'string') { showToast(t); return; }
+    settings.customThemes = [...settings.customThemes.filter((x) => x.id !== t.id), t];
+    settings.theme = t.id;
+    saveSettings();
+    setCustomThemes(settings.customThemes);
+    setTheme();
+    showToast(`Тема «${t.name}» добавлена и включена.`);
+  });
+  input.click();
+}
 
 /** «Вид → Тема»: выбор темы оформления (книга и печать не меняются). */
 function themeMenu(): void {
   const b = document.querySelector<HTMLElement>('.btn[data-command="view.theme"]')?.getBoundingClientRect();
   const reduce = systemReducesMotion();
   const moving = settings.themeMotion && (!reduce || settings.themeMotionForced);
+  const mine = settings.customThemes;
   showMenu([
-    ...THEMES.map((t) => ({
+    ...allThemes().map((t) => ({
       label: `${t.name} — ${t.note}`, checked: t.id === settings.theme, icon: '',
       run: () => { settings.theme = t.id; saveSettings(); setTheme(); },
+    })),
+    { label: 'Загрузить тему из файла…', separator: true, run: loadThemeFile },
+    {
+      label: 'Сохранить образец темы (в буфер обмена)',
+      run: () => {
+        void copyText(themeTemplate(settings.theme))
+          .then(() => showToast('Образец темы скопирован. Вставьте в Блокнот, поменяйте цвета и сохраните как файл .json.'))
+          .catch((e) => showToast(String(e)));
+      },
+    },
+    ...mine.map((t, i) => ({
+      label: `Удалить свою тему «${t.name}»`, separator: i === 0,
+      run: () => {
+        settings.customThemes = settings.customThemes.filter((x) => x.id !== t.id);
+        if (settings.theme === t.id) settings.theme = 'classic';
+        saveSettings();
+        setCustomThemes(settings.customThemes);
+        setTheme();
+      },
     })),
     {
       // Анимация идёт, если включена и система не просит «уменьшить движение» (или включили вопреки ей).
@@ -1913,6 +2237,7 @@ function syncNumberFormat(): void {
   setSelect('format.fontName', st.font.name);
   setSelect('format.fontSize', String(st.font.sz));
   setSelect('options.decimal', settings.decimal);
+  setSelect('view.hidden', settings.hiddenPolicy);
   const select = document.querySelector<HTMLSelectElement>('select[data-command="format.number"]');
   if (!select) return;
   const fmt = st.num_fmt;

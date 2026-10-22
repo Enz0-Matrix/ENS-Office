@@ -14,6 +14,11 @@ export interface Settings {
   /** Кнопка «Границы»: что ставит по щелчку и какой линией. */
   borderType: string;
   borderStyle: string;
+  /** Действие задевает скрытые строки/столбцы: спрашивать, как в Excel, всегда со скрытыми, только видимые. */
+  hiddenPolicy: 'ask' | 'excel' | 'all' | 'visible';
+  /** Свои темы, загруженные из файлов (themes.ts), и скрытые из списка встроенные. */
+  customThemes: { id: string; name: string; note: string; tone?: 'light' | 'dark'; vars: Record<string, string>; grid: Record<string, string>; css?: string }[];
+  hiddenThemes: string[];
   /** Высота строки формул (пиксели) и последняя развёрнутая высота — для кнопки ⌄. */
   formulaHeight: number;
   formulaExpanded: number;
@@ -30,7 +35,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {

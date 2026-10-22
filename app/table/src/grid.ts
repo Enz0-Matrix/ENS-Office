@@ -68,6 +68,34 @@ const HEADER_H = 22;
 const ROW_SCALE = ROW_H / 25;
 /** Насколько близко к границе заголовка курсор превращается в «⟷». */
 const GRIP = 4;
+/** Ширина одного уровня групп в полосе структуры (слева и сверху). */
+const OUTLINE_STEP = 14;
+
+/** Группа строк или столбцов: a..b, уровень; итоговая строка — b + 1 (как в Excel). */
+export interface OutlineGroup { kind: 'row' | 'column'; a: number; b: number; level: number; collapsed: boolean }
+
+/** Группы из уровней: каждая непрерывная полоса с уровнем ≥ L — группа уровня L. */
+function groupsOf(kind: 'row' | 'column', levels: Map<number, { level: number; collapsed: boolean }>): OutlineGroup[] {
+  const out: OutlineGroup[] = [];
+  const idx = [...levels.keys()].filter((i) => levels.get(i)!.level > 0).sort((x, y) => x - y);
+  const max = Math.max(0, ...idx.map((i) => levels.get(i)!.level));
+  for (let L = 1; L <= max; L++) {
+    let start = 0, prev = 0;
+    const flush = () => {
+      if (!start) return;
+      out.push({ kind, a: start, b: prev, level: L, collapsed: !!levels.get(prev + 1)?.collapsed });
+      start = 0;
+    };
+    for (const i of idx) {
+      if (levels.get(i)!.level < L) continue;
+      if (start && i === prev + 1) { prev = i; continue; }
+      flush();
+      start = prev = i;
+    }
+    flush();
+  }
+  return out;
+}
 const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
@@ -121,6 +149,135 @@ export class Grid {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private headerW = 50;
+  /** Полоса структуры (группы): слева от номеров строк и над буквами столбцов. */
+  private outlineW = 0;
+  private outlineH = 0;
+  private get headerH(): number { return HEADER_H + this.outlineH; }
+  rowGroups: OutlineGroup[] = [];
+  colGroups: OutlineGroup[] = [];
+  private rowLevels = 0;
+  private colLevels = 0;
+  /** «+/−» у группы: свернуть (true) или развернуть. */
+  onOutlineToggle: (g: OutlineGroup, collapse: boolean) => void = () => {};
+  /** Кнопки уровней «1 2 3» в углу. */
+  onOutlineLevel: (kind: 'row' | 'column', level: number) => void = () => {};
+
+  /** Группы листа из движка: [индекс, уровень, свёрнуто, …]. */
+  setOutline(rows: ArrayLike<number>, cols: ArrayLike<number>): void {
+    const parse = (a: ArrayLike<number>) => {
+      const m = new Map<number, { level: number; collapsed: boolean }>();
+      for (let i = 0; i + 2 < a.length; i += 3) m.set(a[i], { level: a[i + 1], collapsed: a[i + 2] === 1 });
+      return m;
+    };
+    this.rowGroups = groupsOf('row', parse(rows));
+    this.colGroups = groupsOf('column', parse(cols));
+    this.rowLevels = Math.max(0, ...this.rowGroups.map((g) => g.level));
+    this.colLevels = Math.max(0, ...this.colGroups.map((g) => g.level));
+    const w = this.rowLevels ? (this.rowLevels + 1) * OUTLINE_STEP + 4 : 0;
+    const h = this.colLevels ? (this.colLevels + 1) * OUTLINE_STEP + 4 : 0;
+    if (w !== this.outlineW || h !== this.outlineH) {
+      this.outlineW = w;
+      this.outlineH = h;
+      this.headerW = 0; // пересчитается при отрисовке
+      this.updateExtent();
+    }
+    this.render();
+  }
+
+  /** Щелчок в полосе структуры: «+/−» группы или кнопка уровня. true — обработан. */
+  private outlineClick(px: number, py: number): boolean {
+    if (px < this.outlineW && py < this.headerH) {
+      // Кнопки уровней строк — в углу над полосой.
+      const level = Math.floor((px - 2) / OUTLINE_STEP) + 1;
+      if (level >= 1 && level <= this.rowLevels + 1) { this.onOutlineLevel('row', level); return true; }
+      return false;
+    }
+    if (py < this.outlineH && px < this.headerW) {
+      const level = Math.floor((py - 2) / OUTLINE_STEP) + 1;
+      if (level >= 1 && level <= this.colLevels + 1) { this.onOutlineLevel('column', level); return true; }
+      return false;
+    }
+    if (px < this.outlineW && py >= this.headerH) {
+      const level = Math.floor((px - 2) / OUTLINE_STEP) + 1;
+      const row = this.rowAt(this.sheetY(py));
+      const g = this.rowGroups.find((x) => x.level === level && (x.b + 1 === row || (!x.collapsed && row >= x.a && row <= x.b)));
+      if (g) { this.onOutlineToggle(g, !g.collapsed); return true; }
+      return true; // щелчок по полосе — не выделение
+    }
+    if (py < this.outlineH && px >= this.headerW) {
+      const level = Math.floor((py - 2) / OUTLINE_STEP) + 1;
+      const column = this.columnAt(this.sheetX(px));
+      const g = this.colGroups.find((x) => x.level === level && (x.b + 1 === column || (!x.collapsed && column >= x.a && column <= x.b)));
+      if (g) { this.onOutlineToggle(g, !g.collapsed); return true; }
+      return true;
+    }
+    return false;
+  }
+
+  /** Полоса структуры: линии групп, «+/−», кнопки уровней. */
+  private drawOutline(W: number, H: number): void {
+    if (!this.outlineW && !this.outlineH) return;
+    const ctx = this.ctx;
+    ctx.save();
+    const box = (x: number, y: number, label: string) => {
+      ctx.fillStyle = this.theme.sheetBg;
+      ctx.strokeStyle = this.theme.headerText;
+      ctx.lineWidth = 1;
+      ctx.fillRect(x, y, 11, 11);
+      ctx.strokeRect(x + 0.5, y + 0.5, 10, 10);
+      ctx.fillStyle = this.theme.headerText;
+      ctx.fillRect(x + 3, y + 5, 5, 1);
+      if (label === '+') ctx.fillRect(x + 5, y + 3, 1, 5);
+    };
+    const levelButton = (x: number, y: number, n: number) => {
+      ctx.fillStyle = this.theme.headerBg;
+      ctx.strokeStyle = this.theme.headerLine;
+      ctx.fillRect(x, y, 12, 12);
+      ctx.strokeRect(x + 0.5, y + 0.5, 11, 11);
+      ctx.fillStyle = this.theme.headerText;
+      ctx.font = '9px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(n), x + 6, y + 6.5);
+    };
+    ctx.fillStyle = this.theme.headerBg;
+    if (this.outlineW) ctx.fillRect(0, this.headerH, this.outlineW, H);
+    if (this.outlineH) ctx.fillRect(this.headerW, 0, W, this.outlineH);
+    ctx.strokeStyle = this.theme.headerText;
+    // Строки.
+    if (this.outlineW) {
+      ctx.save(); ctx.beginPath(); ctx.rect(0, this.headerH, this.outlineW, H); ctx.clip();
+      for (const g of this.rowGroups) {
+        const x = 2 + (g.level - 1) * OUTLINE_STEP;
+        const top = this.cellRect(g.a, 1), bot = this.cellRect(g.b, 1), sum = this.cellRect(g.b + 1, 1);
+        if (!g.collapsed) {
+          ctx.beginPath();
+          ctx.moveTo(x + 5.5, top.y + 2); ctx.lineTo(x + 5.5, bot.y + bot.h - 1); ctx.lineTo(x + 2, bot.y + bot.h - 1);
+          ctx.stroke();
+        }
+        if (sum.h > 0) box(x, sum.y + sum.h / 2 - 5, g.collapsed ? '+' : '-');
+      }
+      ctx.restore();
+      for (let n = 1; n <= this.rowLevels + 1; n++) levelButton(2 + (n - 1) * OUTLINE_STEP, this.headerH - 15, n);
+    }
+    // Столбцы.
+    if (this.outlineH) {
+      ctx.save(); ctx.beginPath(); ctx.rect(this.headerW, 0, W, this.outlineH); ctx.clip();
+      for (const g of this.colGroups) {
+        const y = 2 + (g.level - 1) * OUTLINE_STEP;
+        const left = this.cellRect(1, g.a), right = this.cellRect(1, g.b), sum = this.cellRect(1, g.b + 1);
+        if (!g.collapsed) {
+          ctx.beginPath();
+          ctx.moveTo(left.x + 2, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 2);
+          ctx.stroke();
+        }
+        if (sum.w > 0) box(sum.x + sum.w / 2 - 5, y, g.collapsed ? '+' : '-');
+      }
+      ctx.restore();
+      for (let n = 1; n <= this.colLevels + 1; n++) levelButton(Math.max(2, this.headerW - 15), 2 + (n - 1) * OUTLINE_STEP, n);
+    }
+    ctx.restore();
+  }
   private colX: number[] = [0];
   private extentRows = 1000;
   private extentCols = 52;
@@ -282,7 +439,7 @@ export class Grid {
     this.extentRows = Math.min(LAST_ROW, Math.max(1000, last + 200, this.extentRows));
     const lastCol = this.sel.c1 === 1 && this.sel.c2 === LAST_COLUMN ? this.sel.column : this.sel.c2;
     this.extentCols = Math.min(LAST_COLUMN, Math.max(52, lastCol + 10, this.extentCols));
-    this.spacer.style.height = `${HEADER_H + this.y(this.extentRows + 1)}px`;
+    this.spacer.style.height = `${this.headerH + this.y(this.extentRows + 1)}px`;
     this.spacer.style.width = `${this.headerW + this.x(this.extentCols + 1)}px`;
   }
 
@@ -323,13 +480,13 @@ export class Grid {
   private visibleRows(): number {
     const top = this.firstRow;
     let n = 0;
-    while (top + n < LAST_ROW && this.y(top + n + 1) - this.scroller.scrollTop < this.scroller.clientHeight - HEADER_H) n++;
+    while (top + n < LAST_ROW && this.y(top + n + 1) - this.scroller.scrollTop < this.scroller.clientHeight - this.headerH) n++;
     return n;
   }
 
   /** Экранные координаты: закреплённые строки и столбцы не прокручиваются. */
   private sy(row: number): number {
-    return HEADER_H + this.y(row) - (row <= this.fr ? 0 : this.scroller.scrollTop);
+    return this.headerH + this.y(row) - (row <= this.fr ? 0 : this.scroller.scrollTop);
   }
 
   private sx(column: number): number {
@@ -338,7 +495,7 @@ export class Grid {
 
   /** Координаты листа (px) под точкой экрана в области ячеек. */
   private sheetY(py: number): number {
-    const b = py - HEADER_H;
+    const b = py - this.headerH;
     return b < this.frozenH ? b : b + this.scroller.scrollTop;
   }
 
@@ -465,7 +622,7 @@ export class Grid {
   ensureVisible(row: number, column: number): void {
     if (row > this.fr) {
       const top = this.y(row) - this.frozenH, rh = this.height(row);
-      const viewH = this.scroller.clientHeight - HEADER_H - this.frozenH;
+      const viewH = this.scroller.clientHeight - this.headerH - this.frozenH;
       if (top < this.scroller.scrollTop) this.scroller.scrollTop = top;
       else if (top + rh > this.scroller.scrollTop + viewH) this.scroller.scrollTop = top + rh - viewH;
     }
@@ -480,8 +637,9 @@ export class Grid {
   private hit(e: MouseEvent): { row: number; column: number; header: 'row' | 'column' | 'corner' | null } {
     const r = this.canvas.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
-    const row = py < HEADER_H ? 0 : this.rowAt(this.sheetY(py));
+    const row = py < this.headerH ? 0 : this.rowAt(this.sheetY(py));
     const column = px < this.headerW ? 0 : this.columnAt(this.sheetX(px));
+    // Полоса структуры — не заголовок (её щелчки обрабатывает outlineClick).
     const header = row === 0 && column === 0 ? 'corner' : row === 0 ? 'column' : column === 0 ? 'row' : null;
     return { row, column, header };
   }
@@ -490,12 +648,12 @@ export class Grid {
   private grip(e: MouseEvent): { kind: 'column' | 'row'; index: number } | null {
     const r = this.canvas.getBoundingClientRect();
     const px = e.clientX - r.left, py = e.clientY - r.top;
-    if (py < HEADER_H && px > this.headerW) {
+    if (py < this.headerH && px > this.headerW) {
       const sx = this.sheetX(px);
       const c = this.columnAt(sx);
       if (this.x(c + 1) - sx <= GRIP) return { kind: 'column', index: c };
       if (sx - this.x(c) <= GRIP && c > 1) return { kind: 'column', index: c - 1 };
-    } else if (px < this.headerW && py > HEADER_H) {
+    } else if (px < this.headerW && py > this.headerH) {
       const sy = this.sheetY(py);
       const row = this.rowAt(sy);
       if (this.y(row + 1) - sy <= GRIP) return { kind: 'row', index: row };
@@ -525,6 +683,10 @@ export class Grid {
 
   private mouseDown(e: MouseEvent): void {
     if (e.button !== 0) return;
+    {
+      const cr0 = this.canvas.getBoundingClientRect();
+      if (this.outlineClick(e.clientX - cr0.left, e.clientY - cr0.top)) { e.preventDefault(); return; }
+    }
     const g = this.grip(e);
     if (g) {
       e.preventDefault();
@@ -649,7 +811,7 @@ export class Grid {
     this.readFrozen();
     const r0 = this.firstRow;
     let rN = r0;
-    while (rN < LAST_ROW && HEADER_H + this.y(rN + 1) - st < H) rN++;
+    while (rN < LAST_ROW && this.headerH + this.y(rN + 1) - st < H) rN++;
     const c0 = this.firstColumn;
     let cN = c0;
     while (cN < LAST_COLUMN && this.headerW + this.x(cN + 1) - sl < W) cN++;
@@ -661,14 +823,14 @@ export class Grid {
     const gridLines = (() => { try { return model.getShowGridLines(this.sheet); } catch { return true; } })();
 
     // Ширина заголовков строк — по количеству цифр.
-    const hw = Math.max(40, 12 + 8 * String(rN).length);
+    const hw = Math.max(40, 12 + 8 * String(rN).length) + this.outlineW;
     if (hw !== this.headerW) { this.headerW = hw; this.updateExtent(); }
 
     ctx.fillStyle = this.theme.sheetBg;
     ctx.fillRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(this.headerW, HEADER_H, W - this.headerW, H - HEADER_H);
+    ctx.rect(this.headerW, this.headerH, W - this.headerW, H - this.headerH);
     ctx.clip();
 
     // Стили и объединения читаем один раз за кадр.
@@ -694,7 +856,7 @@ export class Grid {
     ctx.beginPath();
     // Прокручиваемая часть не заходит под закреплённую.
     const left = ca <= this.fc ? this.sx(ca) : Math.max(this.sx(ca), this.headerW + this.frozenW);
-    const top = ra <= this.fr ? this.sy(ra) : Math.max(this.sy(ra), HEADER_H + this.frozenH);
+    const top = ra <= this.fr ? this.sy(ra) : Math.max(this.sy(ra), this.headerH + this.frozenH);
     ctx.rect(left, top, this.sx(cb) + this.width(cb) - left, this.sy(rb) + this.height(rb) - top);
     ctx.clip();
 
@@ -709,7 +871,7 @@ export class Grid {
       }
       for (let c = ca; c <= cb + 1; c++) {
         const x = Math.round(this.sx(c)) + 0.5;
-        ctx.moveTo(x, HEADER_H); ctx.lineTo(x, H);
+        ctx.moveTo(x, this.headerH); ctx.lineTo(x, H);
       }
       ctx.stroke();
     }
@@ -909,8 +1071,8 @@ export class Grid {
     ctx.strokeStyle = '#9a9a9a';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    if (this.fr) { const y = Math.round(HEADER_H + this.frozenH) + 0.5; ctx.moveTo(this.headerW, y); ctx.lineTo(W, y); }
-    if (this.fc) { const x = Math.round(this.headerW + this.frozenW) + 0.5; ctx.moveTo(x, HEADER_H); ctx.lineTo(x, H); }
+    if (this.fr) { const y = Math.round(this.headerH + this.frozenH) + 0.5; ctx.moveTo(this.headerW, y); ctx.lineTo(W, y); }
+    if (this.fc) { const x = Math.round(this.headerW + this.frozenW) + 0.5; ctx.moveTo(x, this.headerH); ctx.lineTo(x, H); }
     ctx.stroke();
     ctx.restore();
 
@@ -925,6 +1087,38 @@ export class Grid {
     const px = Math.round((f?.sz ?? 11) * 1.33);
     ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${px}px ${fontStack(f?.name)}`;
     ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
+    // Направление текста (Excel textRotation): 1..90 — против часовой стрелки,
+    // 91..180 — по часовой (90 + угол), 255 — буквы столбиком.
+    const rot = style?.alignment?.text_rotation ?? 0;
+    if (rot) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(cell.x + 1, cell.y + 1, cell.w - 2, cell.h - 2); ctx.clip();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center';
+      if (rot === 255) {
+        const chars = [...text.replace(/\n/g, '')];
+        const lh = Math.round(px * 1.1);
+        const vertical = style?.alignment?.vertical ?? 'bottom';
+        const total = chars.length * lh;
+        let y = vertical === 'top' ? cell.y + 2 : vertical === 'center' ? cell.y + (cell.h - total) / 2 : cell.y + cell.h - total - 2;
+        const cx = align === 'left' ? cell.x + px / 2 + 3 : align === 'right' ? cell.x + cell.w - px / 2 - 3 : cell.x + cell.w / 2;
+        for (const ch of chars) { ctx.fillText(ch, cx, y + lh / 2); y += lh; }
+      } else {
+        const deg = rot <= 90 ? rot : -(rot - 90);
+        const tw = ctx.measureText(text).width;
+        const rad = (-deg * Math.PI) / 180;
+        // Повёрнутая строка: по горизонтали — по выравниванию ячейки, по вертикали — по центру.
+        const span = Math.abs(Math.cos(rad)) * tw;
+        const cx = align === 'left' ? cell.x + 3 + span / 2 : align === 'right' ? cell.x + cell.w - 3 - span / 2 : cell.x + cell.w / 2;
+        ctx.translate(cx, cell.y + cell.h / 2);
+        ctx.rotate(rad);
+        ctx.fillText(text.replace(/\n/g, ' '), 0, 0);
+        if (f?.u) ctx.fillRect(-tw / 2, px / 2 - 1, tw, 1);
+        if (f?.strike) ctx.fillRect(-tw / 2, 0, tw, 1);
+      }
+      ctx.restore();
+      return;
+    }
     const wrap = !!style?.alignment?.wrap_text;
     const lines = wrap ? wrapLines(ctx, text, cell.w - 6) : [text];
     const lineH = Math.round(px * 1.22);
@@ -1138,7 +1332,7 @@ export class Grid {
   private drawHeaders(rowBands: [number, number][], colBands: [number, number][], W: number, H: number): void {
     const ctx = this.ctx, s = this.sel;
     ctx.fillStyle = this.theme.headerBg;
-    ctx.fillRect(0, 0, W, HEADER_H);
+    ctx.fillRect(0, 0, W, this.headerH);
     ctx.fillRect(0, 0, this.headerW, H);
     ctx.font = '12px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
@@ -1148,28 +1342,28 @@ export class Grid {
     for (const [c0, cN] of colBands) {
     // Прокручиваемые заголовки не заходят под закреплённые.
     const left = c0 <= this.fc ? this.headerW : this.headerW + this.frozenW;
-    ctx.save(); ctx.beginPath(); ctx.rect(left, 0, W - left, HEADER_H); ctx.clip();
+    ctx.save(); ctx.beginPath(); ctx.rect(left, 0, W - left, this.headerH); ctx.clip();
     for (let c = c0; c <= cN; c++) {
       const { x, w } = this.cellRect(1, c);
       if (w === 0) continue; // скрытый столбец
       const inSel = (c >= s.c1 && c <= s.c2) || this.extraRanges.some((x) => c >= x.c1 && c <= x.c2);
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
-        ctx.fillRect(x, 0, w, HEADER_H);
+        ctx.fillRect(x, this.outlineH, w, HEADER_H);
         ctx.fillStyle = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
-        ctx.fillRect(x, HEADER_H - 2, w, 2);
+        ctx.fillRect(x, this.headerH - 2, w, 2);
       }
       ctx.fillStyle = inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${c === s.column ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
-      ctx.fillText(columnName(c), x + w / 2, HEADER_H / 2);
-      ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, 0); ctx.lineTo(Math.round(x + w) + 0.5, HEADER_H); ctx.stroke();
+      ctx.fillText(columnName(c), x + w / 2, this.outlineH + HEADER_H / 2);
+      ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, this.outlineH); ctx.lineTo(Math.round(x + w) + 0.5, this.headerH); ctx.stroke();
       // Перед этим столбцом скрытые — метка в заголовке (двойная черта, как в Excel).
-      if (c > 1 && this.width(c - 1) === 0) this.hiddenMark(Math.round(x), 0, 3, HEADER_H);
+      if (c > 1 && this.width(c - 1) === 0) this.hiddenMark(Math.round(x), this.outlineH, 3, HEADER_H);
     }
     ctx.restore();
     }
     for (const [r0, rN] of rowBands) {
-    const top = r0 <= this.fr ? HEADER_H : HEADER_H + this.frozenH;
+    const top = r0 <= this.fr ? this.headerH : this.headerH + this.frozenH;
     ctx.save(); ctx.beginPath(); ctx.rect(0, top, this.headerW, H - top); ctx.clip();
     for (let r = r0; r <= rN; r++) {
       const { y, h } = this.cellRect(r, 1);
@@ -1177,7 +1371,7 @@ export class Grid {
       const inSel = (r >= s.r1 && r <= s.r2) || this.extraRanges.some((x) => r >= x.r1 && r <= x.r2);
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
-        ctx.fillRect(0, y, this.headerW, h);
+        ctx.fillRect(this.outlineW, y, this.headerW - this.outlineW, h);
         ctx.fillStyle = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
         ctx.fillRect(this.headerW - 2, y, 2, h);
       }
@@ -1185,9 +1379,9 @@ export class Grid {
       const filtered = this.filters.some((f) => f.active.size > 0 && r > f.r1 && r <= f.r2);
       ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
-      ctx.fillText(String(r), this.headerW / 2, y + h / 2);
-      if (r > 1 && this.height(r - 1) === 0) this.hiddenMark(0, Math.round(y) - 1, this.headerW, 3);
-      ctx.beginPath(); ctx.moveTo(0, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
+      ctx.fillText(String(r), this.outlineW + (this.headerW - this.outlineW) / 2, y + h / 2);
+      if (r > 1 && this.height(r - 1) === 0) this.hiddenMark(this.outlineW, Math.round(y) - 1, this.headerW - this.outlineW, 3);
+      ctx.beginPath(); ctx.moveTo(this.outlineW, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
     }
     ctx.restore();
     }
@@ -1199,7 +1393,7 @@ export class Grid {
       ctx.font = '12px "Segoe UI", sans-serif';
       const tw = ctx.measureText(label).width + 12;
       const bx = z.kind === 'column' ? Math.min(W - tw - 2, at.x + at.w + 6) : this.headerW + 6;
-      const by = z.kind === 'column' ? HEADER_H + 4 : at.y + at.h + 4;
+      const by = z.kind === 'column' ? this.headerH + 4 : at.y + at.h + 4;
       ctx.fillStyle = '#fffbe6'; ctx.strokeStyle = '#999';
       ctx.fillRect(bx, by, tw, 20); ctx.strokeRect(bx + 0.5, by + 0.5, tw, 20);
       ctx.fillStyle = '#222'; ctx.textAlign = 'left';
@@ -1210,12 +1404,13 @@ export class Grid {
       ctx.stroke(); ctx.setLineDash([]);
     }
     ctx.fillStyle = this.theme.cornerBg;
-    ctx.fillRect(0, 0, this.headerW, HEADER_H);
+    ctx.fillRect(0, 0, this.headerW, this.headerH);
     ctx.strokeStyle = this.theme.cornerLine;
     ctx.beginPath();
-    ctx.moveTo(0, HEADER_H + 0.5); ctx.lineTo(W, HEADER_H + 0.5);
+    ctx.moveTo(0, this.headerH + 0.5); ctx.lineTo(W, this.headerH + 0.5);
     ctx.moveTo(this.headerW + 0.5, 0); ctx.lineTo(this.headerW + 0.5, H);
     ctx.stroke();
+    this.drawOutline(W, H);
   }
 }
 

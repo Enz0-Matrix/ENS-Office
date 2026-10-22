@@ -18,7 +18,7 @@ export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
   font: { b: boolean; i: boolean; u: boolean; strike: boolean; sz: number; color?: Color; name: string };
-  alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean };
+  alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean; text_rotation?: number };
   border?: CellBorder;
 }
 
@@ -104,6 +104,13 @@ export interface Model {
   newDefinedName(name: string, scope: number | null | undefined, formula: string): void;
   updateDefinedName(name: string, scope: number | null | undefined, newName: string, newScope: number | null | undefined, newFormula: string): void;
   deleteDefinedName(name: string, scope?: number | null): void;
+  /** Группы (структура): [индекс, уровень, свёрнуто 0/1, …]. */
+  getRowOutline(sheet: number): Int32Array;
+  getColumnOutline(sheet: number): Int32Array;
+  setRowsOutline(sheet: number, r1: number, r2: number, level: number): void;
+  setRowCollapsed(sheet: number, row: number, collapsed: boolean): void;
+  setColumnsOutline(sheet: number, c1: number, c2: number, level: number): void;
+  setColumnCollapsed(sheet: number, column: number, collapsed: boolean): void;
   /** Новые книги — по центру по вертикали. */
   setDefaultVerticalCenter(): void;
   mergeCells(range: Area): void;

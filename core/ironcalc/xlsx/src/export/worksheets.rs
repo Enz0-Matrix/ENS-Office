@@ -212,8 +212,11 @@ pub(crate) fn get_worksheet_xml(
             None => "".to_string(),
         };
         let hidden = if col.hidden { " hidden=\"1\"" } else { "" };
+        // ENS-Office: grouping (outline) of columns.
+        let outline = if col.outline_level > 0 { format!(" outlineLevel=\"{}\"", col.outline_level) } else { String::new() };
+        let collapsed = if col.collapsed { " collapsed=\"1\"" } else { "" };
         cols_str.push(format!(
-            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}/>"
+            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}{outline}{collapsed}/>"
         ));
     }
 
@@ -590,13 +593,22 @@ pub(crate) fn get_worksheet_xml(
                 } else {
                     ""
                 };
+                // ENS-Office: grouping (outline) of rows.
+                let outline_str = if row_style.outline_level > 0 {
+                    format!(r#" outlineLevel="{}""#, row_style.outline_level)
+                } else {
+                    String::new()
+                };
+                let collapsed_str = if row_style.collapsed { r#" collapsed="1""# } else { "" };
                 format!(
-                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}"#,
+                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}{}{}"#,
                     row_style.s,
                     row_style.height,
                     i32::from(row_style.custom_height),
                     i32::from(row_style.custom_format),
                     hidden_str,
+                    outline_str,
+                    collapsed_str,
                 )
             }
             None => "".to_string(),
@@ -712,6 +724,14 @@ pub(crate) fn get_worksheet_xml(
         get_conditional_formatting_xml(&worksheet.conditional_formatting);
 
     let hyperlinks_section = get_hyperlinks_section(worksheet);
+    // ENS-Office: the deepest outline levels, so Excel draws the group bar.
+    let level_row = worksheet.rows.iter().map(|r| r.outline_level).max().unwrap_or(0);
+    let level_col = worksheet.cols.iter().map(|c| c.outline_level).max().unwrap_or(0);
+    let sheet_format = if level_row > 0 || level_col > 0 {
+        format!(r#"<sheetFormatPr defaultRowHeight="15" outlineLevelRow="{level_row}" outlineLevelCol="{level_col}"/>"#)
+    } else {
+        String::new()
+    };
     let auto_filter_section = auto_filter;
 
     format!(
@@ -723,6 +743,7 @@ pub(crate) fn get_worksheet_xml(
         {pane}\
     </sheetView>\
   </sheetViews>\
+  {sheet_format}\
   {cols}\
   <sheetData>\
   {sheet_data}\

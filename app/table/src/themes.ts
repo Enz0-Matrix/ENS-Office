@@ -125,8 +125,93 @@ export const THEMES: Theme[] = [
   },
 ];
 
+// --- Свои темы из файла (без переустановки программы) ---
+// Файл темы — JSON: имя, светлая/тёмная основа, цвета интерфейса (CSS-переменные),
+// цвета сетки и, по желанию, свои CSS-правила. Хранится в настройках программы.
+// Ссылки на интернет (url(http…), @import) вырезаются: программа работает без сети.
+
+export interface CustomTheme {
+  id: string;
+  name: string;
+  note: string;
+  tone?: 'light' | 'dark';
+  vars: Record<string, string>;
+  grid: Record<string, string>;
+  css?: string;
+}
+
+let custom: CustomTheme[] = [];
+
+/** Без сети: никаких внешних ссылок и импортов в CSS темы. */
+function offlineCss(css: string): string {
+  return css
+    .replace(/@import[^;]*;?/gi, '')
+    .replace(/url\(\s*(['"]?)\s*(https?:|\/\/|ftp:)[^)]*\)/gi, 'none')
+    .replace(/<\/?style[^>]*>/gi, '');
+}
+
+const cssValue = (v: string) => offlineCss(String(v)).replace(/[{};]/g, '');
+
+/** Свои темы — в стиль страницы. */
+export function setCustomThemes(list: CustomTheme[]): void {
+  custom = list;
+  let el = document.getElementById('ens-user-themes') as HTMLStyleElement | null;
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'ens-user-themes';
+    document.head.append(el);
+  }
+  el.textContent = list.map((t) => {
+    const vars = Object.entries(t.vars).filter(([k]) => /^--[\w-]+$/.test(k)).map(([k, v]) => `${k}: ${cssValue(v)};`).join(' ');
+    return `:root[data-theme="${t.id}"] { ${vars} }\n${offlineCss(t.css ?? '')}`;
+  }).join('\n');
+}
+
+/** Все темы для меню: встроенные и свои. */
+export function allThemes(): Theme[] {
+  return [
+    ...THEMES,
+    ...custom.map((t) => ({ id: t.id, name: t.name, note: t.note || 'своя тема', tone: t.tone, grid: t.grid as Partial<GridTheme> })),
+  ];
+}
+
+/** Файл темы → тема (или текст ошибки). */
+export function parseThemeFile(text: string): CustomTheme | string {
+  let j: Record<string, unknown>;
+  try { j = JSON.parse(text.replace(/^﻿/, '')); } catch { return 'Файл темы — не JSON. Возьмите за основу «Сохранить образец темы».'; }
+  const name = typeof j.name === 'string' ? j.name.trim().slice(0, 40) : '';
+  if (!name) return 'В файле темы нет имени («name»).';
+  const obj = (v: unknown) => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, String(x)])) : {});
+  const slug = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'theme';
+  return {
+    id: `user-${slug}`,
+    name,
+    note: typeof j.note === 'string' ? j.note.slice(0, 80) : '',
+    tone: j.tone === 'dark' ? 'dark' : j.tone === 'light' ? 'light' : undefined,
+    vars: obj(j.vars),
+    grid: obj(j.grid),
+    css: typeof j.css === 'string' ? j.css.slice(0, 50_000) : undefined,
+  };
+}
+
+/** Образец файла темы — от текущей темы: цвета, которые можно менять. */
+export function themeTemplate(id: string): string {
+  const t = themeById(id);
+  const cs = getComputedStyle(document.documentElement);
+  const names = ['--accent', '--accent-dark', '--bg', '--panel', '--border', '--text', '--muted', '--hover', '--on-bg', '--status-bg', '--brand-bg'];
+  const vars = Object.fromEntries(names.map((n) => [n, cs.getPropertyValue(n).trim()]).filter(([, v]) => v));
+  return JSON.stringify({
+    name: `Моя тема (на основе «${t.name}»)`,
+    note: 'своя тема',
+    tone: t.tone ?? 'light',
+    vars,
+    grid: { ...CLASSIC_GRID, ...t.grid },
+    css: '/* Свои правила, например: [data-theme] .app-mark { color: gold; } */',
+  }, null, 2);
+}
+
 export function themeById(id: string): Theme {
-  return THEMES.find((t) => t.id === id) ?? THEMES[0];
+  return allThemes().find((t) => t.id === id) ?? THEMES[0];
 }
 
 /** Включить тему: атрибут для CSS и цвета сетки. */

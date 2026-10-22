@@ -422,6 +422,42 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: группы строк: [строка, уровень, свёрнуто 0/1, …].
+    #[wasm_bindgen(js_name = "getRowOutline")]
+    pub fn get_row_outline(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_row_outline(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: группы столбцов: [столбец, уровень, свёрнуто 0/1, …].
+    #[wasm_bindgen(js_name = "getColumnOutline")]
+    pub fn get_column_outline(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_column_outline(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: уровень группы строк r1..r2.
+    #[wasm_bindgen(js_name = "setRowsOutline")]
+    pub fn set_rows_outline(&mut self, sheet: u32, r1: i32, r2: i32, level: u8) -> Result<(), JsError> {
+        self.model.set_rows_outline(sheet, r1, r2, level).map_err(to_js_error)
+    }
+
+    /// ENS-Office: метка «группа свёрнута» у строки рядом с группой.
+    #[wasm_bindgen(js_name = "setRowCollapsed")]
+    pub fn set_row_collapsed(&mut self, sheet: u32, row: i32, collapsed: bool) -> Result<(), JsError> {
+        self.model.set_row_collapsed(sheet, row, collapsed).map_err(to_js_error)
+    }
+
+    /// ENS-Office: уровень группы столбцов c1..c2.
+    #[wasm_bindgen(js_name = "setColumnsOutline")]
+    pub fn set_columns_outline(&mut self, sheet: u32, c1: i32, c2: i32, level: u8) -> Result<(), JsError> {
+        self.model.set_columns_outline(sheet, c1, c2, level).map_err(to_js_error)
+    }
+
+    /// ENS-Office: метка «группа свёрнута» у столбца рядом с группой.
+    #[wasm_bindgen(js_name = "setColumnCollapsed")]
+    pub fn set_column_collapsed(&mut self, sheet: u32, column: i32, collapsed: bool) -> Result<(), JsError> {
+        self.model.set_column_collapsed(sheet, column, collapsed).map_err(to_js_error)
+    }
+
     /// ENS-Office: новые книги — по центру по вертикали (формат по умолчанию).
     #[wasm_bindgen(js_name = "setDefaultVerticalCenter")]
     pub fn set_default_vertical_center(&mut self) {

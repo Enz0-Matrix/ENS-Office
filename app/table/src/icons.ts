@@ -69,6 +69,9 @@ import i_search_24 from '@fluentui/svg-icons/icons/search_24_regular.svg?raw';
 import i_eraser_24 from '@fluentui/svg-icons/icons/eraser_24_regular.svg?raw';
 import i_color_24 from '@fluentui/svg-icons/icons/color_24_regular.svg?raw';
 import i_paint_brush_24 from '@fluentui/svg-icons/icons/paint_brush_24_regular.svg?raw';
+import i_group_24 from '@fluentui/svg-icons/icons/group_24_regular.svg?raw';
+import i_group_list_24 from '@fluentui/svg-icons/icons/group_list_24_regular.svg?raw';
+import i_text_rot_24 from '@fluentui/svg-icons/icons/text_direction_rotate_90_left_24_regular.svg?raw';
 
 function numIcon(body: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="currentColor" font-family="Inter, Segoe UI, sans-serif">${body}</svg>`;
@@ -149,4 +152,7 @@ export const ICONS: Record<string, string> = {
   'num_format_20': numIcon('<rect x="1.5" y="3.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="10" y="13.5" text-anchor="middle" font-size="8.5" font-weight="700">1,23</text>'),
   'color_24': i_color_24,
   'paint_brush_24': i_paint_brush_24,
+  'group_24': i_group_24,
+  'group_list_24': i_group_list_24,
+  'text_direction_rotate_90_left_24': i_text_rot_24,
 };
