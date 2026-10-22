@@ -14,6 +14,9 @@ export interface Settings {
   /** Кнопка «Границы»: что ставит по щелчку и какой линией. */
   borderType: string;
   borderStyle: string;
+  /** Высота строки формул (пиксели) и последняя развёрнутая высота — для кнопки ⌄. */
+  formulaHeight: number;
+  formulaExpanded: number;
   /** Тема оформления (themes.ts) и анимация в ней (мерцание и т. п.). */
   theme: string;
   themeMotion: boolean;
@@ -25,7 +28,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true,
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {

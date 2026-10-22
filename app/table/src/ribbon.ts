@@ -291,6 +291,8 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       g.className = 'group';
       const items = document.createElement('div');
       items.className = 'items';
+      // Группа без мелких кнопок — в один ряд: над и под большими кнопками ничего нет.
+      if (group.items.every((i) => i.type !== 'small' && i.type !== 'medium' && i.type !== 'color')) items.classList.add('row');
       for (const item of group.items) items.append(renderItem(item));
       const name = document.createElement('div');
       name.className = 'group-name';

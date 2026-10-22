@@ -34,7 +34,7 @@ const grid = new Grid($('grid'), () => model);
 // Для проверок в режиме разработки (в сборку не попадает).
 if (import.meta.env.DEV) Object.assign(window, { __ens: { model: () => model, grid } });
 const nameBox = $<HTMLInputElement>('name-box');
-const formula = $<HTMLInputElement>('formula');
+const formula = $<HTMLTextAreaElement>('formula');
 const editor = $<HTMLTextAreaElement>('cell-editor');
 const status = $('status-stats');
 
@@ -133,6 +133,10 @@ function commitEdit(dRow: number, dCol: number): void {
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   try {
     model.setUserInput(s.sheet, s.row, s.column, value);
+    // Текст в несколько строк (Alt+Enter) — сразу с переносом, как в Excel.
+    if (!value.startsWith('=') && value.includes('\n') && !model.getCellStyle(s.sheet, s.row, s.column).style.alignment?.wrap_text) {
+      model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
+    }
   } catch (err) {
     showToast(`Не удалось записать значение: ${err}`);
   }
@@ -267,6 +271,16 @@ function editKey(e: KeyboardEvent): void {
     return;
   }
   if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) endPoint();
+  if (e.key === 'Enter' && e.altKey) {
+    // Alt+Enter — новая строка внутри ячейки (и в ячейке, и в строке формул), как в Excel.
+    e.preventDefault();
+    const at = inp.selectionStart ?? inp.value.length, end = inp.selectionEnd ?? at;
+    inp.value = inp.value.slice(0, at) + '\n' + inp.value.slice(end);
+    inp.setSelectionRange(at + 1, at + 1);
+    (inp === editor ? formula : editor).value = inp.value;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
   if (e.key === 'Enter' && !e.altKey) { e.preventDefault(); commitEdit(e.shiftKey ? -1 : 1, 0); }
   else if (e.key === 'Tab') { e.preventDefault(); commitEdit(0, e.shiftKey ? -1 : 1); }
   else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
@@ -406,8 +420,45 @@ function showRefs(): void {
 }
 
 function syncMirror(): void {
-  mirror.style.transform = `translateX(${-formula.scrollLeft}px)`;
+  mirror.style.transform = `translateY(${-formula.scrollTop}px)`;
 }
+
+// --- Высота строки формул: потянуть за нижний край или ⌄ (как в Excel) ---
+const fxBar = document.querySelector<HTMLElement>('.formula-bar')!;
+const fxExpand = $<HTMLButtonElement>('formula-expand');
+const FX_MIN = 26;
+function setFormulaHeight(px: number, save = true): void {
+  const h = Math.round(Math.max(FX_MIN, Math.min(px, window.innerHeight * 0.5)));
+  fxBar.style.setProperty('--formula-h', `${h}px`);
+  fxExpand.classList.toggle('open', h > FX_MIN);
+  fxExpand.title = h > FX_MIN ? 'Свернуть строку формул (Ctrl+Shift+U)' : 'Развернуть строку формул (Ctrl+Shift+U)';
+  if (save) { settings.formulaHeight = h; saveSettings(); }
+  grid.invalidateLayout();
+  if (!editing) placeEditor();
+}
+function toggleFormulaHeight(): void {
+  const now = settings.formulaHeight > FX_MIN ? settings.formulaHeight : FX_MIN;
+  setFormulaHeight(now > FX_MIN ? FX_MIN : Math.max(settings.formulaExpanded || 0, 18 * 4 + 8));
+}
+setFormulaHeight(settings.formulaHeight || FX_MIN, false);
+fxExpand.addEventListener('mousedown', (e) => e.preventDefault());
+fxExpand.addEventListener('click', toggleFormulaHeight);
+$('formula-grip').addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const grip = e.currentTarget as HTMLElement;
+  const startY = e.clientY, startH = settings.formulaHeight || FX_MIN;
+  grip.classList.add('dragging');
+  const move = (ev: MouseEvent) => setFormulaHeight(startH + ev.clientY - startY, false);
+  const up = (ev: MouseEvent) => {
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+    grip.classList.remove('dragging');
+    setFormulaHeight(startH + ev.clientY - startY);
+    if (settings.formulaHeight > FX_MIN) { settings.formulaExpanded = settings.formulaHeight; saveSettings(); }
+  };
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+});
 
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -1547,6 +1598,8 @@ register(
   { id: 'align.top', label: 'По верхнему краю', keywords: ['align top', 'вверху'], run: () => style('alignment.vertical', () => 'top') },
   { id: 'align.middle', label: 'По середине (по вертикали)', keywords: ['middle', 'по вертикали'], run: () => style('alignment.vertical', () => 'center') },
   { id: 'align.bottom', label: 'По нижнему краю', keywords: ['align bottom', 'внизу'], run: () => style('alignment.vertical', () => 'bottom') },
+  { id: 'view.formulaBar', label: 'Развернуть или свернуть строку формул', keywords: ['formula bar', 'строка формул', 'высота'], keys: ['Ctrl+Shift+KeyU'],
+    run: () => toggleFormulaHeight() },
   { id: 'format.wrap', label: 'Перенос текста', keywords: ['wrap text', 'перенос', 'переносить по словам'],
     checked: () => !!model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.wrap_text,
     run: () => { style('alignment.wrap_text', (cur) => String(!cur), (st) => !!st.alignment?.wrap_text); fitRows(grid.sel.r1, grid.sel.r2); } },

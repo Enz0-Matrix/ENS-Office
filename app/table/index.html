@@ -27,8 +27,10 @@
     <span class="fx">ƒx</span>
     <div class="formula-wrap">
       <div id="formula-mirror" class="formula-mirror" hidden aria-hidden="true"></div>
-      <input id="formula" class="formula" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке" autocomplete="off" spellcheck="false">
+      <textarea id="formula" class="formula" rows="1" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке. Alt+Enter — новая строка" autocomplete="off" spellcheck="false"></textarea>
     </div>
+    <button id="formula-expand" class="formula-expand" title="Развернуть строку формул (Ctrl+Shift+U)" aria-label="Развернуть строку формул">⌄</button>
+    <div id="formula-grip" class="formula-grip" title="Потяните, чтобы изменить высоту строки формул"></div>
   </div>
   <main id="grid" class="grid"></main>
   <footer>

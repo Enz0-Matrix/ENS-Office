@@ -67,20 +67,29 @@ body { display: flex; flex-direction: column; }
 @keyframes ens-wink { 0% { transform: scale(1); } 35% { transform: scale(1.28) rotate(-8deg); filter: drop-shadow(0 0 4px rgba(143, 230, 205, .9)); } 100% { transform: none; } }
 .wink svg { animation: ens-wink .45s ease-out; }
 @media (prefers-reduced-motion: reduce) { .wink svg { animation: none; } }
-.btn.large { flex-direction: column; width: auto; min-width: 64px; max-width: 112px; padding: 0 6px; height: 66px; gap: 4px; font-size: 12px; line-height: 1.1; text-align: center; }
-.btn.large svg { width: 28px; height: 28px; }
+.btn.large { flex-direction: column; width: auto; min-width: 60px; max-width: 112px; padding: 0 6px; height: 58px; gap: 3px; font-size: 12px; line-height: 1.1; text-align: center; }
+.btn.large svg { width: 24px; height: 24px; }
+.group .items.row { flex-wrap: nowrap; max-width: none; align-items: flex-start; }
+.group .items.row .ribbon-select { align-self: center; }
 .ribbon-select { height: 26px; font: inherit; margin-top: 2px; }
 
-.formula-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.formula-bar { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; position: relative; }
 .name-box { width: 90px; height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font: inherit; }
 .fx { color: var(--muted); font-style: italic; }
-.formula-wrap { flex: 1; position: relative; height: 26px; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
-.formula { position: relative; width: 100%; height: 100%; border: 0; background: transparent; padding: 0 8px; font: 14px Consolas, "Liberation Mono", monospace; outline: none; }
+.formula-wrap { flex: 1; position: relative; height: var(--formula-h, 26px); overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+/* Многострочная: длинный текст переносится, высоту меняют за нижний край или кнопкой ⌄. */
+.formula { position: relative; display: block; width: 100%; height: 100%; border: 0; background: transparent; padding: 3px 8px; font: 14px/18px Consolas, "Liberation Mono", monospace;
+  outline: none; resize: none; white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; color: var(--text, #000); }
+.formula-expand { width: 22px; height: 26px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+.formula-expand:hover { background: #ececec; }
+.formula-expand.open { transform: rotate(180deg); }
+.formula-grip { position: absolute; left: 0; right: 0; bottom: -3px; height: 6px; cursor: ns-resize; z-index: 3; }
+.formula-grip:hover, .formula-grip.dragging { background: linear-gradient(transparent 2px, var(--accent) 2px 4px, transparent 4px); opacity: .6; }
 .formula-wrap:focus-within { border-color: var(--accent); }
 /* Цветные ссылки: текст поля прозрачный, под ним — копия с раскрашенными ссылками. */
 .formula.colored { color: transparent; caret-color: #000; }
-.formula-mirror { position: absolute; left: 0; top: 0; height: 100%; padding: 0 8px; white-space: pre; display: flex; align-items: center;
-  font: 14px Consolas, "Liberation Mono", monospace; color: #000; pointer-events: none; }
+.formula-mirror { position: absolute; left: 0; top: 0; right: 0; padding: 3px 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 14px/18px Consolas, "Liberation Mono", monospace; color: #000; pointer-events: none; }
 .formula-mirror[hidden] { display: none; }
 
 .grid { flex: 1; min-height: 0; margin: 0 8px; background: #fff; border: 1px solid var(--border); position: relative; }

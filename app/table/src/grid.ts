@@ -1140,7 +1140,7 @@ export class Grid {
     for (let c = c0; c <= cN; c++) {
       const { x, w } = this.cellRect(1, c);
       if (w === 0) continue; // скрытый столбец
-      const inSel = c >= s.c1 && c <= s.c2;
+      const inSel = (c >= s.c1 && c <= s.c2) || this.extraRanges.some((x) => c >= x.c1 && c <= x.c2);
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
         ctx.fillRect(x, 0, w, HEADER_H);
@@ -1160,7 +1160,7 @@ export class Grid {
     for (let r = r0; r <= rN; r++) {
       const { y, h } = this.cellRect(r, 1);
       if (h === 0) continue; // скрытая (отфильтрованная) строка
-      const inSel = r >= s.r1 && r <= s.r2;
+      const inSel = (r >= s.r1 && r <= s.r2) || this.extraRanges.some((x) => r >= x.r1 && r <= x.r2);
       if (inSel) {
         ctx.fillStyle = this.theme.headerActiveFill;
         ctx.fillRect(0, y, this.headerW, h);
