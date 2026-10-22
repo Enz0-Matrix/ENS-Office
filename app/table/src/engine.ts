@@ -116,6 +116,9 @@ export interface Model {
   setColumnsWidth(sheet: number, columnStart: number, columnEnd: number, width: number): void;
   setRowsHeight(sheet: number, rowStart: number, rowEnd: number, height: number): void;
   insertRows(sheet: number, row: number, count: number): void;
+  /** Переставить строки (столбцы) ровно на delta: с высотой, шириной и скрытием; одна отмена. */
+  moveRowsExact(sheet: number, row: number, count: number, delta: number): void;
+  moveColumnsExact(sheet: number, column: number, count: number, delta: number): void;
   deleteRows(sheet: number, row: number, count: number): void;
   insertColumns(sheet: number, column: number, count: number): void;
   deleteColumns(sheet: number, column: number, count: number): void;

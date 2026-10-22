@@ -422,6 +422,19 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: «Вставить вырезанные строки» — ровно на `delta` строк,
+    /// с высотой и скрытием (одна отмена).
+    #[wasm_bindgen(js_name = "moveRowsExact")]
+    pub fn move_rows_exact(&mut self, sheet: u32, row: i32, row_count: i32, delta: i32) -> Result<(), JsError> {
+        self.model.move_rows_exact(sheet, row, row_count, delta).map_err(to_js_error)
+    }
+
+    /// ENS-Office: «Вставить вырезанные столбцы» — с шириной и скрытием.
+    #[wasm_bindgen(js_name = "moveColumnsExact")]
+    pub fn move_columns_exact(&mut self, sheet: u32, column: i32, column_count: i32, delta: i32) -> Result<(), JsError> {
+        self.model.move_columns_exact(sheet, column, column_count, delta).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "setRowsHeight")]
     pub fn set_rows_height(
         &mut self,

@@ -692,6 +692,17 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     { label: 'Вставить', keys: keysOf('clipboard.paste'), run: () => run('clipboard.paste') },
     { label: 'Специальная вставка…', keys: 'Ctrl+Alt+V', run: () => pasteSpecialMenu(x, y) },
   ];
+  // Вырезанные целые строки (столбцы) — вставить между другими, как в Excel «Вставить вырезанные ячейки».
+  const cut = clip?.cut && clip.sheet === grid.sheet ? clip.lines : undefined;
+  if (cut?.kind === 'row' && header !== 'column' && !fullCols) {
+    const n = cut.count > 1 ? `вырезанные строки (${cut.count})` : 'вырезанную строку';
+    items.push({ label: `Вставить ${n} выше`, separator: true, run: () => insertCutLines(s.r1) });
+    items.push({ label: `Вставить ${n} ниже`, run: () => insertCutLines(s.r2 + 1) });
+  } else if (cut?.kind === 'column' && header !== 'row' && !fullRows) {
+    const n = cut.count > 1 ? `вырезанные столбцы (${cut.count})` : 'вырезанный столбец';
+    items.push({ label: `Вставить ${n} слева`, separator: true, run: () => insertCutLines(s.c1) });
+    items.push({ label: `Вставить ${n} справа`, run: () => insertCutLines(s.c2 + 1) });
+  }
   if (!header) {
     items.push({ label: 'Сортировка от А до Я', separator: true, run: () => sortBy(s.column, false) });
     items.push({ label: 'Сортировка от Я до А', run: () => sortBy(s.column, true) });
@@ -1237,7 +1248,11 @@ function syncDocTitle(): void {
 // которые на них ссылались, начинают ссылаться на новое место. Другим
 // программам уходит текст (значения через табуляцию).
 
-interface Clip { data: unknown; sheet: number; range: [number, number, number, number]; text: string; cut: boolean }
+interface Clip {
+  data: unknown; sheet: number; range: [number, number, number, number]; text: string; cut: boolean;
+  /** Вырезаны целые строки или столбцы: их можно вставить между другими. */
+  lines?: { kind: 'row' | 'column'; start: number; count: number };
+}
 let clip: Clip | null = null;
 
 /** Скопировать выделение: во внутренний буфер и текстом — в системный. */
@@ -1247,10 +1262,33 @@ function takeClip(cut: boolean): string {
   model.setSelectedRange(s.r1, s.c1, s.r2, s.c2);
   const c = model.copyToClipboard();
   const text = toTsv();
-  clip = { data: c.data, sheet: grid.sheet, range: c.range, text, cut };
+  const fullRows = s.c1 === 1 && s.c2 === LAST_COLUMN, fullCols = s.r1 === 1 && s.r2 === LAST_ROW;
+  const lines = !cut || fullRows === fullCols ? undefined
+    : fullRows ? { kind: 'row' as const, start: s.r1, count: s.r2 - s.r1 + 1 }
+    : { kind: 'column' as const, start: s.c1, count: s.c2 - s.c1 + 1 };
+  clip = { data: c.data, sheet: grid.sheet, range: c.range, text, cut, lines };
   grid.clipRange = { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, c.range[2]), c2: Math.min(s.c2, c.range[3]), sheet: grid.sheet };
   grid.render();
   return text;
+}
+
+/** «Вставить вырезанные строки (столбцы)»: перед линией `before`; остальные сдвигаются,
+ *  формулы следуют за ячейками, высота, ширина и скрытие переезжают вместе с ними. */
+function insertCutLines(before: number): void {
+  const L = clip?.lines;
+  if (!clip || !L || clip.sheet !== grid.sheet) return;
+  const end = L.start + L.count - 1;
+  if (before >= L.start && before <= end + 1) { showToast('Вырезанное уже стоит здесь.'); return; }
+  const delta = before > end ? before - L.start - L.count : before - L.start;
+  let ok = true;
+  structure(() => {
+    try {
+      if (L.kind === 'row') model.moveRowsExact(grid.sheet, L.start, L.count, delta);
+      else model.moveColumnsExact(grid.sheet, L.start, L.count, delta);
+    } catch (e) { ok = false; throw e; }
+  });
+  dropClip();
+  if (ok) grid.selectLines(L.kind, L.start + delta, L.start + delta + L.count - 1);
 }
 
 function dropClip(): void {

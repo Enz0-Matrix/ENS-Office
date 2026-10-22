@@ -90,6 +90,28 @@ fn compare(a: &CellValue, b: &CellValue) -> Ordering {
     }
 }
 
+/// Lines touched when `count` lines from `start` move by `delta`.
+fn moved_span(start: i32, count: i32, delta: i32) -> (i32, i32) {
+    let end = start + count - 1;
+    (start.min(start + delta), end.max(end + delta))
+}
+
+/// Where the line now at `target` was before `count` lines from `start` moved
+/// by `delta` (the moved block lands at `start + delta`, the lines it jumped
+/// over shift by `count` the other way).
+fn moved_from(target: i32, start: i32, count: i32, delta: i32) -> i32 {
+    let end = start + count - 1;
+    if target >= start + delta && target <= end + delta {
+        target - delta
+    } else if delta > 0 && target >= start && target < start + delta {
+        target + count
+    } else if delta < 0 && target > end + delta && target <= end {
+        target - count
+    } else {
+        target
+    }
+}
+
 /// Where rows with an empty sort key go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blanks {
@@ -113,6 +135,73 @@ impl UserModel<'_> {
             out.push(if r.hidden { 0.0 } else { r.height * crate::constants::ROW_HEIGHT_FACTOR });
         }
         Ok(out)
+    }
+
+    /// Moves rows `[row, row + row_count - 1]` by exactly `delta` rows (the rows
+    /// in between shift the other way), as Excel's "Insert cut cells". Unlike
+    /// `move_rows_action` hidden rows are not skipped, and row heights and the
+    /// hidden state travel with their rows. One undo step.
+    pub fn move_rows_exact(&mut self, sheet: u32, row: i32, row_count: i32, delta: i32) -> Result<(), String> {
+        if delta == 0 || row_count <= 0 {
+            return Ok(());
+        }
+        let (lo, hi) = moved_span(row, row_count, delta);
+        let mut before = Vec::new();
+        for r in lo..=hi {
+            before.push((self.model.get_row_height(sheet, r)?, self.model.is_row_hidden(sheet, r)?));
+        }
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        self.model.move_rows_action(sheet, row, row_count, delta)?;
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::MoveRows { sheet, row, row_count, delta });
+        for r in lo..=hi {
+            let (height, hidden) = before[(moved_from(r, row, row_count, delta) - lo) as usize];
+            // The engine may already move some of it: compare with what is there now.
+            let (old_height, old_hidden) = (self.model.get_row_height(sheet, r)?, self.model.is_row_hidden(sheet, r)?);
+            if height != old_height {
+                self.model.set_row_height(sheet, r, height)?;
+                diff_list.push(Diff::SetRowHeight { sheet, row: r, new_value: height, old_value: old_height });
+            }
+            if hidden != old_hidden {
+                self.model.set_row_hidden(sheet, r, hidden)?;
+                diff_list.push(Diff::SetRowHidden { sheet, row: r, new_value: hidden, old_value: old_hidden });
+            }
+        }
+        self.push_diff_list(diff_list);
+        self.evaluate_if_not_paused();
+        Ok(())
+    }
+
+    /// Columns version of [`Self::move_rows_exact`]: widths and the hidden
+    /// state travel with their columns.
+    pub fn move_columns_exact(&mut self, sheet: u32, column: i32, column_count: i32, delta: i32) -> Result<(), String> {
+        if delta == 0 || column_count <= 0 {
+            return Ok(());
+        }
+        let (lo, hi) = moved_span(column, column_count, delta);
+        let mut before = Vec::new();
+        for c in lo..=hi {
+            before.push((self.model.get_column_width(sheet, c)?, self.model.is_column_hidden(sheet, c)?));
+        }
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        self.model.move_columns_action(sheet, column, column_count, delta)?;
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::MoveColumns { sheet, column, column_count, delta });
+        for c in lo..=hi {
+            let (width, hidden) = before[(moved_from(c, column, column_count, delta) - lo) as usize];
+            let (old_width, old_hidden) = (self.model.get_column_width(sheet, c)?, self.model.is_column_hidden(sheet, c)?);
+            if width != old_width {
+                self.model.set_column_width(sheet, c, width)?;
+                diff_list.push(Diff::SetColumnWidth { sheet, column: c, new_value: width, old_value: old_width });
+            }
+            if hidden != old_hidden {
+                self.model.set_column_hidden(sheet, c, hidden)?;
+                diff_list.push(Diff::SetColumnHidden { sheet, column: c, new_value: hidden, old_value: old_hidden });
+            }
+        }
+        self.push_diff_list(diff_list);
+        self.evaluate_if_not_paused();
+        Ok(())
     }
 
     /// Sorts the rows of `area` by the values in `key_column` (a column of the
@@ -444,6 +533,36 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_move_rows_and_columns_exact() {
+        let mut m = model();
+        for r in 1..=6 {
+            m.set_user_input(0, r, 1, &format!("{r}")).unwrap();
+        }
+        m.set_user_input(0, 1, 3, "=SUM(A2:A3)").unwrap();
+        m.set_rows_height(0, 2, 2, 40.0).unwrap();
+        m.set_rows_hidden(0, 5, 5, true).unwrap();
+        // Строки 2–3 (вырезаны) — вставить перед строкой 6: встают на 4–5.
+        m.move_rows_exact(0, 2, 2, 2).unwrap();
+        let col = |m: &UserModel| (1..=6).map(|r| m.get_formatted_cell_value(0, r, 1).unwrap()).collect::<Vec<_>>();
+        assert_eq!(col(&m), ["1", "4", "5", "2", "3", "6"]);
+        assert_eq!(m.get_cell_content(0, 1, 3).unwrap(), "=СУММ(A4:A5)");
+        assert_eq!(m.get_row_height(0, 4).unwrap(), 40.0);
+        assert!(m.model.is_row_hidden(0, 3).unwrap(), "скрытая строка 5 переехала на 3");
+        assert!(!m.model.is_row_hidden(0, 5).unwrap());
+        m.undo().unwrap();
+        assert_eq!(col(&m), ["1", "2", "3", "4", "5", "6"]);
+        assert_eq!(m.get_row_height(0, 2).unwrap(), 40.0);
+        assert!(m.model.is_row_hidden(0, 5).unwrap());
+        // Столбец C — перед A.
+        m.set_user_input(0, 1, 2, "b").unwrap();
+        m.set_columns_width(0, 3, 3, 200.0).unwrap();
+        m.move_columns_exact(0, 3, 1, -2).unwrap();
+        assert_eq!(m.get_cell_content(0, 1, 1).unwrap(), "=СУММ(B2:B3)");
+        assert_eq!(m.get_formatted_cell_value(0, 1, 3).unwrap(), "b");
+        assert_eq!(m.get_column_width(0, 1).unwrap(), 200.0);
     }
 
     #[test]

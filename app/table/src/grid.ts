@@ -101,6 +101,8 @@ export class Grid {
   private extentRows = 1000;
   private extentCols = 52;
   private dragging = false;
+  /** Протяжка по заголовкам: какие линии и от какой. */
+  private headerDrag: { kind: 'row' | 'column'; anchor: number } | null = null;
   private frame = 0;
 
   constructor(host: HTMLElement, private model: () => Model) {
@@ -119,7 +121,7 @@ export class Grid {
     new ResizeObserver(() => this.resize()).observe(this.scroller);
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
-    window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; });
+    window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; this.headerDrag = null; });
     window.addEventListener('mouseup', () => { this.endResize(); this.endFill(); });
     this.canvas.addEventListener('dblclick', (e) => {
       const g = this.grip(e);
@@ -379,6 +381,26 @@ export class Grid {
     this.onSelect(this.sel);
   }
 
+  /** Выделить целые столбцы (строки) от anchor до to, не прокручивая лист к началу. */
+  selectLines(kind: 'row' | 'column', anchor: number, to: number): void {
+    const a = Math.min(anchor, to), b = Math.max(anchor, to);
+    const s = this.sel;
+    if (kind === 'column') {
+      const row = s.r1 === 1 && s.r2 === LAST_ROW ? s.row : this.firstRow;
+      this.sel = { row, column: anchor, r1: 1, c1: a, r2: LAST_ROW, c2: b };
+      this.corner = { row: LAST_ROW, column: to };
+      this.ensureVisible(row, to);
+    } else {
+      const column = s.c1 === 1 && s.c2 === LAST_COLUMN ? s.column : this.firstColumn;
+      this.sel = { row: anchor, column, r1: a, c1: 1, r2: b, c2: LAST_COLUMN };
+      this.corner = { row: to, column: LAST_COLUMN };
+      this.ensureVisible(to, column);
+    }
+    this.updateExtent();
+    this.render();
+    this.onSelect(this.sel);
+  }
+
   move(dRow: number, dCol: number, extend: boolean): void {
     const from = extend ? this.corner : { row: this.sel.row, column: this.sel.column };
     let row = from.row + dRow, column = from.column + dCol;
@@ -515,9 +537,14 @@ export class Grid {
     // выделяется заново и протяжка превращает щелчок в диапазон.
     if (!this.beforeSelect()) { e.preventDefault(); return; }
     this.scroller.focus();
-    if (h.header === 'column') this.selectRange(1, h.column, LAST_ROW, h.column);
-    else if (h.header === 'row') this.selectRange(h.row, 1, h.row, LAST_COLUMN);
-    else if (h.header === 'corner') this.selectRange(1, 1, LAST_ROW, LAST_COLUMN);
+    if (h.header === 'column' || h.header === 'row') {
+      // Несколько столбцов (строк): протянуть по заголовкам или Shift+щелчок.
+      const kind = h.header, s = this.sel;
+      const at = kind === 'column' ? h.column : h.row;
+      const anchor = e.shiftKey ? (kind === 'column' ? s.column : s.row) : at;
+      this.selectLines(kind, anchor, at);
+      this.headerDrag = { kind, anchor };
+    } else if (h.header === 'corner') this.selectRange(1, 1, LAST_ROW, LAST_COLUMN);
     else {
       this.select(h.row, h.column, e.shiftKey);
       this.dragging = true;
@@ -555,6 +582,12 @@ export class Grid {
     if (this.pointing) {
       const p = this.hit(e);
       if (p.row >= 1 && p.column >= 1) this.onPointer(p.row, p.column, 'drag', true);
+      return;
+    }
+    if (this.headerDrag) {
+      const p = this.hit(e), d = this.headerDrag;
+      const at = d.kind === 'column' ? p.column : p.row;
+      if (at >= 1) this.selectLines(d.kind, d.anchor, at);
       return;
     }
     if (!this.dragging) return;
