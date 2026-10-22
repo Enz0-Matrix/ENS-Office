@@ -105,9 +105,10 @@ export class Grid {
   /** Скопированный или вырезанный диапазон — пунктирная рамка, как в Excel. */
   clipRange: { r1: number; c1: number; r2: number; c2: number; sheet: number } | null = null;
   /** Автофильтр листа: строка заголовков r1, столбцы c1..c2; active — где выбран отбор. */
-  filter: { r1: number; c1: number; r2: number; c2: number; active: Set<number> } | null = null;
+  /** Фильтры листа (таблиц может быть несколько): кнопки в строке заголовков каждой. */
+  filters: { r1: number; c1: number; r2: number; c2: number; active: Set<number> }[] = [];
   /** Щелчок по кнопке фильтра в заголовке столбца. */
-  onFilterButton: (column: number, x: number, y: number) => void = () => {};
+  onFilterButton: (row: number, column: number, x: number, y: number) => void = () => {};
   private filling: { r1: number; c1: number; r2: number; c2: number } | null = null;
   private handle = { x: -100, y: -100 };
   /** Закреплённые строки и столбцы (из книги). */
@@ -533,14 +534,14 @@ export class Grid {
       return;
     }
     const cr = this.canvas.getBoundingClientRect();
-    const f = this.filter;
-    if (f) {
+    if (this.filters.length) {
       const h0 = this.hit(e);
-      if (h0.row === f.r1 && h0.column >= f.c1 && h0.column <= f.c2) {
+      const f = this.filters.find((t) => h0.row === t.r1 && h0.column >= t.c1 && h0.column <= t.c2);
+      if (f) {
         const rect = this.cellRect(h0.row, h0.column);
         if (e.clientX - cr.left >= rect.x + rect.w - 18) {
           e.preventDefault();
-          this.onFilterButton(h0.column, cr.left + rect.x + rect.w - 18, cr.top + rect.y + rect.h);
+          this.onFilterButton(f.r1, h0.column, cr.left + rect.x + rect.w - 18, cr.top + rect.y + rect.h);
           return;
         }
       }
@@ -589,7 +590,8 @@ export class Grid {
     const z = this.resizing;
     if (z) {
       const pos = z.kind === 'column' ? e.clientX : e.clientY;
-      z.size = Math.max(z.kind === 'column' ? 8 : 6, Math.round(z.startSize + pos - z.start));
+      // До нуля — строка (столбец) скрывается, как в Excel.
+      z.size = Math.max(0, Math.round(z.startSize + pos - z.start));
       this.colX = [0];
       this.render();
       return;
@@ -811,8 +813,8 @@ export class Grid {
       if (b) this.drawBorders(b, cell);
     }
     // Кнопки автофильтра в строке заголовков.
-    const flt = this.filter;
-    if (flt && flt.r1 >= ra && flt.r1 <= rb) {
+    for (const flt of this.filters) {
+    if (flt.r1 >= ra && flt.r1 <= rb) {
       for (let c = Math.max(ca, flt.c1); c <= Math.min(cb, flt.c2); c++) {
         const r = this.cellRect(flt.r1, c);
         const bx = r.x + r.w - 17, by = r.y + r.h - 17;
@@ -832,6 +834,7 @@ export class Grid {
         }
         ctx.fill();
       }
+    }
     }
     ctx.restore();
     }
@@ -978,6 +981,15 @@ export class Grid {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(0, Math.round(len) - 1), h - 1);
+  }
+
+  /** Метка «здесь скрыты строки/столбцы» на заголовке. */
+  private hiddenMark(x: number, y: number, w: number, h: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = this.theme.activeBorder;
+    if (w > h) { ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + 2, w, 1); } else { ctx.fillRect(x - 1, y, 1, h); ctx.fillRect(x + 1, y, 1, h); }
+    ctx.restore();
   }
 
   /** Значок условного форматирования (как в Excel, своим рисунком): x — левый край, cy — середина по высоте. */
@@ -1151,6 +1163,8 @@ export class Grid {
       ctx.font = `${c === s.column ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(columnName(c), x + w / 2, HEADER_H / 2);
       ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, 0); ctx.lineTo(Math.round(x + w) + 0.5, HEADER_H); ctx.stroke();
+      // Перед этим столбцом скрытые — метка в заголовке (двойная черта, как в Excel).
+      if (c > 1 && this.width(c - 1) === 0) this.hiddenMark(Math.round(x), 0, 3, HEADER_H);
     }
     ctx.restore();
     }
@@ -1168,10 +1182,11 @@ export class Grid {
         ctx.fillRect(this.headerW - 2, y, 2, h);
       }
       // Как в Excel: номера строк под действующим фильтром — синие.
-      const filtered = this.filter && this.filter.active.size > 0 && r > this.filter.r1 && r <= this.filter.r2;
+      const filtered = this.filters.some((f) => f.active.size > 0 && r > f.r1 && r <= f.r2);
       ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.headerW / 2, y + h / 2);
+      if (r > 1 && this.height(r - 1) === 0) this.hiddenMark(0, Math.round(y) - 1, this.headerW, 3);
       ctx.beginPath(); ctx.moveTo(0, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
     }
     ctx.restore();

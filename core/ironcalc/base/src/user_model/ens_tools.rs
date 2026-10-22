@@ -137,6 +137,18 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// New workbooks: cells are centred vertically by default (the user's wish;
+    /// Excel's default is "bottom"). Changes the workbook's default cell format,
+    /// so it is saved to xlsx and Excel shows the same. Not an undo step.
+    pub fn set_default_vertical_center(&mut self) {
+        if let Some(xf) = self.model.workbook.styles.cell_xfs.first_mut() {
+            let mut alignment = xf.alignment.clone().unwrap_or_default();
+            alignment.vertical = crate::types::VerticalAlignment::Center;
+            xf.alignment = Some(alignment);
+            xf.apply_alignment = true;
+        }
+    }
+
     /// Position in the undo history, for [`Self::merge_undo_since`].
     pub fn undo_mark(&self) -> usize {
         self.history.undo_stack.len()
@@ -575,6 +587,21 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 5, 1).unwrap(), "1,23456789012345");
         m.undo().unwrap();
         assert_eq!(m.get_cell_content(0, 5, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn ens_default_vertical_center() {
+        let mut m = model();
+        m.set_default_vertical_center();
+        m.set_user_input(0, 3, 3, "x").unwrap();
+        let st = m.get_cell_style(0, 3, 3).unwrap();
+        assert_eq!(st.alignment.map(|a| a.vertical), Some(crate::types::VerticalAlignment::Center));
+        // Новое оформление ячейки сохраняет выравнивание по умолчанию.
+        let area = Area { sheet: 0, row: 3, column: 3, width: 1, height: 1 };
+        m.update_range_style(&area, "font.b", "true").unwrap();
+        let st = m.get_cell_style(0, 3, 3).unwrap();
+        assert!(st.font.b);
+        assert_eq!(st.alignment.map(|a| a.vertical), Some(crate::types::VerticalAlignment::Center));
     }
 
     #[test]

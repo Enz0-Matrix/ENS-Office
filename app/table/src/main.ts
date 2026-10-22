@@ -1,5 +1,6 @@
 import './styles.css';
 import './themes.css';
+import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
@@ -10,7 +11,7 @@ import { askExpand, columnTitle, customSort, type SortRequest } from './sortdial
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
 import { applyTheme, systemReducesMotion, THEMES } from './themes';
-import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
+import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid } from './grid';
@@ -557,7 +558,7 @@ function updateStatus(): void {
     }
   }
   const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 10 });
-  const f = filterOf(grid.sheet);
+  const f = filterAt(grid.sheet, grid.sel.row, grid.sel.column);
   if (f && f.criteria.size && count <= 1) {
     let shown = 0;
     for (let r = f.r1 + 1; r <= f.r2; r++) if (model.getRowHeight(grid.sheet, r) > 0) shown++;
@@ -617,8 +618,7 @@ function setSheet(index: number, reset = true): void {
 }
 
 function syncFilter(): void {
-  const f = filterOf(grid.sheet);
-  grid.filter = f ? { r1: f.r1, c1: f.c1, r2: f.r2, c2: f.c2, active: new Set(f.criteria.keys()) } : null;
+  grid.filters = filtersOf(grid.sheet).map((f) => ({ r1: f.r1, c1: f.c1, r2: f.r2, c2: f.c2, active: new Set(f.criteria.keys()) }));
   grid.invalidateLayout();
 }
 
@@ -794,7 +794,7 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: 'Сортировка от А до Я', separator: true, run: () => sortBy(s.column, false) });
     items.push({ label: 'Сортировка от Я до А', run: () => sortBy(s.column, true) });
     items.push({ label: 'Настраиваемая сортировка…', run: () => sortBy(s.column, false, true) });
-    items.push({ label: filterOf(grid.sheet) ? 'Снять фильтр' : 'Фильтр', run: toggleFilter });
+    items.push({ label: filterAt(grid.sheet, s.row, s.column) ? 'Снять фильтр' : 'Фильтр', run: toggleFilter });
   }
   if (header !== 'column' && !fullCols) {
     items.push({ label: rows > 1 ? `Вставить строки (${rows})` : 'Вставить строку', separator: true, run: () => structure(() => model.insertRows(grid.sheet, s.r1, rows)) });
@@ -820,6 +820,15 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: 'Отменить объединение ячеек', run: () => merge('undo') });
   }
   if (header !== 'row') items.push({ label: 'Ширина столбца…', separator: true, run: () => askSize('column') });
+  // Скрыть / показать: «Показать» открывает скрытые внутри выделения (выделите соседей скрытых).
+  if (header === 'column') {
+    items.push({ label: cols > 1 ? `Скрыть столбцы (${cols})` : 'Скрыть столбец', run: () => structure(() => model.setColumnsHidden(grid.sheet, s.c1, s.c2, true)) });
+    items.push({ label: 'Показать скрытые столбцы', run: () => structure(() => model.setColumnsHidden(grid.sheet, s.c1, s.c2, false)) });
+  }
+  if (header === 'row') {
+    items.push({ label: rows > 1 ? `Скрыть строки (${rows})` : 'Скрыть строку', separator: true, run: () => structure(() => model.setRowsHidden(grid.sheet, s.r1, s.r2, true)) });
+    items.push({ label: 'Показать скрытые строки', run: () => structure(() => model.setRowsHidden(grid.sheet, s.r1, Math.min(s.r2, LAST_ROW), false)) });
+  }
   if (header !== 'column') items.push({ label: 'Высота строки…', separator: header === 'row', run: () => askSize('row') });
   if (!header) items.push({ label: 'Перейти к влияющим ячейкам', separator: true, keys: keysOf('nav.precedents'), run: () => run('nav.precedents') });
   showMenu(items, x, y);
@@ -838,16 +847,26 @@ function askSize(kind: 'column' | 'row'): void {
   const s = grid.sel;
   const current = kind === 'column' ? Math.round(model.getColumnWidth(grid.sheet, s.column))
     : Math.round(model.getRowHeight(grid.sheet, s.row) * 22 / 25);
-  const answer = prompt(kind === 'column' ? 'Ширина столбца (в пикселях):' : 'Высота строки (в пикселях):', String(current));
+  const answer = prompt(kind === 'column' ? 'Ширина столбца (в пикселях; 0 — скрыть):' : 'Высота строки (в пикселях; 0 — скрыть):', String(current));
   const px = Number(answer?.replace(',', '.'));
-  if (!answer || !Number.isFinite(px) || px <= 0 || px > 2000) return;
+  if (!answer || !Number.isFinite(px) || px < 0 || px > 2000) return;
   setSize(kind, kind === 'column' ? s.c1 : s.r1, kind === 'column' ? s.c2 : s.r2, px);
   focusGrid();
 }
 
 function setSize(kind: 'column' | 'row', from: number, to: number, px: number): void {
-  if (kind === 'column') model.setColumnsWidth(grid.sheet, from, Math.min(to, LAST_COLUMN), px);
-  else model.setRowsHeight(grid.sheet, from, Math.min(to, LAST_ROW), Grid.rowPxToModel(px));
+  to = Math.min(to, kind === 'column' ? LAST_COLUMN : LAST_ROW);
+  // Ноль — скрыть, как в Excel; другое значение заодно показывает скрытые.
+  const hide = px < 1;
+  const mark = model.undoMark();
+  if (kind === 'column') {
+    model.setColumnsHidden(grid.sheet, from, to, hide);
+    if (!hide) model.setColumnsWidth(grid.sheet, from, to, px);
+  } else {
+    model.setRowsHidden(grid.sheet, from, to, hide);
+    if (!hide) model.setRowsHeight(grid.sheet, from, to, Grid.rowPxToModel(px));
+  }
+  model.mergeUndoSince(mark);
   grid.invalidateLayout();
   placeEditor();
 }
@@ -1134,9 +1153,10 @@ const BLANKS_CODE = { last: 0, first: 1, zero: 2 } as const;
 /** Сортировка, как в Excel. По умолчанию строки переезжают целиком (вся таблица);
  *  если выделен только столбец, а рядом есть данные — спрашиваем, как в Excel.
  *  custom — окно «Настраиваемая сортировка» (уровни, заголовки, пустые). */
-async function sortBy(column: number, descending: boolean, custom = false): Promise<void> {
+async function sortBy(column: number, descending: boolean, custom = false, target?: SheetFilter): Promise<void> {
   const s = grid.sel;
-  const f = filterOf(grid.sheet);
+  // Таблица с фильтром: та, где активная ячейка (или та, чья кнопка нажата).
+  const f = target ?? filterAt(grid.sheet, s.row, s.column);
   let range: Rect;
   let header: boolean;
   let expand = true;
@@ -1196,8 +1216,10 @@ async function sortBy(column: number, descending: boolean, custom = false): Prom
 }
 
 function toggleFilter(): void {
-  if (filterOf(grid.sheet)) { setFilter(grid.sheet, null); return; }
   const s = grid.sel;
+  // В таблице с фильтром — снять его; иначе включить для таблицы вокруг выделения.
+  const existing = filterAt(grid.sheet, s.row, s.column);
+  if (existing) { removeFilter(grid.sheet, existing); return; }
   const sel = usedSelection();
   if (!sel) { showToast('Выделите таблицу с данными, чтобы включить фильтр.'); return; }
   // Одна ячейка (или одна объединённая) — ищем шапку сами; иначе фильтр в выделенной строке.
@@ -1223,13 +1245,13 @@ function toggleFilter(): void {
       header++;
     }
   }
-  setFilter(grid.sheet, { r1: header, c1, r2: Math.max(region.r2, header), c2, criteria: new Map() });
+  addFilter(grid.sheet, { r1: header, c1, r2: Math.max(region.r2, header), c2, criteria: new Map() });
 }
 
 initFilter({
   model: () => model,
   sheet: () => grid.sheet,
-  sort: (column, descending) => sortBy(column, descending),
+  sort: (column, descending, f) => sortBy(column, descending, false, f),
   changed: () => { syncFilter(); updateStatus(); },
 });
 /** Выделение для правил: целые строки и столбцы — до конца данных (но не меньше активной ячейки). */
@@ -1261,7 +1283,7 @@ function openConditionalMenu(): void {
 }
 
 // После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
-grid.onFilterButton = (column, x, y) => setTimeout(() => openFilterPopup(column, x, y));
+grid.onFilterButton = (row, column, x, y) => setTimeout(() => openFilterPopup(row, column, x, y));
 
 initFind({
   model: () => model,
@@ -1660,7 +1682,7 @@ register(
   { id: 'data.sortCustom', label: 'Настраиваемая сортировка…', keywords: ['custom sort', 'сортировка по нескольким столбцам', 'уровни сортировки'],
     run: () => sortBy(grid.sel.column, false, true) },
   { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
-    checked: () => !!filterOf(grid.sheet), run: toggleFilter },
+    checked: () => !!filterAt(grid.sheet, grid.sel.row, grid.sel.column), run: toggleFilter },
   { id: 'clipboard.pasteSpecial', label: 'Специальная вставка', keywords: ['paste special', 'вставить значения', 'транспонировать'],
     keys: ['Ctrl+Alt+KeyV'], run: () => pasteSpecialMenu(lastPointer.x, lastPointer.y) },
   { id: 'view.freeze', label: 'Закрепить области', keywords: ['freeze panes', 'закрепить', 'заморозить', 'шапка', 'фиксировать'],

@@ -422,6 +422,12 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: новые книги — по центру по вертикали (формат по умолчанию).
+    #[wasm_bindgen(js_name = "setDefaultVerticalCenter")]
+    pub fn set_default_vertical_center(&mut self) {
+        self.model.set_default_vertical_center();
+    }
+
     /// ENS-Office: метка в истории отмены — для склейки шагов.
     #[wasm_bindgen(js_name = "undoMark")]
     pub fn undo_mark(&self) -> u32 {

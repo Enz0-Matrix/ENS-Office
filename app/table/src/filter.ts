@@ -1,6 +1,12 @@
 // Автофильтр, как в Excel: кнопка в заголовке столбца → сортировка, поиск,
 // флажки значений. Отбор скрывает строки (их высота становится 0), формулы
 // и данные не меняются.
+//
+// ENS-Office: на листе может быть несколько таблиц со своими фильтрами.
+// Таблица фильтра — от строки заголовков до первой полностью пустой строки:
+// всё, что ниже, фильтр не трогает. Первый фильтр листа хранится как в Excel
+// (автофильтр), остальные — именами «_ENS_Filter2», «_ENS_Filter3»… со ссылкой
+// на диапазон: при вставке и удалении строк он сдвигается вместе с таблицей.
 
 import type { Model } from './engine';
 
@@ -13,31 +19,62 @@ export interface SheetFilter {
 export interface FilterHost {
   model(): Model;
   sheet(): number;
-  sort(column: number, descending: boolean): void;
+  /** Сортировка таблицы фильтра f по столбцу. */
+  sort(column: number, descending: boolean, f: SheetFilter): void;
   changed(): void;
 }
 
 const EMPTY = '(Пустые)';
+const EXTRA = '_ENS_Filter';
 /** Как в Excel, отбор не различает регистр: «Москва» и «москва» — одно значение. */
 const key = (shown: string) => (shown || EMPTY).toLowerCase();
-const filters = new Map<number, SheetFilter>();
+const filters = new Map<number, SheetFilter[]>();
 let host: FilterHost;
 
 export function initFilter(h: FilterHost): void {
   host = h;
 }
 
-export function filterOf(sheet: number): SheetFilter | undefined {
-  let f = filters.get(sheet);
-  if (!f && host) {
-    // Фильтр из файла (Excel хранит его область в книге): кнопки возвращаются.
-    const r = (() => { try { return host.model().getAutoFilter(sheet); } catch { return []; } })();
-    if (r.length === 4) {
-      f = { r1: r[0], c1: r[1], r2: r[2], c2: r[3], criteria: new Map() };
-      filters.set(sheet, f);
-    }
+/** «Лист1!$A$30:$D$40» → прямоугольник. */
+function parseRef(formula: string): { r1: number; c1: number; r2: number; c2: number } | null {
+  const m = /([A-Z]{1,3})\$?(\d+):\$?([A-Z]{1,3})\$?(\d+)\s*$/i.exec(formula.replace(/\$/g, ''));
+  if (!m) return null;
+  const col = (s: string) => [...s.toUpperCase()].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+  return { r1: Number(m[2]), c1: col(m[1]), r2: Number(m[4]), c2: col(m[3]) };
+}
+
+const colName = (c: number) => { let s = ''; for (let n = c; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+
+/** Все фильтры листа (из книги — при первом обращении). */
+export function filtersOf(sheet: number): SheetFilter[] {
+  let list = filters.get(sheet);
+  if (!list && host) {
+    list = [];
+    const m = host.model();
+    const r = (() => { try { return m.getAutoFilter(sheet); } catch { return []; } })();
+    if (r.length === 4) list.push({ r1: r[0], c1: r[1], r2: r[2], c2: r[3], criteria: new Map() });
+    try {
+      const extra = m.getDefinedNameList()
+        .filter((d) => d.scope === sheet && d.name.startsWith(EXTRA))
+        .sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
+      for (const d of extra) {
+        const rect = parseRef(d.formula);
+        if (rect) list.push({ ...rect, criteria: new Map() });
+      }
+    } catch { /* старый движок */ }
+    filters.set(sheet, list);
   }
-  return f;
+  return list ?? [];
+}
+
+/** Фильтр, в таблицу которого попадает ячейка (заголовок или данные). */
+export function filterAt(sheet: number, row: number, column: number): SheetFilter | undefined {
+  return filtersOf(sheet).find((f) => row >= f.r1 && row <= f.r2 && column >= f.c1 && column <= f.c2);
+}
+
+/** Есть ли на листе хоть один фильтр. */
+export function filterOf(sheet: number): SheetFilter | undefined {
+  return filtersOf(sheet)[0];
 }
 
 /** Новая книга в окне: фильтры прежней книги забываем. */
@@ -45,40 +82,72 @@ export function resetFilters(): void {
   filters.clear();
 }
 
-/** Область фильтра — в книгу: сохранится в xlsx, как у Excel. */
-function persist(sheet: number, f: SheetFilter | null): void {
-  try { host.model().setAutoFilter(sheet, f ? [f.r1, f.c1, f.r2, f.c2] : []); } catch { /* старый движок */ }
+/** Области фильтров — в книгу: первый — автофильтр Excel, остальные — имена. */
+function persist(sheet: number): void {
+  const m = host.model();
+  const list = filtersOf(sheet);
+  try { m.setAutoFilter(sheet, list[0] ? [list[0].r1, list[0].c1, list[0].r2, list[0].c2] : []); } catch { /* старый движок */ }
+  try {
+    const name = m.getWorksheetsProperties()[sheet].name;
+    const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+    const want = new Map(list.slice(1).map((f, i) => [`${EXTRA}${i + 2}`, `${q}!$${colName(f.c1)}$${f.r1}:$${colName(f.c2)}$${f.r2}`]));
+    const have = m.getDefinedNameList().filter((d) => d.scope === sheet && d.name.startsWith(EXTRA));
+    for (const d of have) {
+      const w = want.get(d.name);
+      if (w === undefined) m.deleteDefinedName(d.name, sheet);
+      else if (d.formula.replace(/^=/, '') !== w) m.updateDefinedName(d.name, sheet, d.name, sheet, w);
+      want.delete(d.name);
+    }
+    for (const [n, f] of want) m.newDefinedName(n, sheet, f);
+  } catch { /* имена не записались — фильтры живут до закрытия книги */ }
 }
 
-/** Строки данных фильтра: до последней непустой строки под заголовком. */
+/** Строки таблицы: от заголовка до первой полностью пустой строки (ниже — другая таблица). */
 function extend(f: SheetFilter): void {
   const m = host.model(), s = host.sheet();
-  let last = f.r1;
-  for (let c = f.c1; c <= f.c2; c++) {
-    const rows = m.getRowsWithData(s, c);
-    for (const r of rows) if (r > last) last = r;
-  }
-  f.r2 = Math.max(f.r2, last);
+  const filled = new Set<number>();
+  for (let c = f.c1; c <= f.c2; c++) for (const r of m.getRowsWithData(s, c)) if (r > f.r1) filled.add(r);
+  let r = f.r1 + 1;
+  while (filled.has(r)) r++;
+  f.r2 = Math.max(f.r1, r - 1);
 }
 
-export function setFilter(sheet: number, f: SheetFilter | null): void {
-  const old = filterOf(sheet);
-  if (old) {
-    // Снять фильтр — показать все строки.
-    host.model().setRowsHidden(sheet, old.r1 + 1, old.r2, false);
-    filters.delete(sheet);
+/** Включить фильтр f; таблицы, которые он задевает по строкам и столбцам, теряют свой. */
+export function addFilter(sheet: number, f: SheetFilter): void {
+  extend(f);
+  const list = filtersOf(sheet);
+  for (const o of [...list]) {
+    if (o.r1 <= f.r2 && o.r2 >= f.r1 && o.c1 <= f.c2 && o.c2 >= f.c1) removeFilter(sheet, o, false);
   }
-  if (f) {
-    filters.set(sheet, f);
-    extend(f);
-  }
-  persist(sheet, f);
+  list.push(f);
+  list.sort((a, b) => a.r1 - b.r1 || a.c1 - b.c1);
+  persist(sheet);
+  host.changed();
+}
+
+/** Снять фильтр: показать его строки. */
+export function removeFilter(sheet: number, f: SheetFilter, notify = true): void {
+  const list = filtersOf(sheet);
+  const i = list.indexOf(f);
+  if (i < 0) return;
+  if (f.criteria.size) host.model().setRowsHidden(sheet, f.r1 + 1, f.r2, false);
+  list.splice(i, 1);
+  if (notify) { persist(sheet); host.changed(); }
+}
+
+/** Снять все фильтры листа. */
+export function clearFilters(sheet: number): void {
+  for (const f of [...filtersOf(sheet)]) removeFilter(sheet, f, false);
+  persist(sheet);
   host.changed();
 }
 
 function apply(f: SheetFilter): void {
   const m = host.model(), s = host.sheet();
+  const before = f.r2;
   extend(f);
+  // Строки, что выпали из таблицы (стали отделены пустой строкой), — показать.
+  if (before > f.r2) m.setRowsHidden(s, f.r2 + 1, before, false);
   let runStart = 0, runHidden = false;
   const flush = (end: number) => { if (runStart) m.setRowsHidden(s, runStart, end, runHidden); };
   for (let r = f.r1 + 1; r <= f.r2; r++) {
@@ -90,7 +159,7 @@ function apply(f: SheetFilter): void {
     if (runHidden !== !show) { flush(r - 1); runStart = r; runHidden = !show; }
   }
   flush(f.r2);
-  persist(s, f);
+  persist(s);
   host.changed();
 }
 
@@ -103,9 +172,9 @@ document.addEventListener('mousedown', (e) => {
   if (!popup.hidden && !popup.contains(e.target as Node)) popup.hidden = true;
 });
 
-/** Окно фильтра столбца под кнопкой. */
-export function openFilterPopup(column: number, x: number, y: number): void {
-  const f = filters.get(host.sheet());
+/** Окно фильтра столбца под кнопкой (row — строка заголовков этой таблицы). */
+export function openFilterPopup(row: number, column: number, x: number, y: number): void {
+  const f = filtersOf(host.sheet()).find((t) => t.r1 === row && column >= t.c1 && column <= t.c2);
   if (!f) return;
   extend(f);
   const m = host.model(), s = host.sheet();
@@ -159,15 +228,15 @@ export function openFilterPopup(column: number, x: number, y: number): void {
     for (const b of boxes()) { const hit = b.value.toLowerCase().includes(q); b.parentElement!.hidden = !hit; b.checked = hit; }
     sync();
   });
-  popup.addEventListener('keydown', (e) => {
+  popup.onkeydown = (e) => {
     e.stopPropagation();
     if (e.key === 'Escape') popup.hidden = true;
     if (e.key === 'Enter') (popup.querySelector('[data-act="ok"]') as HTMLButtonElement).click();
-  });
+  };
   popup.onclick = (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
-    if (act === 'asc' || act === 'desc') { popup.hidden = true; host.sort(column, act === 'desc'); return; }
+    if (act === 'asc' || act === 'desc') { popup.hidden = true; host.sort(column, act === 'desc', f); return; }
     if (act === 'clear') { f.criteria.delete(column); popup.hidden = true; apply(f); return; }
     if (act === 'cancel') { popup.hidden = true; return; }
     const chosen = new Set(boxes().filter((b) => b.checked && !b.parentElement!.hidden).map((b) => b.value));

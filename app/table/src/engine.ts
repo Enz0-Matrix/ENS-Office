@@ -98,6 +98,14 @@ export interface Model {
   pasteValues(sourceSheet: number, source: [number, number, number, number], transpose: boolean): void;
   onPasteStyles(styles: CellStyle[][]): void;
   setRowsHidden(sheet: number, rowStart: number, rowEnd: number, hidden: boolean): void;
+  setColumnsHidden(sheet: number, columnStart: number, columnEnd: number, hidden: boolean): void;
+  /** Имена (используются для второго и следующих фильтров листа). */
+  getDefinedNameList(): { name: string; scope?: number | null; formula: string }[];
+  newDefinedName(name: string, scope: number | null | undefined, formula: string): void;
+  updateDefinedName(name: string, scope: number | null | undefined, newName: string, newScope: number | null | undefined, newFormula: string): void;
+  deleteDefinedName(name: string, scope?: number | null): void;
+  /** Новые книги — по центру по вертикали. */
+  setDefaultVerticalCenter(): void;
   mergeCells(range: Area): void;
   mergeCellsCenter(range: Area): void;
   mergeCellsAcross(range: Area): void;
@@ -198,6 +206,8 @@ const LANGUAGE = 'ru';
 export function newWorkbook(locale: string, name = 'Книга1'): Model {
   const model = new Engine(name, locale, TZ, LANGUAGE);
   model.renameSheet(0, 'Лист1');
+  // По желанию пользователя: в новых книгах — по центру по вертикали.
+  try { model.setDefaultVerticalCenter(); } catch { /* старый движок */ }
   model.flushSendQueue(); // переименование — не правка пользователя
   return model;
 }
