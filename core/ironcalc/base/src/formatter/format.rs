@@ -59,6 +59,19 @@ fn use_group_separator(use_thousands: bool, digit_index: i32, group_sizes: &str)
     false
 }
 
+/// ENS-Office: the genitive month name ("марта") for locales that need it
+/// after a day number; `None` for the others.
+fn genitive_month(locale: &Locale, month: usize) -> Option<&'static str> {
+    const RU: [&str; 12] = [
+        "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    ];
+    if locale.dates.months.first().map(|m| m.to_lowercase()) == Some("январь".to_string()) {
+        RU.get(month.checked_sub(1)?).copied()
+    } else {
+        None
+    }
+}
+
 /// ENS-Office: round to `digits` decimals, halves away from zero, working on
 /// the shortest decimal representation (so 2.345 is "2.345", not 2.34499…).
 pub(crate) fn round_half_away(value: f64, digits: i32) -> f64 {
@@ -256,8 +269,22 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let minutes = ((time_fract * 24.0 - hours) * 60.0).floor();
             let seconds = ((((time_fract * 24.0 - hours) * 60.0) - minutes) * 60.0).round();
             let date = from_excel_date(value as i64).ok();
+            // ENS-Office: in Russian a month after the day number is in the
+            // genitive ("15 марта 2023"), alone it is the nominative ("Март 2023").
+            let with_day = tokens.iter().any(|t| matches!(t, TextToken::Day | TextToken::DayPadded));
             for token in tokens {
                 match token {
+                    TextToken::MonthName if with_day && genitive_month(locale, 1).is_some() => {
+                        let Some(d) = date else {
+                            return Formatted {
+                                text: "#VALUE!".to_owned(),
+                                color: None,
+                                error: Some(format!("Invalid date value: '{value}'")),
+                            };
+                        };
+                        let name = genitive_month(locale, d.month() as usize).unwrap_or_default();
+                        text = format!("{text}{name}");
+                    }
                     TextToken::Literal(c) => {
                         text = format!("{text}{c}");
                     }

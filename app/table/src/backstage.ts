@@ -26,7 +26,7 @@ export interface BackstageHost {
 
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
-const APP_VERSION = '0.1.13';
+const APP_VERSION = '0.1.14';
 
 const root = document.createElement('div');
 root.className = 'backstage';

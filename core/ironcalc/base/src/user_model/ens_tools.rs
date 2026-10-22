@@ -137,6 +137,33 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// The cell's value shown with number format `code`, without changing the
+    /// workbook (the sample in the "Format cells" dialog). Text and booleans are
+    /// shown as they are; an empty cell gives "".
+    pub fn format_cell_value_as(&self, sheet: u32, row: i32, column: i32, code: &str) -> Result<String, String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let Some(cell) = ws.cell(row, column) else {
+            return Ok(String::new());
+        };
+        Ok(cell.formatted_value(&self.model.workbook.shared_strings, self.model.language, |value| {
+            crate::formatter::format::format_number(value, code, self.model.locale).text
+        }))
+    }
+
+    /// Palette colour (Excel index 1..56, `[Red]` = 3) that the number format
+    /// gives the cell's value, 0 if none: "#,##0;[Red]-#,##0" paints negatives red.
+    pub fn get_formatted_cell_color(&self, sheet: u32, row: i32, column: i32) -> Result<i32, String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let Some(cell) = ws.cell(row, column) else {
+            return Ok(0);
+        };
+        let CellValue::Number(value) = cell.value(&self.model.workbook.shared_strings, self.model.language) else {
+            return Ok(0);
+        };
+        let format = self.model.get_style_for_cell(sheet, row, column)?.num_fmt;
+        Ok(crate::formatter::format::format_number(value, &format, self.model.locale).color.unwrap_or(0))
+    }
+
     /// Moves rows `[row, row + row_count - 1]` by exactly `delta` rows (the rows
     /// in between shift the other way), as Excel's "Insert cut cells". Unlike
     /// `move_rows_action` hidden rows are not skipped, and row heights and the

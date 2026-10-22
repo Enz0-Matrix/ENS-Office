@@ -138,3 +138,24 @@ fn ens_display_rounding_and_text_format_ru() {
     assert_eq!(m.get_formatted_cell_value(0, 2, 2).unwrap().replace('\u{a0}', " "), "1 234,50");
     assert_eq!(m.get_formatted_cell_value(0, 3, 2).unwrap(), "25,6%");
 }
+
+#[test]
+fn ens_russian_dates_and_locale_tags() {
+    let mut m = UserModel::new_empty("model", "ru", "UTC", "ru").unwrap();
+    let area = |r| crate::expressions::types::Area { sheet: 0, row: r, column: 1, width: 1, height: 1 };
+    let cases = [
+        ("45000,5625", "d mmmm yyyy", "15 марта 2023"),
+        ("45000", "[$-419]d mmmm yyyy", "15 марта 2023"),
+        ("45000", "mmmm yyyy", "Март 2023"),
+        ("45000", "[$-F800]dddd, d mmmm yyyy", "среда, 15 марта 2023"),
+        ("1234,5", "#,##0.00 [$₽-419]", "1 234,50 ₽"),
+        ("1234,5", "#,##0 [$руб.-419]", "1 235 руб."),
+        ("1234,5", "[$$-409]#,##0.00", "$1 234,50"),
+    ];
+    for (r, (value, code, expected)) in cases.iter().enumerate() {
+        let row = r as i32 + 1;
+        m.set_user_input(0, row, 1, value).unwrap();
+        m.update_range_style(&area(row), "num_fmt", code).unwrap();
+        assert_eq!(m.get_formatted_cell_value(0, row, 1).unwrap().replace('\u{a0}', " "), *expected, "{code}");
+    }
+}

@@ -7,6 +7,7 @@ import { printSheet, renderPreview } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
+import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
 import { filterOf, initFilter, openFilterPopup, resetFilters, setFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -723,6 +724,7 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => structure(() => model.deleteColumns(grid.sheet, s.c1, cols)) });
   }
   items.push({ label: 'Очистить содержимое', keys: keysOf('edit.clear'), run: () => run('edit.clear') });
+  if (!header) items.push({ label: 'Формат ячеек…', keys: keysOf('format.cells'), run: () => run('format.cells') });
   if (!header && (rows > 1 || cols > 1)) {
     items.push({ label: 'Объединить и поместить в центр', separator: true, run: () => merge('center') });
     items.push({ label: 'Объединить ячейки', run: () => merge('plain') });
@@ -1378,6 +1380,27 @@ function style(path: string, value: (current: boolean) => string, flag?: (s: Ret
   syncNumberFormat();
 }
 
+/** Кнопки «Разряды», «Разрядность»: новый код от текущего формата активной ячейки — на всё выделение. */
+function numFormat(change: (code: string, shown: string) => string | null, what: string): void {
+  const s = grid.sel;
+  const code = model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt;
+  const next = change(code, model.getFormattedCellValue(grid.sheet, s.row, s.column));
+  if (next === null) { showToast(`${what}: для дат, времени и текста не меняется.`); return; }
+  style('num_fmt', () => next);
+}
+
+/** «Формат ячеек» (Ctrl+1): образец считает движок по значению активной ячейки. */
+function openFormatCells(): void {
+  if (editing) commitEdit(0, 0);
+  const s = grid.sel;
+  void formatCellsDialog({
+    model: () => model,
+    sheet: () => grid.sheet,
+    active: () => ({ row: s.row, column: s.column }),
+    apply: (code) => style('num_fmt', () => code),
+  }, model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt).then(() => focusGrid());
+}
+
 function toTsv(): string {
   const s = grid.sel, rows: string[] = [];
   for (let r = s.r1; r <= s.r2; r++) {
@@ -1449,7 +1472,22 @@ register(
     run: () => { void editRule(null, { range: rectRef(selectionRect()) }).then(() => focusGrid()); } },
   { id: 'format.conditional:manage', label: 'Условное форматирование: управление правилами', keywords: ['manage rules', 'удалить правила'],
     run: () => { void manageRules(); } },
-  { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => { if (fmt) style('num_fmt', () => fmt); } },
+  { id: 'format.cells', label: 'Формат ячеек…', keywords: ['format cells', 'числовой формат', 'дата', 'процент', 'разрядность'], keys: ['Ctrl+Digit1'],
+    run: () => openFormatCells() },
+  { id: 'format.decimalsMore', label: 'Увеличить разрядность', keywords: ['increase decimal', 'знаки после запятой', 'десятичные'],
+    run: () => numFormat((c, shown) => changeDecimals(c, 1, shown), 'Разрядность') },
+  { id: 'format.decimalsLess', label: 'Уменьшить разрядность', keywords: ['decrease decimal', 'знаки после запятой', 'округлить вид'],
+    run: () => numFormat((c, shown) => changeDecimals(c, -1, shown), 'Разрядность') },
+  { id: 'format.grouping', label: 'Разделитель групп разрядов', keywords: ['thousands separator', 'разряды', 'пробел между тысячами'], keys: ['Ctrl+Shift+Digit1'],
+    run: () => numFormat(toggleGrouping, 'Разделитель разрядов') },
+  { id: 'format.percent', label: 'Процентный формат', keywords: ['percent', 'процент'], keys: ['Ctrl+Shift+Digit5'],
+    run: () => style('num_fmt', () => '0%') },
+  { id: 'format.currency', label: 'Денежный формат (₽)', keywords: ['currency', 'рубли', 'деньги'], keys: ['Ctrl+Shift+Digit4'],
+    run: () => style('num_fmt', () => '#,##0.00 "₽"') },
+  { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => {
+    if (fmt === ':more') { syncNumberFormat(); openFormatCells(); return; }
+    if (fmt) style('num_fmt', () => fmt);
+  } },
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
     const name = nextSheetName(model);
     model.newSheet();
@@ -1683,9 +1721,9 @@ function syncNumberFormat(): void {
   const known = [...select.options].some((o) => o.value === fmt);
   if (!known) {
     select.querySelector('option[data-custom]')?.remove();
-    const custom = new Option(formatName(fmt), fmt);
+    const custom = new Option(`${formatName(fmt)}: ${fmt}`, fmt);
     custom.dataset.custom = '1';
-    select.add(custom);
+    select.add(custom, select.querySelector<HTMLOptionElement>('option[value=":more"]'));
   }
   select.value = fmt;
 }

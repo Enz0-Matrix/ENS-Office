@@ -69,6 +69,10 @@ import i_search_24 from '@fluentui/svg-icons/icons/search_24_regular.svg?raw';
 import i_eraser_24 from '@fluentui/svg-icons/icons/eraser_24_regular.svg?raw';
 import i_color_24 from '@fluentui/svg-icons/icons/color_24_regular.svg?raw';
 
+function numIcon(body: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="currentColor" font-family="Inter, Segoe UI, sans-serif">${body}</svg>`;
+}
+
 export const ICONS: Record<string, string> = {
   'clipboard_paste_20': clipboardPaste20,
   'cut_20': cut20,
@@ -135,5 +139,12 @@ export const ICONS: Record<string, string> = {
   'filter_24': i_filter_24,
   'search_24': i_search_24,
   'eraser_24': i_eraser_24,
+  // Свои значки группы «Число» (у Fluent таких нет): текстом, как в Office.
+  'num_currency_20': numIcon('<text x="10" y="15" text-anchor="middle" font-size="13" font-weight="600">₽</text>'),
+  'num_percent_20': numIcon('<text x="10" y="15" text-anchor="middle" font-size="13" font-weight="600">%</text>'),
+  'num_grouping_20': numIcon('<text x="10" y="13.5" text-anchor="middle" font-size="10" font-weight="700" letter-spacing="-.3">000</text><path d="M2 17h16" stroke="currentColor" stroke-width="1.2" opacity=".55"/>'),
+  'num_dec_more_20': numIcon('<text x="0" y="16" font-size="11" font-weight="700">,00</text><text x="13.5" y="8" font-size="10" font-weight="700">+</text>'),
+  'num_dec_less_20': numIcon('<text x="1" y="16" font-size="11" font-weight="700">,0</text><text x="12" y="8" font-size="11" font-weight="700">−</text>'),
+  'num_format_20': numIcon('<rect x="1.5" y="3.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="10" y="13.5" text-anchor="middle" font-size="8.5" font-weight="700">1,23</text>'),
   'color_24': i_color_24,
 };

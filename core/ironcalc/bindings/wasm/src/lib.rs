@@ -422,6 +422,18 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: значение ячейки в формате `code`, книга не меняется (образец в «Формате ячеек»).
+    #[wasm_bindgen(js_name = "formatCellValueAs")]
+    pub fn format_cell_value_as(&self, sheet: u32, row: i32, column: i32, code: &str) -> Result<String, JsError> {
+        self.model.format_cell_value_as(sheet, row, column, code).map_err(to_js_error)
+    }
+
+    /// ENS-Office: цвет из числового формата ([Red] и т. п.): номер палитры Excel 1..56, 0 — нет.
+    #[wasm_bindgen(js_name = "getFormattedCellColor")]
+    pub fn get_formatted_cell_color(&self, sheet: u32, row: i32, column: i32) -> Result<i32, JsError> {
+        self.model.get_formatted_cell_color(sheet, row, column).map_err(to_js_error)
+    }
+
     /// ENS-Office: «Вставить вырезанные строки» — ровно на `delta` строк,
     /// с высотой и скрытием (одна отмена).
     #[wasm_bindgen(js_name = "moveRowsExact")]

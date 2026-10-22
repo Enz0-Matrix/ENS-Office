@@ -34,8 +34,13 @@ export const NUMBER_FORMATS = [
   { value: '#,##0.00', label: 'Числовой' },
   { value: '#,##0.00 "₽"', label: 'Денежный' },
   { value: 'dd.mm.yyyy', label: 'Краткая дата' },
+  { value: 'd mmmm yyyy', label: 'Длинная дата' },
+  { value: 'hh:mm:ss', label: 'Время' },
   { value: '0.00%', label: 'Процентный' },
+  { value: '0.00E+00', label: 'Экспоненциальный' },
   { value: '@', label: 'Текстовый' },
+  /** Не формат, а окно «Формат ячеек». */
+  { value: ':more', label: 'Другие форматы…' },
 ];
 
 export const FONTS = OFFICE_FONTS.map((f) => ({ value: f, label: f }));
@@ -143,7 +148,15 @@ export const TABS: RibbonTab[] = [
       },
       {
         name: 'Число',
-        items: [{ type: 'select', command: 'format.number', options: NUMBER_FORMATS, width: 130 }],
+        items: [
+          { type: 'select', command: 'format.number', options: NUMBER_FORMATS, width: 150 },
+          { type: 'medium', command: 'format.currency', icon: 'num_currency' },
+          { type: 'medium', command: 'format.percent', icon: 'num_percent' },
+          { type: 'medium', command: 'format.grouping', icon: 'num_grouping' },
+          { type: 'medium', command: 'format.decimalsMore', icon: 'num_dec_more' },
+          { type: 'medium', command: 'format.decimalsLess', icon: 'num_dec_less' },
+          { type: 'medium', command: 'format.cells', icon: 'num_format' },
+        ],
       },
       {
         name: 'Стили',

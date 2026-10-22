@@ -5,6 +5,7 @@
 
 import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type MergedCell, type Model } from './engine';
 import { fontStack } from './fonts';
+import { PALETTE } from './numfmt';
 
 export interface Selection {
   /** Активная ячейка. */
@@ -756,7 +757,11 @@ export class Grid {
       }
       const shift = iconW.get(cell.r * 16_385 + cell.c) ?? 0;
       const tc = shift ? { ...cell, x: cell.x + shift, w: Math.max(0, cell.w - shift) } : cell;
-      this.drawText(text, style, align, tc, Math.max(spillL, tc.x), spillR);
+      // Цвет из числового формата: «#,##0;[Red]-#,##0» — отрицательные красным.
+      let fc = 0;
+      try { fc = model.getFormattedCellColor(this.sheet, cell.r, cell.c); } catch { fc = 0; }
+      const shownStyle = fc > 0 && style ? { ...style, font: { ...style.font, color: PALETTE[fc] } } : style;
+      this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
     }
 
     // Границы — поверх всего.

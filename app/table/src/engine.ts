@@ -116,6 +116,10 @@ export interface Model {
   setColumnsWidth(sheet: number, columnStart: number, columnEnd: number, width: number): void;
   setRowsHeight(sheet: number, rowStart: number, rowEnd: number, height: number): void;
   insertRows(sheet: number, row: number, count: number): void;
+  /** Цвет из числового формата ([Red]…): номер палитры Excel 1..56, 0 — нет. */
+  getFormattedCellColor(sheet: number, row: number, column: number): number;
+  /** Значение ячейки в формате code, книга не меняется (образец). */
+  formatCellValueAs(sheet: number, row: number, column: number, code: string): string;
   /** Переставить строки (столбцы) ровно на delta: с высотой, шириной и скрытием; одна отмена. */
   moveRowsExact(sheet: number, row: number, count: number, delta: number): void;
   moveColumnsExact(sheet: number, column: number, count: number, delta: number): void;

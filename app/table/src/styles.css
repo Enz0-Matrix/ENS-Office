@@ -302,3 +302,27 @@ footer { display: flex; flex-direction: column; }
 .cf-actions { justify-content: flex-start; align-items: center; }
 .cf-spacer { flex: 1; }
 @media (prefers-reduced-motion: reduce) { .cf-menu { animation: none; } }
+
+/* Окно «Формат ячеек» (Ctrl+1). */
+.fmt-modal { width: min(640px, 96vw); }
+.fmt-body { display: grid; grid-template-columns: 170px 1fr; gap: 16px; min-height: 320px; }
+.fmt-cats { display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--border); padding-right: 10px; }
+.fmt-modal .fmt-cats button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 4px; }
+.fmt-modal .fmt-cats button:hover { background: #eef6f3; }
+.fmt-modal .fmt-cats button.active { background: #d5efe8; color: var(--accent-dark, #1e5c50); font-weight: 600; }
+.fmt-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.fmt-sample { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+.fmt-sample span { font-size: 11px; color: var(--muted); }
+.fmt-sample b { font-weight: 500; font-size: 15px; min-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fmt-sample b.fmt-red { color: #d00000; }
+.fmt-row { display: grid; grid-template-columns: 190px 1fr; align-items: center; gap: 10px; color: var(--muted); }
+.fmt-row input, .fmt-row select { height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; color: var(--text); background: #fff; min-width: 0; }
+.fmt-row input[type="number"] { width: 80px; }
+.fmt-check { display: flex; align-items: center; gap: 6px; }
+.fmt-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; max-height: 220px; overflow: auto; }
+.fmt-modal .fmt-list button { border: 0; border-radius: 0; background: none; text-align: left; padding: 5px 10px; display: flex; justify-content: space-between; gap: 12px; }
+.fmt-modal .fmt-list button:hover { background: #f5faf8; }
+.fmt-modal .fmt-list button.active { background: #d5efe8; }
+.fmt-list small { color: var(--muted); font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+.fmt-hint { font-size: 12px; line-height: 1.45; margin: 0 !important; }
+@media (max-width: 560px) { .fmt-body { grid-template-columns: 1fr; } .fmt-cats { flex-direction: row; flex-wrap: wrap; border-right: 0; padding: 0; } .fmt-row { grid-template-columns: 1fr; } }
