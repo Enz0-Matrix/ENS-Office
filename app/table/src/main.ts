@@ -1046,12 +1046,70 @@ grid.onFill = (t) => {
 /** Закрепить области: строки выше и столбцы левее активной ячейки. */
 function freezeMenu(x: number, y: number): void {
   const s = grid.sel, f = grid.frozen;
+  const pins = readPins();
+  const d = model.getSheetDimension(grid.sheet);
+  // Строки снизу: выделенные; если выделена одна ячейка — её строка (обычно «Итого»).
+  const rows = { a: s.r1, b: Math.min(s.r2, Math.max(d[2], s.r1)) };
+  const cols = { a: s.c1, b: Math.min(s.c2, Math.max(d[3], s.c1)) };
+  const span = (k: 'row' | 'column', p: { a: number; b: number }) =>
+    k === 'row' ? (p.a === p.b ? `строку ${p.a}` : `строки ${p.a}–${p.b}`) : (p.a === p.b ? `столбец ${columnName(p.a)}` : `столбцы ${columnName(p.a)}–${columnName(p.b)}`);
   showMenu([
-    { label: f.rows || f.columns ? 'Снять закрепление областей' : `Закрепить области (выше и левее ${columnName(s.column)}${s.row})`,
+    { label: f.rows || f.columns ? 'Снять закрепление сверху и слева' : `Закрепить области (выше и левее ${columnName(s.column)}${s.row})`,
       run: () => (f.rows || f.columns ? grid.setFrozen(0, 0) : grid.setFrozen(s.row - 1, s.column - 1)) },
     { label: 'Закрепить верхнюю строку', run: () => grid.setFrozen(1, 0) },
     { label: 'Закрепить первый столбец', run: () => grid.setFrozen(0, 1) },
+    { label: `Закрепить снизу: ${span('row', rows)}`, separator: true, run: () => setPins(rows, pins.cols) },
+    { label: `Закрепить справа: ${span('column', cols)}`, run: () => setPins(pins.rows, cols) },
+    ...(pins.rows ? [{ label: `Снять закрепление снизу (${span('row', pins.rows)})`, run: () => setPins(null, pins.cols) }] : []),
+    ...(pins.cols ? [{ label: `Снять закрепление справа (${span('column', pins.cols)})`, run: () => setPins(pins.rows, null) }] : []),
   ], x, y);
+}
+
+// --- Закрепление снизу и справа: хранится в книге именами _ENS_PinRows /
+// _ENS_PinCols (ссылки сдвигаются при вставке и удалении строк). В Excel такого
+// закрепления нет: там эти имена просто видны в «Диспетчере имён».
+
+type Span = { a: number; b: number } | null;
+const PIN_ROWS = '_ENS_PinRows', PIN_COLS = '_ENS_PinCols';
+
+function readPins(): { rows: Span; cols: Span } {
+  let rows: Span = null, cols: Span = null;
+  try {
+    for (const d of model.getDefinedNameList()) {
+      if (d.scope !== grid.sheet) continue;
+      const m = /\$?([A-Z]{1,3})\$?(\d+):\$?([A-Z]{1,3})\$?(\d+)\s*$/i.exec(d.formula);
+      if (!m) continue;
+      if (d.name === PIN_ROWS) rows = { a: Number(m[2]), b: Number(m[4]) };
+      if (d.name === PIN_COLS) cols = { a: columnNumber(m[1]), b: columnNumber(m[3]) };
+    }
+  } catch { /* старый движок */ }
+  return { rows, cols };
+}
+
+function setPins(rows: Span, cols: Span): void {
+  const name = model.getWorksheetsProperties()[grid.sheet].name;
+  const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+  const put = (key: string, ref: string | null) => {
+    const has = model.getDefinedNameList().some((d) => d.name === key && d.scope === grid.sheet);
+    if (!ref) { if (has) model.deleteDefinedName(key, grid.sheet); return; }
+    if (has) model.updateDefinedName(key, grid.sheet, key, grid.sheet, ref);
+    else model.newDefinedName(key, grid.sheet, ref);
+  };
+  const mark = model.undoMark();
+  try {
+    put(PIN_ROWS, rows ? `${q}!$A$${rows.a}:$A$${rows.b}` : null);
+    put(PIN_COLS, cols ? `${q}!$${columnName(cols.a)}$1:$${columnName(cols.b)}$1` : null);
+  } catch (e) {
+    showToast(`Не получилось: ${e}`);
+  }
+  model.mergeUndoSince(mark);
+  syncPins();
+  focusGrid();
+}
+
+function syncPins(): void {
+  const p = readPins();
+  grid.setPins(p.rows, p.cols);
 }
 
 let lastPointer = { x: 200, y: 160 };
@@ -1092,6 +1150,7 @@ function undoRedo(kind: 'undo' | 'redo'): void {
 /** Нефритовые — когда можно, серые — когда нельзя. */
 function syncUndoState(): void {
   syncOutline();
+  syncPins();
   const u = model.canUndo(), r = model.canRedo();
   qaUndo.disabled = !u;
   qaRedo.disabled = !r;
