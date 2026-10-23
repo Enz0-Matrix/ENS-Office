@@ -31,6 +31,9 @@ jobs:
       - name: Частичный пересчёт со сверкой с полным (ENS_VERIFY_INCREMENTAL)
         working-directory: core/ironcalc
         run: ENS_VERIFY_INCREMENTAL=1 cargo test --lib -p ironcalc_base
+      - name: Чтение и запись xlsx (настоящие файлы Excel)
+        working-directory: core/ironcalc
+        run: cargo test -p ironcalc --lib --tests
 
   desktop:
     name: Сборка ${{ matrix.name }}
@@ -85,6 +88,38 @@ jobs:
       - name: Сборка приложения
         working-directory: app/table
         run: npx tauri build --bundles ${{ matrix.bundles }}
+      - name: Версия для браузера одним файлом (для старых систем)
+        if: matrix.name == 'linux'
+        working-directory: app/table
+        run: ENS_SINGLE=1 npx vite build && node scripts/build-single.mjs
+      - name: Инструменты сборки под старую glibc (РЕД ОС 7)
+        if: matrix.name == 'linux'
+        run: |
+          pip install ziglang
+          sudo apt-get install -y rpm
+      - uses: taiki-e/install-action@v2
+        if: matrix.name == 'linux'
+        with:
+          tool: cargo-zigbuild
+      - name: ENS-Table для РЕД ОС 7 (glibc 2.17+, окно Chromium)
+        if: matrix.name == 'linux'
+        working-directory: app/table
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          (cd redos7 && cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17)
+          bin=redos7/target/x86_64-unknown-linux-gnu/release/ens-table-r7
+          echo "Самая новая нужная версия glibc:"; objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          root="$RUNNER_TEMP/ENS-Table-redos7"
+          mkdir -p "$root"
+          cp "$bin" "$root/"
+          cp -r dist "$root/ui"
+          cp redos7/packaging/ens-table-r7.desktop redos7/packaging/install-user.sh "$root/"
+          cp src-tauri/icons/128x128.png "$root/ens-table-r7.png"
+          mkdir -p redos7-out
+          tar -C "$RUNNER_TEMP" -czf "redos7-out/ENS-Table_${ver}_redos7.tar.gz" ENS-Table-redos7
+          rpmbuild -bb redos7/packaging/ens-table-r7.spec --define "_ensroot $root" --define "ens_version $ver"             --define "_rpmdir $PWD/redos7-out" --define "_build_id_links none"
+          find redos7-out -name '*.rpm' -exec mv {} redos7-out/ \;
+          ls -la redos7-out
       - uses: actions/upload-artifact@v4
         with:
           name: ens-table-${{ matrix.name }}
@@ -94,5 +129,8 @@ jobs:
             app/table/src-tauri/target/release/bundle/**/*.deb
             app/table/src-tauri/target/release/bundle/**/*.exe
             app/table/src-tauri/target/release/ens-table.exe
+            app/table/dist-single/ENS-Table_*_browser.html
+            app/table/redos7-out/*.rpm
+            app/table/redos7-out/*.tar.gz
           if-no-files-found: error
           retention-days: 30

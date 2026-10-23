@@ -292,14 +292,16 @@ impl Lexer {
 
     fn consume_color(&mut self) -> Option<i32> {
         let colors = [
-            "black", "white", "red", "green", "blue", "yellow", "magenta",
+            "black", "white", "red", "green", "blue", "yellow", "magenta", "cyan",
         ];
         let mut chars = "".to_string();
         while let Some(ch) = self.read_next_char() {
             if ch == ']' {
                 let lc = chars.to_lowercase();
+                // ENS-Office: named colours are Excel palette entries 1..8
+                // ([Red] = [Color3]), so both spellings share one index.
                 if let Some(index) = colors.iter().position(|&x| x == lc) {
-                    return Some(index as i32);
+                    return Some(index as i32 + 1);
                 }
                 if !chars.starts_with("Color") {
                     return None;
@@ -358,22 +360,28 @@ impl Lexer {
                             //  * hex LCID (old format)
                             //      Like [$$-409] (=1033 for en-US) or
                             //           [$$-40C] (=1036 for fr-FR)
+                            // ENS-Office: the symbol may be empty ([$-419], a locale
+                            // tag only, common in Russian files) or longer than one
+                            // character ([$руб.-419]); it is shown where it stands
+                            // in the format, as in Excel ("#,##0 [$₽-419]" → "1 234 ₽").
                             self.read_next_char();
-                            if let Some(currency) = self.read_next_char() {
-                                // ignore the locale part for now, just check if it ends with ']'
-                                if Some('-') == self.peek_char() {
-                                    self.read_next_char();
-
-                                    while let Some(c) = self.peek_char() {
-                                        if c == ']' {
-                                            break;
-                                        }
-                                        self.read_next_char();
-                                    }
+                            let mut symbol = String::new();
+                            while let Some(c) = self.peek_char() {
+                                if c == '-' || c == ']' {
+                                    break;
                                 }
-                                if self.read_next_char() == Some(']') {
-                                    return Token::Currency(currency);
+                                symbol.push(c);
+                                self.read_next_char();
+                            }
+                            // ignore the locale part, just check that it ends with ']'
+                            while let Some(c) = self.peek_char() {
+                                if c == ']' {
+                                    break;
                                 }
+                                self.read_next_char();
+                            }
+                            if self.read_next_char() == Some(']') {
+                                return Token::Text(symbol);
                             }
                             self.set_error("Failed to parse currency");
                             Token::ILLEGAL

@@ -3,3 +3,6 @@ dist/
 src/engine-pkg/
 src-tauri/target/
 src-tauri/gen/
+dist-single/
+redos7-out/
+redos7/target/

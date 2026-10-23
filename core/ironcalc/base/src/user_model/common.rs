@@ -174,6 +174,19 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
                 style.alignment = Some(alignment)
             }
         },
+        // ENS-Office: text direction (Excel's textRotation).
+        "alignment.text_rotation" => {
+            let v = value.parse::<i32>().map_err(|_| format!("Invalid text rotation: '{value}'."))?;
+            if !(0..=180).contains(&v) && v != 255 {
+                return Err(format!("Invalid text rotation: '{value}'."));
+            }
+            match style.alignment {
+                Some(ref mut s) => s.text_rotation = v,
+                None => {
+                    style.alignment = Some(Alignment { text_rotation: v, ..Default::default() });
+                }
+            }
+        }
         "alignment.wrap_text" => match style.alignment {
             Some(ref mut s) => s.wrap_text = boolean(value)?,
             None => {
@@ -219,7 +232,7 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
 /// ```
 pub struct UserModel<'a> {
     pub(crate) model: Model<'a>,
-    history: History,
+    pub(crate) history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
 }
@@ -829,7 +842,18 @@ impl<'a> UserModel<'a> {
     /// * [Model::range_clear_contents]
     pub fn range_clear_contents(&mut self, range: &Area) -> Result<(), String> {
         let sheet = range.sheet;
-        // TODO: full rows/columns
+        // ENS-Office: only the part of the range that holds data — clearing a
+        // whole column used to walk 1 048 576 rows (28 s in the browser).
+        let dim = self.model.workbook.worksheet(sheet)?.dimension();
+        let row1 = range.row.max(dim.min_row);
+        let row2 = (range.row + range.height - 1).min(dim.max_row);
+        let column1 = range.column.max(dim.min_column);
+        let column2 = (range.column + range.width - 1).min(dim.max_column);
+        if row1 > row2 || column1 > column2 {
+            return Ok(());
+        }
+        let clipped = Area { sheet, row: row1, column: column1, width: column2 - column1 + 1, height: row2 - row1 + 1 };
+        let range = &clipped;
         let mut old_value = Vec::new();
         for row in range.row..range.row + range.height {
             let mut data_row = Vec::new();
@@ -1227,6 +1251,8 @@ impl<'a> UserModel<'a> {
                         custom_width: col.custom_width,
                         style: col.style,
                         hidden: col.hidden,
+                        outline_level: col.outline_level,
+                        collapsed: col.collapsed,
                     });
                     break;
                 }

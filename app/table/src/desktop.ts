@@ -3,8 +3,8 @@
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
 import { fromBytes, openXlsx, type Model } from './engine';
-import { ask, inspectFile, isDesktop, openWindow, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
-import { localeId, settings } from './settings';
+import { ask, beaconClose, inspectFile, isDesktop, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { localeId, saveSettings, settings } from './settings';
 
 export interface Doc {
   /** Идентификатор для папки восстановления: латиница, цифры, дефис. */
@@ -36,6 +36,8 @@ let emptyQueue = 0;
 let lastChange = 0;
 let lastSnapshot = 0;
 let changedSinceSnapshot = false;
+/** Снимок этой книги уже есть: без него восстанавливать нечего. */
+let hasSnapshot = false;
 
 const baseName = (path: string) => path.split(/[\\/]/).pop()!.replace(/\.(xlsx|xlsm)$/i, '');
 
@@ -47,7 +49,9 @@ async function track(): Promise<void> {
   await recovery.begin(doc.id, {
     source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0,
   });
-  await snapshot();
+  hasSnapshot = false;
+  // Новую нетронутую книгу не предлагаем восстанавливать: снимок — с первой правки.
+  if (doc.path || doc.dirty) await snapshot();
 }
 
 async function snapshot(): Promise<void> {
@@ -56,6 +60,7 @@ async function snapshot(): Promise<void> {
   if (pending.length > emptyQueue) markChanged();
   if (!isDesktop) return;
   await recovery.snapshot(host.doc().id, m.toBytes());
+  hasSnapshot = true;
   lastSnapshot = Date.now();
   changedSinceSnapshot = false;
 }
@@ -76,7 +81,9 @@ async function tick(): Promise<void> {
   const diffs = m.flushSendQueue();
   if (diffs.length > emptyQueue) {
     markChanged();
-    if (isDesktop) await recovery.append(host.doc().id, diffs).catch((e) => host.toast(String(e)));
+    // Первая правка новой книги — сразу полный снимок (в нём уже есть эта правка).
+    if (isDesktop && !hasSnapshot) await snapshot().catch((e) => host.toast(String(e)));
+    else if (isDesktop) await recovery.append(host.doc().id, diffs).catch((e) => host.toast(String(e)));
   }
   if (!isDesktop || !changedSinceSnapshot) return;
   const now = Date.now();
@@ -85,13 +92,54 @@ async function tick(): Promise<void> {
   if (due || idle) await snapshot().catch((e) => host.toast(String(e)));
 }
 
+export async function newWindow(): Promise<void> {
+  await openWindow('new=1', 'Книга');
+}
+
+export async function closeBook(): Promise<void> {
+  if (!isTauri) {
+    // Окно браузера закрывается его крестиком (вопрос о сохранении задаст браузер).
+    window.close();
+    return;
+  }
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().close(); // спросит «Сохранить изменения?»
+}
+
+export async function recoveryFolder(): Promise<string> {
+  return isDesktop ? recovery.root() : '';
+}
+
+export async function chooseRecoveryFolder(): Promise<void> {
+  const path = await pickFolder('Папка для временных файлов восстановления');
+  if (!path) return;
+  try {
+    await recovery.setRoot(path);
+    settings.recoveryRoot = path;
+    saveSettings();
+    await track();
+  } catch (e) {
+    host.toast(`Папка недоступна для записи: ${e}. Временные файлы остаются в прежней папке.`);
+  }
+}
+
 export async function start(h: Host): Promise<void> {
   host = h;
+  if (isDesktop && settings.recoveryRoot) {
+    // Своя (например, сетевая) папка; если недоступна — остаёмся в профиле.
+    await recovery.setRoot(settings.recoveryRoot).catch(() =>
+      h.toast(`Папка восстановления «${settings.recoveryRoot}» недоступна — временные файлы пишутся в профиль пользователя.`));
+  }
   emptyQueue = h.model().flushSendQueue().length;
   setInterval(() => void tick(), 1000);
   if (isDesktop) {
     setInterval(() => void recovery.heartbeat().catch(() => {}), 30_000);
-    await setupClose();
+    if (isTauri) {
+      await setupClose();
+      await setupWindowButtons();
+    } else {
+      setupCloseLocal();
+    }
   }
   const params = new URLSearchParams(location.search);
   const open = params.get('open');
@@ -100,8 +148,12 @@ export async function start(h: Host): Promise<void> {
   else if (recover) {
     const [session, id] = recover.split('/');
     await restore(session, id, params.get('title') ?? 'Книга');
+  } else if (params.get('new')) {
+    await track(); // новое окно: панель восстановления уже показана в первом
   } else {
     await track();
+    const file = isDesktop ? await startupFile().catch(() => null) : null;
+    if (file) await openPath(file);
     if (isDesktop) await offerRecovery();
   }
 }
@@ -192,6 +244,7 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   doc.path = path;
   doc.title = baseName(path);
   doc.dirty = false;
+  rememberRecent(path, doc.title);
   if (doc.recoveredFrom) {
     await recovery.discard(doc.recoveredFrom.session, doc.recoveredFrom.id).catch(() => {});
     doc.recoveredFrom = undefined;
@@ -203,6 +256,12 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   });
   await snapshot();
   return true;
+}
+
+/** Список «Последние» в меню «Файл». */
+export function rememberRecent(path: string, title: string): void {
+  settings.recent = [{ path, title }, ...settings.recent.filter((r) => r.path !== path)].slice(0, 12);
+  saveSettings();
 }
 
 function download(): boolean {
@@ -236,7 +295,9 @@ async function restore(session: string, id: string, title: string): Promise<void
     await track();
     markChanged();
   } catch (e) {
-    host.toast(`Не удалось восстановить книгу: ${e}`);
+    // Снимок от прежней версии (формат меняется при обновлениях): файлы не удаляем —
+    // их можно восстановить в той версии, а исходная книга не менялась.
+    host.toast(`Не удалось восстановить книгу: ${e}. Возможно, снимок сделан другой версией программы — временные файлы сохранены, исходный файл не изменялся.`);
   }
 }
 
@@ -309,6 +370,42 @@ const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '
 
 declare global {
   interface Window { __ensDoc?: () => Doc }
+}
+
+// --- Кнопки окна в зелёной строке (системный заголовок убран) ---
+
+async function setupWindowButtons(): Promise<void> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const win = getCurrentWindow();
+  const box = document.getElementById('window-buttons')!;
+  box.hidden = false;
+  const max = box.querySelector<HTMLButtonElement>('[data-win="maximize"]')!;
+  const sync = async () => {
+    const on = await win.isMaximized().catch(() => false);
+    max.title = on ? 'Свернуть в окно' : 'Развернуть';
+    max.innerHTML = on
+      ? '<svg viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="7" height="7"/><path d="M2.5 2.5V0.5h7v7h-2"/></svg>'
+      : '<svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg>';
+  };
+  box.querySelector('[data-win="minimize"]')!.addEventListener('click', () => void win.minimize());
+  max.addEventListener('click', () => void win.toggleMaximize());
+  box.querySelector('[data-win="close"]')!.addEventListener('click', () => void win.close());
+  await win.onResized(() => void sync());
+  await sync();
+}
+
+// --- Закрытие окна в версии для РЕД ОС 7 (окно Chromium) ---
+
+function setupCloseLocal(): void {
+  // Несохранённые изменения: браузер спросит «Покинуть сайт?». Даже если
+  // закрыть — временные файлы останутся, и книгу предложат восстановить.
+  window.addEventListener('beforeunload', (e) => {
+    if (host.doc().dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+  window.addEventListener('pagehide', () => {
+    const doc = host.doc();
+    beaconClose(doc.id, !doc.dirty);
+  });
 }
 
 // --- Закрытие окна ---

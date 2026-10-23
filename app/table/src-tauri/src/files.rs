@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
+#[cfg(feature = "tauri-shell")]
 use tauri::ipc::{InvokeBody, Request, Response};
 
 #[derive(Serialize)]
@@ -97,7 +98,7 @@ fn explain(err: &std::io::Error, path: &Path, action: &str) -> String {
     format!("Не удалось {action} «{name}»: {reason}. Попробуйте «Сохранить как…» в другое место — данные в программе не потеряны.")
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "tauri-shell", tauri::command)]
 pub fn inspect_file(path: String) -> Result<FileInfo, String> {
     let p = PathBuf::from(&path);
     let meta = fs::metadata(&p).map_err(|e| explain(&e, &p, "открыть"))?;
@@ -114,12 +115,14 @@ pub fn inspect_file(path: String) -> Result<FileInfo, String> {
     })
 }
 
+#[cfg(feature = "tauri-shell")]
 #[tauri::command]
 pub fn read_file(path: String) -> Result<Response, String> {
     let p = PathBuf::from(&path);
     fs::read(&p).map(Response::new).map_err(|e| explain(&e, &p, "открыть"))
 }
 
+#[cfg(feature = "tauri-shell")]
 fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
     let raw = request
         .headers()
@@ -131,7 +134,7 @@ fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
     percent_decode(raw)
 }
 
-fn percent_decode(s: &str) -> Result<String, String> {
+pub fn percent_decode(s: &str) -> Result<String, String> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -148,6 +151,7 @@ fn percent_decode(s: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "tauri-shell")]
 fn body(request: &Request<'_>) -> Result<Vec<u8>, String> {
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(bytes.clone()),
@@ -158,6 +162,7 @@ fn body(request: &Request<'_>) -> Result<Vec<u8>, String> {
 /// Атомарное сохранение. Заголовки: `path` (закодирован), `expected-modified`
 /// — время изменения файла на момент открытия (0 — не проверять).
 /// Возвращает новое время изменения.
+#[cfg(feature = "tauri-shell")]
 #[tauri::command]
 pub fn save_file(request: Request<'_>) -> Result<u64, String> {
     let path = PathBuf::from(header(&request, "path")?);

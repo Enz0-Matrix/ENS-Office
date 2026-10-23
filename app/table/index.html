@@ -6,17 +6,31 @@
   <title>Книга1 — ENS-Table</title>
 </head>
 <body>
-  <header class="titlebar">
-    <span class="app-mark">ENS</span>
-    <span id="doc-name" class="doc-name"></span>
+  <header class="titlebar" data-tauri-drag-region>
+    <span class="app-mark" data-tauri-drag-region>ENS</span>
+    <span class="quick-access">
+      <button id="qa-undo" class="qa" title="Отменить (Ctrl+Z)" aria-label="Отменить"></button>
+      <button id="qa-redo" class="qa" title="Повторить (Ctrl+Y)" aria-label="Повторить"></button>
+    </span>
+    <span id="doc-name" class="doc-name" data-tauri-drag-region></span>
     <label class="search"><input id="search" placeholder="Поиск (Alt+Q)" autocomplete="off"></label>
+    <div id="window-buttons" class="window-buttons" hidden>
+      <button data-win="minimize" title="Свернуть" aria-label="Свернуть"><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></button>
+      <button data-win="maximize" title="Развернуть" aria-label="Развернуть"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></button>
+      <button data-win="close" class="close" title="Закрыть" aria-label="Закрыть"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></button>
+    </div>
   </header>
   <nav id="tabs" class="tabs"></nav>
   <section id="ribbon" class="ribbon"></section>
   <div class="formula-bar">
     <input id="name-box" class="name-box" title="Поле имени: адрес ячейки">
     <span class="fx">ƒx</span>
-    <input id="formula" class="formula" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке" autocomplete="off" spellcheck="false">
+    <div class="formula-wrap">
+      <div id="formula-mirror" class="formula-mirror" hidden aria-hidden="true"></div>
+      <textarea id="formula" class="formula" rows="1" title="Строка формул. Ctrl+щелчок по ссылке — перейти к ячейке. Alt+Enter — новая строка" autocomplete="off" spellcheck="false"></textarea>
+    </div>
+    <button id="formula-expand" class="formula-expand" title="Развернуть строку формул (Ctrl+Shift+U)" aria-label="Развернуть строку формул">⌄</button>
+    <div id="formula-grip" class="formula-grip" title="Потяните, чтобы изменить высоту строки формул"></div>
   </div>
   <main id="grid" class="grid"></main>
   <footer>
@@ -28,6 +42,7 @@
   <div id="format-chip" class="format-chip" hidden></div>
   <div id="toast" class="toast" hidden></div>
   <div id="recovery" class="overlay" hidden></div>
+  <div id="context-menu" class="context-menu" hidden></div>
   <input id="file-input" type="file" accept=".xlsx" hidden>
   <script type="module" src="/src/main.ts"></script>
 </body>

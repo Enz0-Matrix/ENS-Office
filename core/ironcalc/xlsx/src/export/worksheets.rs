@@ -180,7 +180,18 @@ fn get_array_formula_attribute(
     escape_xml(formula).to_string()
 }
 
+/// ENS-Office: an error value Excel understands.
+fn excel_error_name(name: &str) -> &str {
+    match name {
+        "#NULL!" | "#DIV/0!" | "#VALUE!" | "#REF!" | "#NAME?" | "#NUM!" | "#N/A" | "#SPILL!"
+        | "#CALC!" => name,
+        "#N/IMPL" | "#N/IMPL!" => "#NAME?",
+        _ => "#VALUE!",
+    }
+}
+
 pub(crate) fn get_worksheet_xml(
+    auto_filter: &str,
     worksheet: &Worksheet,
     parsed_formulas: &[(std::sync::Arc<Node>, StaticResult)],
     dimension: &str,
@@ -201,8 +212,11 @@ pub(crate) fn get_worksheet_xml(
             None => "".to_string(),
         };
         let hidden = if col.hidden { " hidden=\"1\"" } else { "" };
+        // ENS-Office: grouping (outline) of columns.
+        let outline = if col.outline_level > 0 { format!(" outlineLevel=\"{}\"", col.outline_level) } else { String::new() };
+        let collapsed = if col.collapsed { " collapsed=\"1\"" } else { "" };
         cols_str.push(format!(
-            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}/>"
+            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}{outline}{collapsed}/>"
         ));
     }
 
@@ -370,13 +384,28 @@ pub(crate) fn get_worksheet_xml(
                     //   <f>A1/A3<f/>
                     //   <v>#DIV/0!</v>
                     // </c>
+                    let node = &parsed_formulas[*f as usize].0;
+                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: a formula that does not parse (say "=B5+") is not
+                    // valid in Excel, which "repairs" the whole file and drops it.
+                    // Keep the text the user typed as an inline string instead.
+                    if let Node::ParseErrorKind { formula, .. } = node.as_ref() {
+                        let text = escape_xml(&format!("={formula}")).to_string();
+                        row_data_str.push(format!(
+                            "<c r=\"{cell_name}\" t=\"inlineStr\"{style}><is><t>{text}</t></is></c>"
+                        ));
+                        continue;
+                    }
                     let formula = get_formula_attribute(
                         worksheet.get_name(),
                         row_index,
                         column_index,
-                        &parsed_formulas[*f as usize].0,
+                        node,
                     );
-                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: #ERROR!, #N/IMPL and #CIRC! are IronCalc's own
+                    // errors; Excel only accepts its standard ones.
+                    let ei_name = ei.to_string();
+                    let ei = excel_error_name(&ei_name);
                     row_data_str.push(format!(
                         "<c r=\"{cell_name}\" t=\"e\"{style}><f>{formula}</f><v>{ei}</v></c>"
                     ));
@@ -564,13 +593,22 @@ pub(crate) fn get_worksheet_xml(
                 } else {
                     ""
                 };
+                // ENS-Office: grouping (outline) of rows.
+                let outline_str = if row_style.outline_level > 0 {
+                    format!(r#" outlineLevel="{}""#, row_style.outline_level)
+                } else {
+                    String::new()
+                };
+                let collapsed_str = if row_style.collapsed { r#" collapsed="1""# } else { "" };
                 format!(
-                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}"#,
+                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}{}{}"#,
                     row_style.s,
                     row_style.height,
                     i32::from(row_style.custom_height),
                     i32::from(row_style.custom_format),
                     hidden_str,
+                    outline_str,
+                    collapsed_str,
                 )
             }
             None => "".to_string(),
@@ -686,6 +724,15 @@ pub(crate) fn get_worksheet_xml(
         get_conditional_formatting_xml(&worksheet.conditional_formatting);
 
     let hyperlinks_section = get_hyperlinks_section(worksheet);
+    // ENS-Office: the deepest outline levels, so Excel draws the group bar.
+    let level_row = worksheet.rows.iter().map(|r| r.outline_level).max().unwrap_or(0);
+    let level_col = worksheet.cols.iter().map(|c| c.outline_level).max().unwrap_or(0);
+    let sheet_format = if level_row > 0 || level_col > 0 {
+        format!(r#"<sheetFormatPr defaultRowHeight="15" outlineLevelRow="{level_row}" outlineLevelCol="{level_col}"/>"#)
+    } else {
+        String::new()
+    };
+    let auto_filter_section = auto_filter;
 
     format!(
         "{XML_DECLARATION}\
@@ -696,10 +743,12 @@ pub(crate) fn get_worksheet_xml(
         {pane}\
     </sheetView>\
   </sheetViews>\
+  {sheet_format}\
   {cols}\
   <sheetData>\
   {sheet_data}\
   </sheetData>\
+  {auto_filter_section}\
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\

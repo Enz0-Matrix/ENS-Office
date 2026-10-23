@@ -59,6 +59,97 @@ fn use_group_separator(use_thousands: bool, digit_index: i32, group_sizes: &str)
     false
 }
 
+/// ENS-Office: the genitive month name ("марта") for locales that need it
+/// after a day number; `None` for the others.
+fn genitive_month(locale: &Locale, month: usize) -> Option<&'static str> {
+    const RU: [&str; 12] = [
+        "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    ];
+    if locale.dates.months.first().map(|m| m.to_lowercase()) == Some("январь".to_string()) {
+        RU.get(month.checked_sub(1)?).copied()
+    } else {
+        None
+    }
+}
+
+/// ENS-Office: round to `digits` decimals, halves away from zero, working on
+/// the shortest decimal representation (so 2.345 is "2.345", not 2.34499…).
+pub(crate) fn round_half_away(value: f64, digits: i32) -> f64 {
+    if !value.is_finite() || !(0..=15).contains(&digits) {
+        return value;
+    }
+    let clean = to_precision(value, 15);
+    let s = format!("{}", clean.abs());
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => return clean,
+    };
+    let d = digits as usize;
+    if frac_part.len() <= d {
+        return clean;
+    }
+    let mut kept: Vec<u8> = int_part.bytes().chain(frac_part.bytes().take(d)).map(|b| b - b'0').collect();
+    if frac_part.as_bytes()[d] >= b'5' {
+        let mut i = kept.len();
+        loop {
+            if i == 0 {
+                kept.insert(0, 1);
+                break;
+            }
+            i -= 1;
+            if kept[i] == 9 {
+                kept[i] = 0;
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    let digits_str: String = kept.iter().map(|d| (b'0' + d) as char).collect();
+    let split = digits_str.len() - d;
+    let text = if d == 0 { digits_str } else { format!("{}.{}", &digits_str[..split], &digits_str[split..]) };
+    let rounded = text.parse::<f64>().unwrap_or(clean);
+    if clean < 0.0 { -rounded } else { rounded }
+}
+
+/// ENS-Office: a format code typed in a formula (TEXT) in the locale's notation —
+/// "# ##0,00" in Russian Excel — to the stored notation "#,##0.00". Text in
+/// quotes and escaped characters are left alone.
+pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
+    if locale.numbers.symbols.decimal != "," {
+        return code.to_string();
+    }
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    let mut in_quotes = false;
+    let is_digit = |c: Option<&char>| matches!(c, Some('0' | '#' | '?'));
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            in_quotes = !in_quotes;
+            out.push(c);
+        } else if in_quotes {
+            out.push(c);
+        } else if c == '\\' && i + 1 < chars.len() {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 1;
+        } else if c == ',' {
+            out.push('.');
+        } else if c == '.' {
+            out.push(',');
+        } else if (c == ' ' || c == '\u{a0}') && is_digit(chars.get(i.wrapping_sub(1)).filter(|_| i > 0)) && is_digit(chars.get(i + 1)) {
+            // a space between digit placeholders is the thousands separator
+            out.push(',');
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
 pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Formatted {
     let mut parser = Parser::new(format);
     parser.parse();
@@ -178,8 +269,22 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let minutes = ((time_fract * 24.0 - hours) * 60.0).floor();
             let seconds = ((((time_fract * 24.0 - hours) * 60.0) - minutes) * 60.0).round();
             let date = from_excel_date(value as i64).ok();
+            // ENS-Office: in Russian a month after the day number is in the
+            // genitive ("15 марта 2023"), alone it is the nominative ("Март 2023").
+            let with_day = tokens.iter().any(|t| matches!(t, TextToken::Day | TextToken::DayPadded));
             for token in tokens {
                 match token {
+                    TextToken::MonthName if with_day && genitive_month(locale, 1).is_some() => {
+                        let Some(d) = date else {
+                            return Formatted {
+                                text: "#VALUE!".to_owned(),
+                                color: None,
+                                error: Some(format!("Invalid date value: '{value}'")),
+                            };
+                        };
+                        let name = genitive_month(locale, d.month() as usize).unwrap_or_default();
+                        text = format!("{text}{name}");
+                    }
                     TextToken::Literal(c) => {
                         text = format!("{text}{c}");
                     }
@@ -441,10 +546,15 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let tokens = &p.tokens;
             value = value * 100.0_f64.powi(p.percent) / (1000.0_f64.powi(p.comma));
             // p.precision is the number of significant digits _after_ the decimal point
-            value = to_precision(
-                value,
-                (p.precision as usize) + format!("{}", value.abs().floor()).len(),
-            );
+            // ENS-Office: Excel rounds halves away from zero on the decimal
+            // digits (1234,5 → "1235"; 2,345 → "2,35"); Rust's formatting
+            // rounds exact binary ties to even.
+            value = if p.is_scientific {
+                // in scientific notation the precision is that of the mantissa
+                to_precision(value, (p.precision as usize) + format!("{}", value.abs().floor()).len())
+            } else {
+                round_half_away(value, p.precision)
+            };
             let mut value_abs = value.abs();
             let mut exponent_part: Vec<char> = vec![];
             let mut exponent_is_negative = value_abs < 10.0;
@@ -922,6 +1032,10 @@ fn parse_number(
     }
     let mut chars = String::from("");
     let mut group_separator_index = Vec::new();
+    // ENS-Office: where the group separator is a (non-breaking) space, as in
+    // Russian, people type and paste ordinary spaces: "1 234 567,89".
+    let spaced = group_separator.is_whitespace();
+    let is_group = |x: char| x == group_separator || (spaced && (x == ' ' || x == '\u{a0}' || x == '\u{202f}'));
     // get the sign
     let sign = if characters[0] == '-' {
         position += 1;
@@ -937,7 +1051,7 @@ fn parse_number(
         return Err("Cannot parse number".to_string());
     }
 
-    if characters[position] == group_separator {
+    if is_group(characters[position]) {
         return Err("Cannot parse number".to_string());
     }
 
@@ -946,7 +1060,7 @@ fn parse_number(
         let x = characters[position];
         if x.is_ascii_digit() {
             chars.push(x);
-        } else if x == group_separator {
+        } else if is_group(x) {
             group_separator_index.push(chars.len());
         } else {
             break;

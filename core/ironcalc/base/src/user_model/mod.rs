@@ -6,6 +6,7 @@ mod border_utils;
 mod clipboard;
 mod common;
 mod conditional_formatting;
+mod ens_tools;
 pub(crate) mod history;
 mod links;
 mod merged_cells;
@@ -21,3 +22,4 @@ pub use ui::SelectedView;
 
 pub use clipboard::ClipboardData;
 pub use common::BorderArea;
+pub use ens_tools::{parse_filter_range, Blanks, FindOptions, FoundCell, FILTER_DATABASE};

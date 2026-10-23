@@ -10,7 +10,8 @@ fn alignment_default() {
         Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Bottom,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         }
     );
 

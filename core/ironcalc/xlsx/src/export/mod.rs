@@ -148,8 +148,23 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         let max_row = dimension.max_row;
         let sheet_dimension_str = &format!("{column_min_str}{min_row}:{column_max_str}{max_row}");
         let is_sheet_selected = selected_sheet as usize == sheet_index;
+        // ENS-Office: the autofilter range lives in the sheet's _xlnm._FilterDatabase name.
+        let auto_filter = workbook
+            .defined_names
+            .iter()
+            .find(|d| d.sheet_id == Some(worksheet.sheet_id) && d.name.eq_ignore_ascii_case(ironcalc_base::FILTER_DATABASE))
+            .and_then(|d| ironcalc_base::parse_filter_range(&d.formula))
+            .map(|(r1, c1, r2, c2)| {
+                format!(
+                    "<autoFilter ref=\"{}{r1}:{}{r2}\"/>",
+                    number_to_column(c1).unwrap_or_default(),
+                    number_to_column(c2).unwrap_or_default()
+                )
+            })
+            .unwrap_or_default();
         zip.write_all(
             worksheets::get_worksheet_xml(
+                &auto_filter,
                 worksheet,
                 &model.parsed_formulas[sheet_index],
                 sheet_dimension_str,

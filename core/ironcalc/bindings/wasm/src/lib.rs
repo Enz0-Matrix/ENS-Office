@@ -14,7 +14,7 @@ use ironcalc_base::{
     },
     types::{CellType, Color, Link, Style, StyleIncludes},
     worksheet::NavigationDirection,
-    BorderArea, ClipboardData, UserModel as BaseModel,
+    Blanks, BorderArea, ClipboardData, FindOptions, FoundCell, UserModel as BaseModel,
 };
 
 fn to_js_error(error: String) -> JsError {
@@ -422,6 +422,85 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: группы строк: [строка, уровень, свёрнуто 0/1, …].
+    #[wasm_bindgen(js_name = "getRowOutline")]
+    pub fn get_row_outline(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_row_outline(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: группы столбцов: [столбец, уровень, свёрнуто 0/1, …].
+    #[wasm_bindgen(js_name = "getColumnOutline")]
+    pub fn get_column_outline(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_column_outline(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: уровень группы строк r1..r2.
+    #[wasm_bindgen(js_name = "setRowsOutline")]
+    pub fn set_rows_outline(&mut self, sheet: u32, r1: i32, r2: i32, level: u8) -> Result<(), JsError> {
+        self.model.set_rows_outline(sheet, r1, r2, level).map_err(to_js_error)
+    }
+
+    /// ENS-Office: метка «группа свёрнута» у строки рядом с группой.
+    #[wasm_bindgen(js_name = "setRowCollapsed")]
+    pub fn set_row_collapsed(&mut self, sheet: u32, row: i32, collapsed: bool) -> Result<(), JsError> {
+        self.model.set_row_collapsed(sheet, row, collapsed).map_err(to_js_error)
+    }
+
+    /// ENS-Office: уровень группы столбцов c1..c2.
+    #[wasm_bindgen(js_name = "setColumnsOutline")]
+    pub fn set_columns_outline(&mut self, sheet: u32, c1: i32, c2: i32, level: u8) -> Result<(), JsError> {
+        self.model.set_columns_outline(sheet, c1, c2, level).map_err(to_js_error)
+    }
+
+    /// ENS-Office: метка «группа свёрнута» у столбца рядом с группой.
+    #[wasm_bindgen(js_name = "setColumnCollapsed")]
+    pub fn set_column_collapsed(&mut self, sheet: u32, column: i32, collapsed: bool) -> Result<(), JsError> {
+        self.model.set_column_collapsed(sheet, column, collapsed).map_err(to_js_error)
+    }
+
+    /// ENS-Office: новые книги — по центру по вертикали (формат по умолчанию).
+    #[wasm_bindgen(js_name = "setDefaultVerticalCenter")]
+    pub fn set_default_vertical_center(&mut self) {
+        self.model.set_default_vertical_center();
+    }
+
+    /// ENS-Office: метка в истории отмены — для склейки шагов.
+    #[wasm_bindgen(js_name = "undoMark")]
+    pub fn undo_mark(&self) -> u32 {
+        self.model.undo_mark() as u32
+    }
+
+    /// ENS-Office: все шаги после метки — одной отменой (действие на несколько диапазонов).
+    #[wasm_bindgen(js_name = "mergeUndoSince")]
+    pub fn merge_undo_since(&mut self, mark: u32) {
+        self.model.merge_undo_since(mark as usize);
+    }
+
+    /// ENS-Office: значение ячейки в формате `code`, книга не меняется (образец в «Формате ячеек»).
+    #[wasm_bindgen(js_name = "formatCellValueAs")]
+    pub fn format_cell_value_as(&self, sheet: u32, row: i32, column: i32, code: &str) -> Result<String, JsError> {
+        self.model.format_cell_value_as(sheet, row, column, code).map_err(to_js_error)
+    }
+
+    /// ENS-Office: цвет из числового формата ([Red] и т. п.): номер палитры Excel 1..56, 0 — нет.
+    #[wasm_bindgen(js_name = "getFormattedCellColor")]
+    pub fn get_formatted_cell_color(&self, sheet: u32, row: i32, column: i32) -> Result<i32, JsError> {
+        self.model.get_formatted_cell_color(sheet, row, column).map_err(to_js_error)
+    }
+
+    /// ENS-Office: «Вставить вырезанные строки» — ровно на `delta` строк,
+    /// с высотой и скрытием (одна отмена).
+    #[wasm_bindgen(js_name = "moveRowsExact")]
+    pub fn move_rows_exact(&mut self, sheet: u32, row: i32, row_count: i32, delta: i32) -> Result<(), JsError> {
+        self.model.move_rows_exact(sheet, row, row_count, delta).map_err(to_js_error)
+    }
+
+    /// ENS-Office: «Вставить вырезанные столбцы» — с шириной и скрытием.
+    #[wasm_bindgen(js_name = "moveColumnsExact")]
+    pub fn move_columns_exact(&mut self, sheet: u32, column: i32, column_count: i32, delta: i32) -> Result<(), JsError> {
+        self.model.move_columns_exact(sheet, column, column_count, delta).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "setRowsHeight")]
     pub fn set_rows_height(
         &mut self,
@@ -585,6 +664,111 @@ impl Model {
     #[wasm_bindgen(js_name = "setRecognizeDates")]
     pub fn set_recognize_dates(&mut self, on: bool) {
         self.model.set_recognize_dates(on);
+    }
+
+    /// ENS-Office: autofilter range of the sheet [row1, column1, row2, column2] (empty: none).
+    #[wasm_bindgen(js_name = "getAutoFilter")]
+    pub fn get_auto_filter(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        Ok(self.model.get_auto_filter(sheet).map_err(to_js_error)?.map(|r| r.to_vec()).unwrap_or_default())
+    }
+
+    /// ENS-Office: set the autofilter range (an empty array removes it).
+    #[wasm_bindgen(js_name = "setAutoFilter")]
+    pub fn set_auto_filter(&mut self, sheet: u32, range: Vec<i32>) -> Result<(), JsError> {
+        let r = (range.len() == 4).then(|| [range[0], range[1], range[2], range[3]]);
+        self.model.set_auto_filter(sheet, r).map_err(to_js_error)
+    }
+
+    /// ENS-Office: used range [min_row, min_column, max_row, max_column].
+    #[wasm_bindgen(js_name = "getSheetDimension")]
+    pub fn get_sheet_dimension(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        self.model.get_sheet_dimension(sheet).map(|d| d.to_vec()).map_err(to_js_error)
+    }
+
+    /// ENS-Office: paste the values of the source range at the selected cell.
+    #[wasm_bindgen(js_name = "pasteValues")]
+    pub fn paste_values(
+        &mut self,
+        source_sheet: u32,
+        #[wasm_bindgen(unchecked_param_type = "[number, number, number, number]")] source_range: JsValue,
+        transpose: bool,
+    ) -> Result<(), JsError> {
+        let range: (i32, i32, i32, i32) =
+            serde_wasm_bindgen::from_value(source_range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.paste_values(source_sheet, range, transpose).map_err(to_js_error)
+    }
+
+    /// ENS-Office: sort by several columns. `keys` = [column, descending (0/1), …];
+    /// `blanks`: 0 — at the end, 1 — at the beginning, 2 — as zero.
+    /// `visible_only`: hidden (filtered out) rows stay in place.
+    #[wasm_bindgen(js_name = "sortRangeBy")]
+    pub fn sort_range_by(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] area: JsValue,
+        keys: Vec<i32>,
+        blanks: u8,
+        visible_only: bool,
+    ) -> Result<(), JsError> {
+        let area: Area = serde_wasm_bindgen::from_value(area).map_err(|e| to_js_error(e.to_string()))?;
+        let keys: Vec<(i32, bool)> = keys.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1] != 0)).collect();
+        let blanks = match blanks { 1 => Blanks::First, 2 => Blanks::AsZero, _ => Blanks::Last };
+        self.model.sort_range_by_rows(&area, &keys, blanks, visible_only).map_err(to_js_error)
+    }
+
+    /// ENS-Office: rows with a non-default height: [row, height, …] (hidden — 0).
+    #[wasm_bindgen(js_name = "getRowLayout")]
+    pub fn get_row_layout(&self, sheet: u32) -> Result<Vec<f64>, JsError> {
+        self.model.get_row_layout(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: sort the rows of `area` by `key_column` (one undo step).
+    #[wasm_bindgen(js_name = "sortRange")]
+    pub fn sort_range(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] area: JsValue,
+        key_column: i32,
+        descending: bool,
+    ) -> Result<(), JsError> {
+        let area: Area = serde_wasm_bindgen::from_value(area).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.sort_range(&area, key_column, descending).map_err(to_js_error)
+    }
+
+    /// ENS-Office: cells containing `text` (shown value, or formula when `in_formulas`).
+    /// `sheet` < 0 searches the whole workbook.
+    #[wasm_bindgen(js_name = "findAll", unchecked_return_type = "{ sheet: number; row: number; column: number }[]")]
+    pub fn find_all(
+        &self,
+        text: &str,
+        match_case: bool,
+        whole_cell: bool,
+        in_formulas: bool,
+        sheet: i32,
+    ) -> Result<JsValue, JsError> {
+        let options = FindOptions { match_case, whole_cell, in_formulas, sheet: u32::try_from(sheet).ok() };
+        let found = self.model.find_all(text, options).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&found).map_err(|e| to_js_error(e.to_string()))
+    }
+
+    /// ENS-Office: replace in the content of every match (one undo step);
+    /// with `only_row` > 0 — only in that cell of `sheet` ("Заменить").
+    /// Returns how many cells changed.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = "replaceAll")]
+    pub fn replace_all(
+        &mut self,
+        text: &str,
+        with: &str,
+        match_case: bool,
+        whole_cell: bool,
+        sheet: i32,
+        only_row: i32,
+        only_column: i32,
+    ) -> Result<u32, JsError> {
+        let options = FindOptions { match_case, whole_cell, in_formulas: true, sheet: u32::try_from(sheet).ok() };
+        let cells = (only_row > 0 && sheet >= 0)
+            .then(|| vec![FoundCell { sheet: sheet as u32, row: only_row, column: only_column }]);
+        let n = self.model.replace_all(text, with, options, cells).map_err(to_js_error)?;
+        Ok(n as u32)
     }
 
     #[wasm_bindgen(js_name = "getRecognizeDates")]
