@@ -35,7 +35,12 @@ pub(crate) fn get_alignment(alignment: &Alignment) -> String {
     } else {
         "".to_string()
     };
-    format!("<alignment{wrap_text}{horizontal}{vertical}/>")
+    let rotation = if alignment.text_rotation != 0 {
+        format!(" textRotation=\"{}\"", alignment.text_rotation)
+    } else {
+        "".to_string()
+    };
+    format!("<alignment{wrap_text}{horizontal}{vertical}{rotation}/>")
 }
 
 fn get_border_xml_inner(border: &Option<BorderItem>, name: &str) -> String {

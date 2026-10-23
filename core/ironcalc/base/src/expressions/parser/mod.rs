@@ -982,6 +982,17 @@ impl<'a> Parser<'a> {
                             args,
                         };
                     }
+                    // ENS-Office: English names work in every language, as in
+                    // a localized Excel (=SUM and =СУММ in a Russian workbook).
+                    if let Some(function_kind) = crate::language::get_default_language()
+                        .functions
+                        .lookup(name.trim_start_matches("_xlfn._xlws.").trim_start_matches("_xlfn."))
+                    {
+                        return Node::FunctionKind {
+                            kind: function_kind,
+                            args,
+                        };
+                    }
                     return Node::NamedFunctionKind {
                         name: name.trim_start_matches("_xlpm.").to_string(),
                         args,

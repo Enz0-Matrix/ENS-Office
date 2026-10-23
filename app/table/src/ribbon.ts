@@ -3,13 +3,22 @@
 
 import { command, keyLabel, run } from './commands';
 import { ICONS } from './icons';
+import { OFFICE_FONTS } from './fonts';
+
+/** Вызывается после перерисовки вкладки: кнопки с живым видом (например, «Границы») обновляют значок. */
+let afterDraw: () => void = () => {};
+export function onRibbonDrawn(f: () => void): void { afterDraw = f; f(); }
 
 export function icon(name: string, size: 20 | 24 = 20): string {
   return ICONS[`${name}_${size}`] ?? ICONS[`${name}_${size === 20 ? 24 : 20}`] ?? '';
 }
 
 export type RibbonItem =
-  | { type: 'large' | 'small'; command: string; icon: string; label?: string; module?: string }
+  | { type: 'large' | 'medium' | 'small'; command: string; icon: string; label?: string; module?: string }
+  /** Кнопка с памятью: основная часть повторяет последний выбор, стрелка — меню (command + ':menu'). */
+  | { type: 'split'; command: string; icon: string }
+  /** Кнопка с палитрой: основная часть применяет последний цвет, стрелка открывает палитру. */
+  | { type: 'color'; command: string; icon: string; kind: 'fill' | 'font' }
   | { type: 'select'; command: string; options: { value: string; label: string }[]; width?: number }
   | { type: 'separator' };
 
@@ -26,18 +35,87 @@ export interface RibbonTab {
 
 export const NUMBER_FORMATS = [
   { value: 'general', label: 'Общий' },
-  { value: '#,##0.00', label: 'Числовой' },
-  { value: '#,##0.00 "₽"', label: 'Денежный' },
+  { value: '#,##0.00;[Red]-#,##0.00', label: 'Числовой' },
+  { value: '#,##0.00 "₽";[Red]-#,##0.00 "₽"', label: 'Денежный' },
   { value: 'dd.mm.yyyy', label: 'Краткая дата' },
+  { value: 'd mmmm yyyy', label: 'Длинная дата' },
+  { value: 'hh:mm:ss', label: 'Время' },
   { value: '0.00%', label: 'Процентный' },
+  { value: '0.00E+00', label: 'Экспоненциальный' },
   { value: '@', label: 'Текстовый' },
+  /** Не формат, а окно «Формат ячеек». */
+  { value: ':more', label: 'Другие форматы…' },
 ];
+
+export const FONTS = OFFICE_FONTS.map((f) => ({ value: f, label: f }));
+
+export const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]
+  .map((n) => ({ value: String(n), label: String(n) }));
+
+/** Цвета темы Office (основной ряд) — оттенки строятся от них, как в палитре Excel. */
+const THEME = ['#FFFFFF', '#000000', '#E7E6E6', '#44546A', '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
+const STANDARD = ['#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#002060', '#7030A0'];
+
+function mixColor(hex: string, toward: number, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c + (toward - c) * amount));
+  return '#' + ch.map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/** Последний выбранный цвет: основная часть кнопки применяет его. */
+export const lastColor = { fill: '#FFFF00', font: '#FF0000' };
+
+const palette = document.createElement('div');
+palette.className = 'palette';
+palette.hidden = true;
+document.body.append(palette);
+document.addEventListener('mousedown', (e) => {
+  const t = e.target as HTMLElement;
+  if (!palette.hidden && !palette.contains(t) && !t.closest('.split-arrow')) palette.hidden = true;
+});
+
+function openPalette(anchor: HTMLElement, kind: 'fill' | 'font', pick: (color: string) => void): void {
+  const swatch = (color: string) => {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.style.background = color;
+    b.title = color;
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); palette.hidden = true; pick(color); });
+    return b;
+  };
+  palette.replaceChildren();
+  const none = document.createElement('button');
+  none.className = 'palette-none';
+  none.textContent = kind === 'fill' ? 'Нет заливки' : 'Авто';
+  none.addEventListener('mousedown', (e) => { e.preventDefault(); palette.hidden = true; pick(''); });
+  const title = (t: string) => { const d = document.createElement('div'); d.className = 'palette-title'; d.textContent = t; return d; };
+  const grid = document.createElement('div');
+  grid.className = 'palette-grid';
+  for (const c of THEME) grid.append(swatch(c));
+  for (const amount of [0.8, 0.6, 0.4]) for (const c of THEME) grid.append(swatch(mixColor(c, 255, amount)));
+  for (const amount of [0.25, 0.5]) for (const c of THEME) grid.append(swatch(mixColor(c, 0, amount)));
+  const std = document.createElement('div');
+  std.className = 'palette-grid';
+  for (const c of STANDARD) std.append(swatch(c));
+  palette.append(none, title('Цвета темы'), grid, title('Стандартные цвета'), std);
+  const r = anchor.getBoundingClientRect();
+  palette.style.left = `${r.left}px`;
+  palette.style.top = `${r.bottom + 2}px`;
+  palette.hidden = false;
+}
 
 export const TABS: RibbonTab[] = [
   {
     id: 'home',
     label: 'Главная',
     groups: [
+      {
+        name: 'Отмена',
+        items: [
+          { type: 'medium', command: 'edit.undo', icon: 'arrow_undo' },
+          { type: 'medium', command: 'edit.redo', icon: 'arrow_redo' },
+        ],
+      },
       {
         name: 'Буфер обмена',
         items: [
@@ -49,30 +127,55 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Шрифт',
         items: [
+          { type: 'select', command: 'format.fontName', options: FONTS, width: 140 },
+          { type: 'select', command: 'format.fontSize', options: FONT_SIZES, width: 56 },
           { type: 'small', command: 'format.bold', icon: 'text_bold' },
           { type: 'small', command: 'format.italic', icon: 'text_italic' },
           { type: 'small', command: 'format.underline', icon: 'text_underline' },
-          { type: 'small', command: 'format.fill', icon: 'paint_bucket' },
-          { type: 'small', command: 'format.fontColor', icon: 'text_color' },
+          { type: 'color', command: 'format.fill', icon: 'paint_bucket', kind: 'fill' },
+          { type: 'color', command: 'format.fontColor', icon: 'text_color', kind: 'font' },
         ],
       },
       {
         name: 'Выравнивание',
         items: [
-          { type: 'small', command: 'align.left', icon: 'text_align_left' },
-          { type: 'small', command: 'align.center', icon: 'text_align_center' },
-          { type: 'small', command: 'align.right', icon: 'text_align_right' },
+          { type: 'medium', command: 'align.top', icon: 'align_top' },
+          { type: 'medium', command: 'align.middle', icon: 'align_middle' },
+          { type: 'medium', command: 'align.bottom', icon: 'align_bottom' },
+          { type: 'medium', command: 'align.left', icon: 'text_align_left' },
+          { type: 'medium', command: 'align.center', icon: 'text_align_center' },
+          { type: 'medium', command: 'align.right', icon: 'text_align_right' },
+          { type: 'medium', command: 'format.wrap', icon: 'text_wrap' },
+          { type: 'medium', command: 'format.rotate', icon: 'text_direction_rotate_90_left' },
+          { type: 'medium', command: 'format.merge', icon: 'merge' },
+          { type: 'split', command: 'format.borders', icon: 'border_all' },
         ],
       },
       {
         name: 'Число',
-        items: [{ type: 'select', command: 'format.number', options: NUMBER_FORMATS, width: 130 }],
+        items: [
+          { type: 'select', command: 'format.number', options: NUMBER_FORMATS, width: 150 },
+          { type: 'medium', command: 'format.currency', icon: 'num_currency' },
+          { type: 'medium', command: 'format.percent', icon: 'num_percent' },
+          { type: 'medium', command: 'format.grouping', icon: 'num_grouping' },
+          { type: 'medium', command: 'format.decimalsMore', icon: 'num_dec_more' },
+          { type: 'medium', command: 'format.decimalsLess', icon: 'num_dec_less' },
+          { type: 'medium', command: 'format.cells', icon: 'num_format' },
+        ],
+      },
+      {
+        name: 'Стили',
+        items: [{ type: 'large', command: 'format.conditional', icon: 'color', label: 'Условное форматирование' }],
       },
       {
         name: 'Редактирование',
         items: [
-          { type: 'small', command: 'edit.autosum', icon: 'math_formula' },
-          { type: 'small', command: 'edit.clear', icon: 'eraser' },
+          { type: 'medium', command: 'edit.autosum', icon: 'autosum' },
+          { type: 'medium', command: 'edit.insertFunction', icon: 'math_formula' },
+          { type: 'medium', command: 'edit.clear', icon: 'eraser' },
+          { type: 'medium', command: 'data.sortAsc', icon: 'sort_asc' },
+          { type: 'medium', command: 'data.filter', icon: 'filter' },
+          { type: 'medium', command: 'edit.find', icon: 'search' },
         ],
       },
     ],
@@ -85,14 +188,50 @@ export const TABS: RibbonTab[] = [
     ],
   },
   {
+    id: 'data',
+    label: 'Данные',
+    groups: [
+      {
+        name: 'Сортировка и фильтр',
+        items: [
+          { type: 'large', command: 'data.sortAsc', icon: 'sort_asc', label: 'От А до Я' },
+          { type: 'large', command: 'data.sortDesc', icon: 'sort_desc', label: 'От Я до А' },
+          { type: 'large', command: 'data.sortCustom', icon: 'arrow_sort', label: 'Сортировка…' },
+          { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
+        ],
+      },
+      {
+        name: 'Структура',
+        items: [
+          { type: 'large', command: 'data.group', icon: 'group', label: 'Сгруппировать' },
+          { type: 'large', command: 'data.ungroup', icon: 'group_list', label: 'Разгруппировать' },
+        ],
+      },
+      {
+        name: 'Поиск',
+        items: [
+          { type: 'large', command: 'edit.find', icon: 'search', label: 'Найти' },
+          { type: 'large', command: 'edit.replace', icon: 'arrow_sort', label: 'Заменить' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'formulas',
     label: 'Формулы',
     groups: [
       {
+        name: 'Библиотека функций',
+        items: [
+          { type: 'large', command: 'edit.insertFunction', icon: 'math_formula', label: 'Вставить функцию' },
+          { type: 'large', command: 'edit.autosum', icon: 'autosum', label: 'Автосумма' },
+        ],
+      },
+      {
         name: 'Зависимости формул',
         items: [
           { type: 'large', command: 'nav.precedents', icon: 'arrow_previous', label: 'Влияющие ячейки' },
-          { type: 'large', command: 'nav.back', icon: 'arrow_undo', label: 'Назад' },
+          { type: 'large', command: 'nav.back', icon: 'location', label: 'Вернуться к ячейке' },
         ],
       },
     ],
@@ -106,6 +245,37 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'view.focusCell', icon: 'target', label: 'Фокус ячейки' },
           { type: 'large', command: 'view.gridlines', icon: 'grid', label: 'Сетка' },
+        ],
+      },
+      {
+        name: 'Окно',
+        items: [{ type: 'large', command: 'view.freeze', icon: 'table_freeze', label: 'Закрепить области' }],
+      },
+      {
+        name: 'Оформление',
+        items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }],
+      },
+      {
+        name: 'Скрытое',
+        items: [{
+          type: 'select', command: 'view.hidden', width: 190,
+          options: [
+            { value: 'ask', label: 'Скрытое: спрашивать' },
+            { value: 'excel', label: 'Скрытое: как в Excel' },
+            { value: 'all', label: 'Скрытое: всегда со всеми' },
+            { value: 'visible', label: 'Скрытое: только видимые' },
+          ],
+        }],
+      },
+      {
+        name: 'Ввод',
+        items: [
+          { type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' },
+          { type: 'large', command: 'options.expandEditor', icon: 'arrow_autofit_width', label: 'Расширять поле ввода' },
+          {
+            type: 'select', command: 'options.decimal', width: 150,
+            options: [{ value: 'comma', label: 'Дробная часть: 0,5' }, { value: 'point', label: 'Дробная часть: 0.5' }],
+          },
         ],
       },
     ],
@@ -141,6 +311,8 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       g.className = 'group';
       const items = document.createElement('div');
       items.className = 'items';
+      // Группа без мелких кнопок — в один ряд: над и под большими кнопками ничего нет.
+      if (group.items.every((i) => i.type !== 'small' && i.type !== 'medium' && i.type !== 'color')) items.classList.add('row');
       for (const item of group.items) items.append(renderItem(item));
       const name = document.createElement('div');
       name.className = 'group-name';
@@ -149,6 +321,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       bodyEl.append(g);
     }
     refresh();
+    afterDraw();
   }
 
   function renderItem(item: RibbonItem): HTMLElement {
@@ -158,6 +331,31 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       return s;
     }
     const cmd = command(item.command);
+    if (item.type === 'color') {
+      const wrap = document.createElement('div');
+      wrap.className = 'split';
+      const main = document.createElement('button');
+      main.className = 'btn small color-main';
+      main.title = cmd?.label ?? '';
+      main.innerHTML = `${icon(item.icon, 20)}<i class="color-bar"></i>`;
+      const bar = main.querySelector<HTMLElement>('.color-bar')!;
+      bar.style.background = lastColor[item.kind];
+      main.addEventListener('mousedown', (e) => e.preventDefault());
+      main.addEventListener('click', () => run(item.command, lastColor[item.kind]));
+      const arrow = document.createElement('button');
+      arrow.className = 'btn split-arrow';
+      arrow.title = `${cmd?.label ?? ''}: выбрать цвет`;
+      arrow.textContent = '▾';
+      arrow.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        openPalette(wrap, item.kind, (color) => {
+          if (color) { lastColor[item.kind] = color; bar.style.background = color; }
+          run(item.command, color);
+        });
+      });
+      wrap.append(main, arrow);
+      return wrap;
+    }
     if (item.type === 'select') {
       const sel = document.createElement('select');
       sel.className = 'ribbon-select';
@@ -168,11 +366,35 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
       sel.dataset.command = item.command;
       return sel;
     }
+    if (item.type === 'split') {
+      const wrap = document.createElement('div');
+      wrap.className = 'split medium';
+      const main = document.createElement('button');
+      main.className = 'btn medium';
+      main.title = cmd?.label ?? '';
+      main.innerHTML = icon(item.icon, 24);
+      main.dataset.command = item.command;
+      main.addEventListener('mousedown', (e) => e.preventDefault());
+      main.addEventListener('click', () => run(item.command));
+      const arrow = document.createElement('button');
+      arrow.className = 'btn split-arrow';
+      arrow.title = `${cmd?.label ?? ''}: выбрать`;
+      arrow.textContent = '▾';
+      // Меню — по click: на mousedown его тут же закрывает общий обработчик «щелчок мимо меню».
+      arrow.addEventListener('mousedown', (e) => e.preventDefault());
+      arrow.addEventListener('click', () => {
+        const r = arrow.getBoundingClientRect();
+        run(`${item.command}:menu`, `${Math.round(r.left)},${Math.round(r.bottom + 2)}`);
+      });
+      wrap.append(main, arrow);
+      return wrap;
+    }
     const b = document.createElement('button');
-    b.className = item.type === 'large' ? 'btn large' : 'btn small';
+    b.className = `btn ${item.type}`;
+    b.dataset.command = item.command;
     const keys = cmd?.keys?.length ? ` (${keyLabel(cmd.keys[0])})` : '';
     b.title = `${cmd?.label ?? item.command}${keys}`;
-    b.innerHTML = icon(item.icon, item.type === 'large' ? 24 : 20) +
+    b.innerHTML = icon(item.icon, item.type === 'small' ? 20 : 24) +
       (item.type === 'large' ? `<span>${item.label ?? cmd?.label ?? ''}</span>` : '');
     b.addEventListener('mousedown', (e) => e.preventDefault()); // не отнимать фокус у сетки
     b.addEventListener('click', () => run(item.command));

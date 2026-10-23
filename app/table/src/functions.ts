@@ -1,5 +1,5 @@
-// Справочник функций для поиска (§6). Полный список и русские имена в движке —
-// задание 6 в docs/01-tasks-for-assistants.md.
+// Справочник функций для поиска (§6): самые нужные с описаниями. Русские имена
+// всех 497 функций знает движок (core/ironcalc/generate_language/ru_names.py).
 
 export interface FunctionInfo {
   ru: string;

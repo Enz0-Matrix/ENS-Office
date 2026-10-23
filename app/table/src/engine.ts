@@ -10,17 +10,60 @@ export interface Area {
 
 export type Color = string | [number, number] | undefined;
 
+export interface BorderItem { style: string; color?: Color }
+
+export interface CellBorder { top?: BorderItem; bottom?: BorderItem; left?: BorderItem; right?: BorderItem; diagonal?: BorderItem }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
   font: { b: boolean; i: boolean; u: boolean; strike: boolean; sz: number; color?: Color; name: string };
-  alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean };
+  alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean; text_rotation?: number };
+  border?: CellBorder;
 }
+
+/** Стиль ячейки с учётом условного форматирования. */
+export interface ExtendedStyle {
+  style: CellStyle;
+  data_bar?: { positive_color?: Color; negative_color?: Color; is_gradient: boolean; value: number; axis_position: number; show_value: boolean } | null;
+  /** Набор значков: какой значок и каким цветом. */
+  icon?: { icon: string; color?: Color; show_value: boolean } | null;
+  /** Оценка: count закрашенных значков из max. */
+  rating?: { icon: string; count: number; max: number; color?: Color; show_value: boolean } | null;
+}
+
+/** Формат правила условного форматирования (разница к стилю ячейки). */
+export interface Dxf {
+  font?: { b?: boolean; i?: boolean; u?: boolean; strike?: boolean; color?: Color } | null;
+  fill?: { color?: Color } | null;
+  border?: unknown;
+  num_fmt?: unknown;
+  alignment?: unknown;
+}
+
+/** Правило условного форматирования, как его хранит движок (поле type — вид правила). */
+export type CfRule = { type: string } & Record<string, unknown>;
+
+export interface CfView { index: number; range: string; cf_rule: CfRule; priority: number }
+
+export interface MergedCell { row: number; column: number; width: number; height: number }
+
+/** Какие границы ставить на выделение. */
+export type BorderType = 'All' | 'Inner' | 'Outer' | 'Top' | 'Right' | 'Bottom' | 'Left' | 'CenterH' | 'CenterV' | 'None';
 
 export interface SheetProps {
   name: string;
   state: string;
   sheet_id: number;
+  color?: string;
+}
+
+/** Скопированные ячейки во внутреннем виде движка: формулы, стили, ссылки. */
+export interface EngineClipboard {
+  csv: string;
+  data: unknown;
+  sheet: number;
+  range: [number, number, number, number];
 }
 
 /** Методы движка, которыми пользуется интерфейс. */
@@ -30,7 +73,78 @@ export interface Model {
   getCellContent(sheet: number, row: number, column: number): string;
   getCellType(sheet: number, row: number, column: number): number;
   getColumnWidth(sheet: number, column: number): number;
-  getCellStyle(sheet: number, row: number, column: number): { style: CellStyle };
+  getRowHeight(sheet: number, row: number): number;
+  getMergedCells(sheet: number): MergedCell[];
+  /** Занятая часть листа: [первая строка, первый столбец, последняя строка, последний столбец]. */
+  getSheetDimension(sheet: number): number[];
+  /** Строки с нестандартной высотой: [строка, высота, …] (скрытые — 0). */
+  getRowLayout(sheet: number): Float64Array;
+  /** Сортировка по нескольким столбцам: keys = [столбец, по убыванию 0/1, …]; blanks: 0 — в конце, 1 — в начале, 2 — как ноль;
+   *  visibleOnly — скрытые строки (отобранные фильтром) остаются на местах. */
+  sortRangeBy(area: Area, keys: number[], blanks: number, visibleOnly: boolean): void;
+  getAutoFilter(sheet: number): number[];
+  setAutoFilter(sheet: number, range: number[]): void;
+  sortRange(area: Area, keyColumn: number, descending: boolean): void;
+  /** Условное форматирование: правила листа, сначала главные; index — для изменения и удаления. */
+  getConditionalFormattingList(sheet: number): CfView[];
+  getDxfForConditionalFormatting(sheet: number, index: number): Dxf | null;
+  addConditionalFormatting(sheet: number, range: string, rule: CfRule): void;
+  updateConditionalFormatting(sheet: number, index: number, range: string, rule: CfRule): void;
+  deleteConditionalFormatting(sheet: number, index: number): void;
+  raiseConditionalFormattingPriority(sheet: number, index: number): void;
+  lowerConditionalFormattingPriority(sheet: number, index: number): void;
+  findAll(text: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean, sheet: number): { sheet: number; row: number; column: number }[];
+  replaceAll(text: string, replacement: string, matchCase: boolean, wholeCell: boolean, sheet: number, onlyRow: number, onlyColumn: number): number;
+  pasteValues(sourceSheet: number, source: [number, number, number, number], transpose: boolean): void;
+  onPasteStyles(styles: CellStyle[][]): void;
+  setRowsHidden(sheet: number, rowStart: number, rowEnd: number, hidden: boolean): void;
+  setColumnsHidden(sheet: number, columnStart: number, columnEnd: number, hidden: boolean): void;
+  /** Имена (используются для второго и следующих фильтров листа). */
+  getDefinedNameList(): { name: string; scope?: number | null; formula: string }[];
+  newDefinedName(name: string, scope: number | null | undefined, formula: string): void;
+  updateDefinedName(name: string, scope: number | null | undefined, newName: string, newScope: number | null | undefined, newFormula: string): void;
+  deleteDefinedName(name: string, scope?: number | null): void;
+  /** Группы (структура): [индекс, уровень, свёрнуто 0/1, …]. */
+  getRowOutline(sheet: number): Int32Array;
+  getColumnOutline(sheet: number): Int32Array;
+  setRowsOutline(sheet: number, r1: number, r2: number, level: number): void;
+  setRowCollapsed(sheet: number, row: number, collapsed: boolean): void;
+  setColumnsOutline(sheet: number, c1: number, c2: number, level: number): void;
+  setColumnCollapsed(sheet: number, column: number, collapsed: boolean): void;
+  /** Новые книги — по центру по вертикали. */
+  setDefaultVerticalCenter(): void;
+  mergeCells(range: Area): void;
+  mergeCellsCenter(range: Area): void;
+  mergeCellsAcross(range: Area): void;
+  unmergeCells(range: Area): void;
+  setAreaWithBorder(area: Area, border: { item: BorderItem; type: BorderType }): void;
+  setSelectedCell(row: number, column: number): void;
+  setSelectedRange(startRow: number, startColumn: number, endRow: number, endColumn: number): void;
+  copyToClipboard(): EngineClipboard;
+  pasteFromClipboard(sourceSheet: number, sourceRange: [number, number, number, number], data: unknown, isCut: boolean): void;
+  autoFillRows(source: Area, toRow: number): void;
+  autoFillColumns(source: Area, toColumn: number): void;
+  getFrozenRowsCount(sheet: number): number;
+  getFrozenColumnsCount(sheet: number): number;
+  setFrozenRowsCount(sheet: number, count: number): void;
+  setFrozenColumnsCount(sheet: number, count: number): void;
+  setColumnsWidth(sheet: number, columnStart: number, columnEnd: number, width: number): void;
+  setRowsHeight(sheet: number, rowStart: number, rowEnd: number, height: number): void;
+  insertRows(sheet: number, row: number, count: number): void;
+  /** Склейка шагов отмены: всё после метки отменяется одним Ctrl+Z. */
+  undoMark(): number;
+  mergeUndoSince(mark: number): void;
+  /** Цвет из числового формата ([Red]…): номер палитры Excel 1..56, 0 — нет. */
+  getFormattedCellColor(sheet: number, row: number, column: number): number;
+  /** Значение ячейки в формате code, книга не меняется (образец). */
+  formatCellValueAs(sheet: number, row: number, column: number, code: string): string;
+  /** Переставить строки (столбцы) ровно на delta: с высотой, шириной и скрытием; одна отмена. */
+  moveRowsExact(sheet: number, row: number, count: number, delta: number): void;
+  moveColumnsExact(sheet: number, column: number, count: number, delta: number): void;
+  deleteRows(sheet: number, row: number, count: number): void;
+  insertColumns(sheet: number, column: number, count: number): void;
+  deleteColumns(sheet: number, column: number, count: number): void;
+  getCellStyle(sheet: number, row: number, column: number): ExtendedStyle;
   updateRangeStyle(range: Area, path: string, value: string): void;
   rangeClearContents(sheet: number, r1: number, c1: number, r2: number, c2: number): void;
   pasteCsvText(area: Area, csv: string): void;
@@ -40,11 +154,27 @@ export interface Model {
   canRedo(): boolean;
   newSheet(): void;
   setSelectedSheet(sheet: number): void;
+  getRowsWithData(sheet: number, column: number): Int32Array;
+  getColumnsWithData(sheet: number, row: number): Int32Array;
+  setRecognizeDates(on: boolean): void;
+  getRecognizeDates(): boolean;
+  setLocale(locale: string): void;
+  renameSheet(sheet: number, name: string): void;
+  deleteSheet(sheet: number): void;
+  duplicateSheet(sheet: number): void;
+  moveSheet(sheet: number, newIndex: number): void;
+  hideSheet(sheet: number): void;
+  unhideSheet(sheet: number): void;
+  setSheetColor(sheet: number, color: Color): void;
   getWorksheetsProperties(): SheetProps[];
   getShowGridLines(sheet: number): boolean;
   setShowGridLines(sheet: number, show: boolean): void;
   resolveColor(color: Color): string;
   toXlsx(): Uint8Array;
+  toBytes(): Uint8Array;
+  flushSendQueue(): Uint8Array;
+  applyExternalDiffs(diffs: Uint8Array): void;
+  evaluate(): void;
   free(): void;
 }
 
@@ -54,24 +184,54 @@ import init, { Model as EngineModel } from './engine-pkg/engine.js';
 interface EngineStatic {
   new (name: string, locale: string, timezone: string, language: string): Model;
   fromXlsx(bytes: Uint8Array, name: string, locale: string, timezone: string, language: string): Model;
+  fromBytes(bytes: Uint8Array, language: string): Model;
 }
 
 const Engine = EngineModel as unknown as EngineStatic;
 
 export async function loadEngine(): Promise<void> {
+  // Версия «одним файлом» (для браузера на старых системах): движок
+  // вложен в страницу как base64 и не загружается отдельным файлом.
+  const embedded = (globalThis as { __ENS_WASM_B64__?: string }).__ENS_WASM_B64__;
+  if (embedded) {
+    const bin = atob(embedded);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    await init({ module_or_path: bytes });
+    return;
+  }
   await init();
 }
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-// Русский язык функций и русская локаль в движке ещё не добавлены
-// (docs/01-tasks-for-assistants.md, задание 6): пока английские имена функций.
-export function newWorkbook(name = 'Книга1'): Model {
-  return new Engine(name, 'en', TZ, 'en');
+// Локаль: 'ru' — запятая в числах, «;» между аргументами, даты дд.мм.гггг;
+// 'en' — точка. Язык функций — русский (=СУММ); английские имена (=SUM)
+// движок тоже понимает и показывает по-русски, как русский Excel.
+const LANGUAGE = 'ru';
+
+export function newWorkbook(locale: string, name = 'Книга1'): Model {
+  const model = new Engine(name, locale, TZ, LANGUAGE);
+  model.renameSheet(0, 'Лист1');
+  // По желанию пользователя: в новых книгах — по центру по вертикали.
+  try { model.setDefaultVerticalCenter(); } catch { /* старый движок */ }
+  model.flushSendQueue(); // переименование — не правка пользователя
+  return model;
 }
 
-export function openXlsx(bytes: Uint8Array, name: string): Model {
-  return Engine.fromXlsx(bytes, name, 'en', TZ, 'en');
+/** Свободное имя для нового листа: Лист2, Лист3… */
+export function nextSheetName(model: Model): string {
+  const names = new Set(model.getWorksheetsProperties().map((p) => p.name.toLowerCase()));
+  for (let n = 1; ; n++) if (!names.has(`лист${n}`)) return `Лист${n}`;
+}
+
+/** Книга из внутреннего формата движка (снимок для восстановления). */
+export function fromBytes(bytes: Uint8Array): Model {
+  return Engine.fromBytes(bytes, LANGUAGE);
+}
+
+export function openXlsx(bytes: Uint8Array, name: string, locale: string): Model {
+  return Engine.fromXlsx(bytes, name, locale, TZ, LANGUAGE);
 }
 
 /** Номер столбца → буквы (1 → A, 27 → AA). */

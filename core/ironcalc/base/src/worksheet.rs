@@ -98,6 +98,8 @@ impl Worksheet {
             custom_width: false,
             style: Some(style_index),
             hidden: false,
+            outline_level: 0,
+            collapsed: false,
         }];
         Ok(())
     }
@@ -127,6 +129,8 @@ impl Worksheet {
             custom_height: false,
             s: style_index,
             hidden: false,
+            outline_level: 0,
+            collapsed: false,
         });
         Ok(())
     }
@@ -182,6 +186,8 @@ impl Worksheet {
                 custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             let col = Col {
                 min: column,
@@ -190,6 +196,8 @@ impl Worksheet {
                 custom_width,
                 style: None,
                 hidden: false,
+                outline_level: 0,
+                collapsed: false,
             };
             let post = Col {
                 min: column + 1,
@@ -198,6 +206,8 @@ impl Worksheet {
                 custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             cols.remove(index);
             if column != max {
@@ -410,7 +420,77 @@ impl Worksheet {
             custom_height: false,
             s: 0,
             hidden,
+            outline_level: 0,
+            collapsed: false,
         });
+        Ok(())
+    }
+
+    /// ENS-Office: outline (grouping) level and "collapsed" flag of a row.
+    pub fn row_outline(&self, row: i32) -> (u8, bool) {
+        self.rows
+            .iter()
+            .find(|r| r.r == row)
+            .map(|r| (r.outline_level, r.collapsed))
+            .unwrap_or((0, false))
+    }
+
+    /// ENS-Office: sets the outline level (0..7) and "collapsed" flag of a row.
+    pub fn set_row_outline(&mut self, row: i32, level: u8, collapsed: bool) -> Result<(), String> {
+        if !is_valid_row(row) {
+            return Err(format!("Row number '{row}' is not valid."));
+        }
+        let level = level.min(7);
+        if let Some(r) = self.rows.iter_mut().find(|r| r.r == row) {
+            r.outline_level = level;
+            r.collapsed = collapsed;
+            return Ok(());
+        }
+        if level == 0 && !collapsed {
+            return Ok(());
+        }
+        self.rows.push(Row {
+            height: constants::DEFAULT_ROW_HEIGHT / constants::ROW_HEIGHT_FACTOR,
+            r: row,
+            custom_format: false,
+            custom_height: false,
+            s: 0,
+            hidden: false,
+            outline_level: level,
+            collapsed,
+        });
+        Ok(())
+    }
+
+    /// ENS-Office: outline (grouping) level and "collapsed" flag of a column.
+    pub fn column_outline(&self, column: i32) -> (u8, bool) {
+        self.cols
+            .iter()
+            .find(|c| c.min <= column && column <= c.max)
+            .map(|c| (c.outline_level, c.collapsed))
+            .unwrap_or((0, false))
+    }
+
+    /// ENS-Office: sets the outline level (0..7) and "collapsed" flag of a column
+    /// (a column range is split so that only this column changes).
+    pub fn set_column_outline(&mut self, column: i32, level: u8, collapsed: bool) -> Result<(), String> {
+        if !is_valid_column_number(column) {
+            return Err(format!("Column number '{column}' is not valid."));
+        }
+        let level = level.min(7);
+        if self.column_outline(column) == (level, collapsed) {
+            return Ok(());
+        }
+        let width = self
+            .get_actual_column_width(column)
+            .unwrap_or(constants::DEFAULT_COLUMN_WIDTH);
+        let hidden = self.is_column_hidden(column)?;
+        let style = self.get_column_style(column)?;
+        self.set_column_width_and_style(column, width, hidden, style)?;
+        if let Some(c) = self.cols.iter_mut().find(|c| c.min == column && c.max == column) {
+            c.outline_level = level;
+            c.collapsed = collapsed;
+        }
         Ok(())
     }
 
@@ -442,6 +522,8 @@ impl Worksheet {
             custom_height: true,
             s: 0,
             hidden,
+            outline_level: 0,
+            collapsed: false,
         });
         Ok(())
     }
@@ -478,6 +560,13 @@ impl Worksheet {
         if width < 0.0 {
             return Err(format!("Can not set a negative width: {width}"));
         }
+        // ENS-Office: the column keeps its group (outline) when a range is split.
+        let (outline_level, collapsed) = self
+            .cols
+            .iter()
+            .find(|c| c.min <= column && column <= c.max)
+            .map(|c| (c.outline_level, c.collapsed))
+            .unwrap_or((0, false));
         let cols = &mut self.cols;
         let mut col = Col {
             min: column,
@@ -486,6 +575,8 @@ impl Worksheet {
             custom_width: width != constants::DEFAULT_COLUMN_WIDTH,
             style,
             hidden,
+            outline_level,
+            collapsed,
         };
         let mut index = 0;
         let mut split = false;
@@ -519,6 +610,8 @@ impl Worksheet {
                 custom_width: cols[index].custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             let post = Col {
                 min: column + 1,
@@ -527,6 +620,8 @@ impl Worksheet {
                 custom_width: cols[index].custom_width,
                 style: cols[index].style,
                 hidden: cols[index].hidden,
+                outline_level: cols[index].outline_level,
+                collapsed: cols[index].collapsed,
             };
             col.style = cols[index].style;
             cols.remove(index);

@@ -1,7 +1,7 @@
 {
   "name": "ens-table",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.19",
   "description": "ENS-Table — редактор таблиц ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
   "type": "module",
   "scripts": {
@@ -12,7 +12,18 @@
   },
   "devDependencies": {
     "@fluentui/svg-icons": "1.1.343",
+    "@tauri-apps/cli": "^2.12.1",
     "typescript": "7.0.2",
     "vite": "8.3.2"
+  },
+  "dependencies": {
+    "@fontsource/arimo": "^5.3.0",
+    "@fontsource/caladea": "^5.3.0",
+    "@fontsource/carlito": "^5.3.0",
+    "@fontsource/cousine": "^5.3.0",
+    "@fontsource/tinos": "^5.3.0",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.4.1",
+    "@tauri-apps/plugin-dialog": "^2.8.1"
   }
 }

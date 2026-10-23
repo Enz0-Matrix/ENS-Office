@@ -235,6 +235,12 @@ fn load_columns(ws: &XmlNode, default_width: f64) -> Result<Vec<Col>, XlsxError>
             };
             let custom_width = get_bool_false(col, "customWidth");
             let hidden = get_bool_false(col, "hidden");
+            let outline_level = col
+                .attribute("outlineLevel")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(0)
+                .min(7);
+            let collapsed = get_bool_false(col, "collapsed");
             let style = col
                 .attribute("style")
                 .map(|s| s.parse::<i32>().unwrap_or(0));
@@ -245,6 +251,8 @@ fn load_columns(ws: &XmlNode, default_width: f64) -> Result<Vec<Col>, XlsxError>
                 custom_width,
                 style,
                 hidden,
+                outline_level,
+                collapsed,
             })
         }
     }

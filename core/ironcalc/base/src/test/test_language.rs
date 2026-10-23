@@ -48,5 +48,6 @@ fn spanish() {
 
     assert_eq!(model._get_formula("A1"), *"=VERDADERO()");
     assert_eq!(model._get_text("A1"), *"VERDADERO");
-    assert_eq!(model._get_text("B1"), *"#¿NOMBRE?");
+    // ENS-Office: English names are understood in every language.
+    assert_eq!(model._get_text("B1"), *"VERDADERO");
 }

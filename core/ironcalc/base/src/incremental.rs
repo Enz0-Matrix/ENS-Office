@@ -487,6 +487,17 @@ impl Model<'_> {
         result
     }
 
+    /// ENS-Office: whether a date typed into a General cell turns it into a
+    /// date ("22.08" → 22 August). Off: such input is a number or text.
+    pub fn set_recognize_dates(&mut self, on: bool) {
+        self.ens_recognize_dates = on;
+    }
+
+    /// ENS-Office: whether dates typed into General cells are recognized.
+    pub fn get_recognize_dates(&self) -> bool {
+        self.ens_recognize_dates
+    }
+
     /// How the last evaluation was done (for tests and benchmarks).
     pub fn last_evaluation(&self) -> LastEvaluation {
         self.deps.last

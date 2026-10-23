@@ -104,6 +104,20 @@ pub(crate) enum Diff {
         new_value: bool,
         old_value: bool,
     },
+    /// ENS-Office: outline level and "collapsed" flag of a row.
+    SetRowOutline {
+        sheet: u32,
+        row: i32,
+        new_value: (u8, bool),
+        old_value: (u8, bool),
+    },
+    /// ENS-Office: outline level and "collapsed" flag of a column.
+    SetColumnOutline {
+        sheet: u32,
+        column: i32,
+        new_value: (u8, bool),
+        old_value: (u8, bool),
+    },
     SetColumnStyle {
         sheet: u32,
         column: i32,
