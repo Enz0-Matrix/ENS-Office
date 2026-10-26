@@ -29,8 +29,9 @@ pub(crate) fn get_app_xml(_: &Workbook) -> String {
 pub(crate) fn get_core_xml(workbook: &Workbook, milliseconds: i64) -> Result<String, XlsxError> {
     // contains the name of the creator, last modified and date
     let metadata = &workbook.metadata;
-    let creator = metadata.creator.to_string();
-    let last_modified_by = IRONCALC_USER.to_string();
+    let creator = super::escape::escape_xml(&metadata.creator).to_string();
+    // ENS-Office: the user who saved the file (set by the app), not a fixed name.
+    let last_modified_by = if metadata.last_modified_by.is_empty() { IRONCALC_USER.to_string() } else { super::escape::escape_xml(&metadata.last_modified_by).to_string() };
     let created = metadata.created.to_string();
     // FIXME add now
 

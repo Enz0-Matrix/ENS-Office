@@ -3,7 +3,9 @@
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
 import { fromBytes, openXlsx, type Model } from './engine';
-import { ask, beaconClose, inspectFile, isDesktop, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { APP_VERSION } from './version';
+import { afterSave, beforeSave, onOpened, userName } from './changelog';
+import { ask, beaconClose, inspectFile, isDesktop, osUserName, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
 import { localeId, saveSettings, settings } from './settings';
 
 export interface Doc {
@@ -23,6 +25,8 @@ export interface Host {
   doc(): Doc;
   onDocChanged(): void;
   toast(text: string): void;
+  /** Перейти к листу и диапазону (журнал изменений). */
+  goTo(sheet: string, area: string): void;
 }
 
 const newId = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -47,7 +51,7 @@ async function track(): Promise<void> {
   host.model().flushSendQueue();
   if (!isDesktop) return;
   await recovery.begin(doc.id, {
-    source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0,
+    source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0, format: APP_VERSION,
   });
   hasSnapshot = false;
   // Новую нетронутую книгу не предлагаем восстанавливать: снимок — с первой правки.
@@ -60,6 +64,8 @@ async function snapshot(): Promise<void> {
   if (pending.length > emptyQueue) markChanged();
   if (!isDesktop) return;
   await recovery.snapshot(host.doc().id, m.toBytes());
+  // Запасная копия в xlsx: её откроет и другая версия программы (после обновления).
+  try { await recovery.snapshotXlsx(host.doc().id, m.toXlsx()); } catch { /* основной снимок уже записан */ }
   hasSnapshot = true;
   lastSnapshot = Date.now();
   changedSinceSnapshot = false;
@@ -194,6 +200,8 @@ export async function openPath(path: string): Promise<void> {
     if (isDesktop) await recovery.forget(doc.id).catch(() => {});
     host.setModel(model, { id: newId(), path, title: baseName(path), modifiedMs: info.modified_ms, dirty: false });
     await track();
+    try { model.clearEnsChanges(); } catch { /* старый движок */ } // подготовка листа после открытия — не правка
+    onOpened(model, path, await currentUser(), host);
     if (info.readonly) host.toast('Файл только для чтения: изменения можно сохранить под другим именем.');
   } catch (e) {
     host.toast(String(e));
@@ -217,7 +225,23 @@ export async function saveAs(): Promise<boolean> {
   return writeTo(path.endsWith('.xlsx') || path.endsWith('.xlsm') ? path : `${path}.xlsx`, true);
 }
 
+let osName: Promise<string> | null = null;
+/** Кто сохраняет — для журнала изменений: имя из «Параметров» или из системы. */
+export async function currentUser(): Promise<string> {
+  osName ??= osUserName();
+  return userName(await osName);
+}
+
 async function writeTo(path: string, isNew: boolean): Promise<boolean> {
+  const m = host.model();
+  const oldLog = beforeSave(m, await currentUser());
+  const ok = await writeBytes(path, isNew);
+  if (ok) afterSave(m, path);
+  else m.setChangeLog(oldLog);
+  return ok;
+}
+
+async function writeBytes(path: string, isNew: boolean): Promise<boolean> {
   const doc = host.doc();
   const bytes = host.model().toXlsx();
   const expected = isNew ? 0 : doc.modifiedMs;
@@ -252,7 +276,7 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   host.onDocChanged();
   // Сохранённая версия — новая точка отсчёта для восстановления.
   await recovery.begin(doc.id, {
-    source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0,
+    source_path: doc.path, title: doc.title, source_modified_ms: doc.modifiedMs, snapshot_ms: 0, journal_entries: 0, format: APP_VERSION,
   });
   await snapshot();
   return true;
@@ -264,8 +288,10 @@ export function rememberRecent(path: string, title: string): void {
   saveSettings();
 }
 
-function download(): boolean {
+async function download(): Promise<boolean> {
   const doc = host.doc();
+  beforeSave(host.model(), await currentUser());
+  afterSave(host.model(), '');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([new Uint8Array(host.model().toXlsx())], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -282,12 +308,22 @@ function download(): boolean {
 
 async function restore(session: string, id: string, title: string): Promise<void> {
   try {
-    const data = await recovery.load(session, id);
-    const model = fromBytes(data.snapshot);
-    for (const frame of data.journal) model.applyExternalDiffs(frame);
-    model.evaluate();
     const list = await recovery.list();
     const meta = list.find((d) => d.session === session && d.id === id)?.meta;
+    let model: Model;
+    try {
+      // Снимок и журнал — во внутреннем формате этой версии программы.
+      if (meta && (meta.format ?? '') !== APP_VERSION) throw new Error('другая версия');
+      const data = await recovery.load(session, id);
+      model = fromBytes(data.snapshot);
+      for (const frame of data.journal) model.applyExternalDiffs(frame);
+    } catch (e) {
+      // Другая версия (или повреждённый снимок): запасная копия в xlsx.
+      if (!meta?.xlsx_ms) throw e;
+      model = openXlsx(await recovery.loadXlsx(session, id), `${meta.title}.xlsx`, localeId());
+      host.toast(`Книга восстановлена из запасной копии на ${fmtTime(meta.xlsx_ms)} (снимок сделан версией ${meta.format || 'до 1.0'}). Правки после этого времени могли не сохраниться.`);
+    }
+    model.evaluate();
     host.setModel(model, {
       id: newId(), path: meta?.source_path ?? '', title: `${meta?.title ?? title} (восстановлено)`,
       modifiedMs: meta?.source_modified_ms ?? 0, dirty: true, recoveredFrom: { session, id },

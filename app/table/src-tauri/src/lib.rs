@@ -70,6 +70,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             startup_file,
             files::inspect_file,
+            files::user_name,
             files::read_file,
             files::save_file,
             recovery::recovery_heartbeat,
@@ -77,6 +78,8 @@ pub fn run() {
             recovery::recovery_root,
             recovery::recovery_begin,
             recovery::recovery_snapshot,
+            recovery::recovery_snapshot_xlsx,
+            recovery::recovery_load_snapshot_xlsx,
             recovery::recovery_append,
             recovery::recovery_forget,
             recovery::recovery_end_session,

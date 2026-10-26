@@ -53,6 +53,13 @@ pub struct DocMeta {
     pub source_modified_ms: u64,
     pub snapshot_ms: u64,
     pub journal_entries: u64,
+    /// Формат снимка и журнала (версия программы): снимки другой версии
+    /// восстанавливаются из запасной копии в xlsx (snapshot.xlsx).
+    #[serde(default)]
+    pub format: String,
+    /// Когда записана запасная копия в xlsx (0 — нет).
+    #[serde(default)]
+    pub xlsx_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -193,6 +200,17 @@ impl Recovery {
         write_synced(&meta_path, &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
     }
 
+    /// Запасная копия в xlsx: её откроет любая версия программы.
+    pub fn snapshot_xlsx(&self, id: String, data: Vec<u8>) -> Result<(), String> {
+        let dir = self.doc_dir(&self.session, &id)?;
+        fs::create_dir_all(&dir).map_err(io_err)?;
+        write_synced(&dir.join("snapshot.xlsx"), &data).map_err(io_err)?;
+        let meta_path = dir.join("meta.json");
+        let mut meta: DocMeta = fs::read(&meta_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        meta.xlsx_ms = now_ms();
+        write_synced(&meta_path, &serde_json::to_vec(&meta).unwrap_or_default()).map_err(io_err)
+    }
+
     pub fn append(&self, id: String, data: Vec<u8>) -> Result<(), String> {
         let state = self;
         if data.is_empty() {
@@ -274,6 +292,11 @@ impl Recovery {
         fs::read(dir.join("snapshot.bin")).map_err(io_err)
     }
 
+    pub fn load_snapshot_xlsx(&self, session: String, id: String) -> Result<Vec<u8>, String> {
+        let dir = self.doc_dir(&session, &id)?;
+        fs::read(dir.join("snapshot.xlsx")).map_err(io_err)
+    }
+
     pub fn load_journal(&self, session: String, id: String) -> Result<Vec<u8>, String> {
         let state = self;
         let dir = state.doc_dir(&session, &id)?;
@@ -345,6 +368,20 @@ pub fn recovery_snapshot(state: tauri::State<'_, Recovery>, request: Request<'_>
     let id = header(&request, "id")?;
     let data = raw(&request)?;
     state.snapshot(id, data)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_snapshot_xlsx(state: tauri::State<'_, Recovery>, request: Request<'_>) -> Result<(), String> {
+    let id = header(&request, "id")?;
+    let data = raw(&request)?;
+    state.snapshot_xlsx(id, data)
+}
+
+#[cfg(feature = "tauri-shell")]
+#[tauri::command]
+pub fn recovery_load_snapshot_xlsx(state: tauri::State<'_, Recovery>, session: String, id: String) -> Result<Response, String> {
+    state.load_snapshot_xlsx(session, id).map(Response::new)
 }
 
 #[cfg(feature = "tauri-shell")]

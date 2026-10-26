@@ -53,6 +53,9 @@ export interface DocMeta {
   source_modified_ms: number;
   snapshot_ms: number;
   journal_entries: number;
+  /** Формат снимка (версия программы); у другой версии — восстанавливаем из xlsx. */
+  format?: string;
+  xlsx_ms?: number;
 }
 
 export interface RecoverableDoc {
@@ -89,6 +92,8 @@ export async function ask(message: string, ok: string, cancel: string): Promise<
 }
 
 /** Файл, с которым запустили программу («Открыть с помощью»). */
+/** Имя пользователя в системе (для журнала изменений). */
+export const osUserName = () => (isDesktop ? call<string>('user_name').catch(() => '') : Promise.resolve(''));
 export const startupFile = () => (isTauri ? invoke<string | null>('startup_file') : Promise.resolve(null));
 
 export const inspectFile = (path: string) => call<FileInfo>('inspect_file', { path });
@@ -108,6 +113,8 @@ export const recovery = {
   heartbeat: () => call('recovery_heartbeat'),
   begin: (id: string, meta: DocMeta) => call('recovery_begin', { id, meta }),
   snapshot: (id: string, bytes: Uint8Array) => call('recovery_snapshot', bytes, { id }),
+  snapshotXlsx: (id: string, bytes: Uint8Array) => call('recovery_snapshot_xlsx', bytes, { id }),
+  loadXlsx: async (session: string, id: string) => new Uint8Array(await call<ArrayBuffer>('recovery_load_snapshot_xlsx', { session, id })),
   append: (id: string, bytes: Uint8Array) => call('recovery_append', bytes, { id }),
   forget: (id: string) => call('recovery_forget', { id }),
   endSession: () => call('recovery_end_session'),

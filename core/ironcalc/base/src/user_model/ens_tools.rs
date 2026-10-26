@@ -547,6 +547,9 @@ impl UserModel<'_> {
     }
 }
 
+/// Excel keeps the print area of a sheet in this sheet-scoped name.
+pub const PRINT_AREA: &str = "_xlnm.Print_Area";
+
 /// Excel keeps the autofilter range of a sheet in this hidden, sheet-scoped name.
 pub const FILTER_DATABASE: &str = "_xlnm._FilterDatabase";
 
@@ -563,6 +566,47 @@ pub fn parse_filter_range(formula: &str) -> Option<(i32, i32, i32, i32)> {
 }
 
 impl UserModel<'_> {
+    /// ENS-Office: the print area of the sheet, [row1, column1, row2, column2].
+    /// Several areas (Excel allows a list) — the first one.
+    pub fn get_print_area(&self, sheet: u32) -> Result<Option<[i32; 4]>, String> {
+        let sheet_id = self.model.workbook.worksheet(sheet)?.sheet_id;
+        Ok(self
+            .model
+            .workbook
+            .defined_names
+            .iter()
+            .find(|d| d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(PRINT_AREA))
+            .and_then(|d| parse_filter_range(d.formula.split(',').next().unwrap_or_default()))
+            .map(|(r1, c1, r2, c2)| [r1, c1, r2, c2]))
+    }
+
+    pub(crate) fn write_print_area(&mut self, sheet: u32, range: Option<[i32; 4]>) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let (sheet_id, name) = (ws.sheet_id, ws.get_name());
+        let names = &mut self.model.workbook.defined_names;
+        names.retain(|d| !(d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(PRINT_AREA)));
+        if let Some([r1, c1, r2, c2]) = range {
+            let col = |c: i32| crate::expressions::utils::number_to_column(c).unwrap_or_default();
+            names.push(crate::types::DefinedName {
+                name: PRINT_AREA.to_string(),
+                formula: format!("{}!${}${r1}:${}${r2}", crate::expressions::utils::quote_name(&name), col(c1), col(c2)),
+                sheet_id: Some(sheet_id),
+            });
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: sets (or with None removes) the print area of the sheet; an undoable step.
+    pub fn set_print_area(&mut self, sheet: u32, range: Option<[i32; 4]>) -> Result<(), String> {
+        let old_value = self.get_print_area(sheet)?;
+        if old_value == range {
+            return Ok(());
+        }
+        self.write_print_area(sheet, range)?;
+        self.push_diff_list(vec![Diff::SetPrintArea { sheet, new_value: range, old_value }]);
+        Ok(())
+    }
+
     /// ENS-Office: the autofilter range of the sheet, [row1, column1, row2, column2].
     pub fn get_auto_filter(&self, sheet: u32) -> Result<Option<[i32; 4]>, String> {
         let sheet_id = self.model.workbook.worksheet(sheet)?.sheet_id;

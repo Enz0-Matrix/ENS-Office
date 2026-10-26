@@ -98,6 +98,15 @@ fn explain(err: &std::io::Error, path: &Path, action: &str) -> String {
     format!("Не удалось {action} «{name}»: {reason}. Попробуйте «Сохранить как…» в другое место — данные в программе не потеряны.")
 }
 
+/// Имя пользователя в системе — для журнала изменений книги («кто изменил»).
+#[cfg_attr(feature = "tauri-shell", tauri::command)]
+pub fn user_name() -> String {
+    ["USERNAME", "USER", "LOGNAME"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
+        .unwrap_or_default()
+}
+
 #[cfg_attr(feature = "tauri-shell", tauri::command)]
 pub fn inspect_file(path: String) -> Result<FileInfo, String> {
     let p = PathBuf::from(&path);

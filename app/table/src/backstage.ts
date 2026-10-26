@@ -4,10 +4,15 @@ import { icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
 import { DONATE_URL } from './modules';
-import { DEFAULT_PRINT, marginsOf, type PrintOptions } from './print';
+import { DEFAULT_PRINT, FOOTER_PRESETS, HEADER_PRESETS, marginsOf, resetPreviewPage, type PrintOptions } from './print';
 
 let printOpts: PrintOptions = { ...DEFAULT_PRINT };
 const isWindows = navigator.userAgent.includes('Windows');
+const hfOptions = (presets: [string, string][], v: string) => {
+  const known = presets.some(([c]) => c === v);
+  return presets.map(([c, t]) => `<option value="${esc(c)}" ${c === v ? 'selected' : ''}>${esc(t)}</option>`).join('') +
+    `<option value="*" ${known ? '' : 'selected'}>Свой текст…</option>`;
+};
 
 export interface BackstageHost {
   docInfo(): { title: string; path: string; dirty: boolean };
@@ -23,6 +28,10 @@ export interface BackstageHost {
   print(opts: PrintOptions): void;
   /** Parameters of the active sheet (saved in the book). */
   printOptions(): PrintOptions;
+  showChangeLog(): void;
+  /** Область печати: задать по выделению / убрать; текст для показа или ''. */
+  printArea(): string;
+  setPrintArea(clear: boolean): void;
   savePrintOptions(opts: PrintOptions): void;
   recoveryFolder(): Promise<string>;
   chooseRecoveryFolder(): Promise<void>;
@@ -30,7 +39,7 @@ export interface BackstageHost {
 
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
-const APP_VERSION = '0.1.19';
+import { APP_VERSION } from './version';
 
 const root = document.createElement('div');
 root.className = 'backstage';
@@ -97,7 +106,9 @@ function render(section: Section): void {
       <h1>Сведения</h1>
       <h2>${esc(doc.title)}${doc.dirty ? ' — есть несохранённые изменения' : ''}</h2>
       <p class="bs-muted">${doc.path ? esc(doc.path) : 'Книга ещё не сохранялась'}</p>
-      ${isDesktop ? `<p class="bs-muted">Временные файлы для восстановления после сбоя: <span class="bs-rec">…</span></p>` : ''}`;
+      ${isDesktop ? `<p class="bs-muted">Временные файлы для восстановления после сбоя: <span class="bs-rec">…</span></p>` : ''}
+      <button class="bs-wide" data-act="changelog">${icon('history', 24) || icon('document', 24)}Журнал изменений: кто, что и когда менял</button>`;
+    body.querySelector('[data-act="changelog"]')!.addEventListener('click', () => { hideBackstage(); host.showChangeLog(); });
     if (isDesktop) void host.recoveryFolder().then((p) => { const el = body.querySelector('.bs-rec'); if (el) el.textContent = p; });
   } else if (section === 'new') {
     body.innerHTML = `<h1>Создать</h1>
@@ -143,6 +154,14 @@ function render(section: Section): void {
           <div class="print-margins" hidden>
             ${['Верхнее', 'Правое', 'Нижнее', 'Левое'].map((t, i) => `<label>${t}, мм <input type="number" min="0" max="100" step="1" data-m="${i}"></label>`).join('')}
           </div>
+          <label>Верхний колонтитул
+            <select data-hf="header">${hfOptions(HEADER_PRESETS, printOpts.header)}</select></label>
+          <input class="print-hf-custom" data-hfc="header" placeholder="&L слева &C по центру &R справа; &P — стр., &N — всего" hidden>
+          <label>Нижний колонтитул
+            <select data-hf="footer">${hfOptions(FOOTER_PRESETS, printOpts.footer)}</select></label>
+          <input class="print-hf-custom" data-hfc="footer" placeholder="Например: &CСтраница &P из &N" hidden>
+          <div class="print-area"><span class="bs-muted">Область печати: <b class="pa-text"></b></span>
+            <button data-act="pa-set">Задать по выделению</button><button data-act="pa-clear">Убрать</button></div>
           <label class="check"><input type="checkbox" data-p="centerH"> По центру страницы</label>
           <label class="check"><input type="checkbox" data-p="gridlines"> Печатать сетку</label>
           <label class="check"><input type="checkbox" data-p="repeatHeader"> Заголовок на каждой странице (первая или закреплённые строки)</label>
@@ -152,6 +171,27 @@ function render(section: Section): void {
       </div>`;
     const preview = body.querySelector<HTMLElement>('.print-preview')!;
     printOpts = { ...host.printOptions(), what: printOpts.what };
+    resetPreviewPage();
+    // Колонтитулы: готовые варианты или свой текст в записи Excel.
+    for (const k of ['header', 'footer'] as const) {
+      const presets = k === 'header' ? HEADER_PRESETS : FOOTER_PRESETS;
+      const sel = body.querySelector<HTMLSelectElement>(`[data-hf="${k}"]`)!;
+      const inp = body.querySelector<HTMLInputElement>(`[data-hfc="${k}"]`)!;
+      sel.innerHTML = hfOptions(presets, printOpts[k]);
+      const custom = !presets.some(([c]) => c === printOpts[k]);
+      inp.hidden = !custom;
+      inp.value = printOpts[k];
+      sel.addEventListener('change', () => {
+        inp.hidden = sel.value !== '*';
+        if (sel.value !== '*') { printOpts = { ...printOpts, [k]: sel.value }; changed(); } else inp.focus();
+      });
+      inp.addEventListener('change', () => { printOpts = { ...printOpts, [k]: inp.value }; changed(); });
+    }
+    const paText = body.querySelector<HTMLElement>('.pa-text')!;
+    const showArea = () => { paText.textContent = host.printArea() || 'не задана (печатается весь лист)'; };
+    showArea();
+    body.querySelector('[data-act="pa-set"]')!.addEventListener('click', () => { host.setPrintArea(false); showArea(); refresh(); });
+    body.querySelector('[data-act="pa-clear"]')!.addEventListener('click', () => { host.setPrintArea(true); showArea(); refresh(); });
     const marginBox = body.querySelector<HTMLElement>('.print-margins')!;
     const marginInputs = [...marginBox.querySelectorAll<HTMLInputElement>('[data-m]')];
     const showMargins = () => {
@@ -188,6 +228,9 @@ function render(section: Section): void {
         <select data-set="decimal"><option value="comma">запятая: 0,5</option><option value="point">точка: 0.5</option></select></label>
       <label class="bs-row"><input type="checkbox" data-set="recognizeDates"> Распознавать даты при вводе в ячейки «Общий»</label>
       <label class="bs-row"><input type="checkbox" data-set="expandEditor"> Расширять поле ввода вправо по мере набора</label>
+      <h2>Журнал изменений</h2>
+      <label class="bs-row">Ваше имя в журнале изменений книги
+        <input data-set="userName" placeholder="как в системе" style="width:220px"></label>
       ${isDesktop ? `
       <h2>Сохранение и восстановление</h2>
       <label class="bs-row">Снимок книги для восстановления каждые
@@ -198,6 +241,9 @@ function render(section: Section): void {
       недоступна, временные файлы пишутся в профиль пользователя, чтобы ничего не потерять.</p>` : ''}`;
     const dec = body.querySelector<HTMLSelectElement>('[data-set="decimal"]')!;
     dec.value = settings.decimal;
+    const un = body.querySelector<HTMLInputElement>('[data-set="userName"]')!;
+    un.value = settings.userName;
+    un.addEventListener('change', () => { settings.userName = un.value.trim(); saveSettings(); });
     dec.addEventListener('change', () => { settings.decimal = dec.value as 'comma' | 'point'; saveSettings(); host.applySettings(); });
     const exp = body.querySelector<HTMLInputElement>('[data-set="expandEditor"]')!;
     exp.checked = settings.expandEditor;

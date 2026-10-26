@@ -145,6 +145,9 @@ impl<'a> UserModel<'a> {
                 Diff::SetColumnOutline { sheet, column, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.set_column_outline(*column, old_value.0, old_value.1)?;
                 }
+                Diff::SetPrintArea { sheet, new_value: _, old_value } => {
+                    self.write_print_area(*sheet, *old_value)?;
+                }
                 Diff::SetPageSetup { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = old_value.clone();
                 }
@@ -717,6 +720,9 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetColumnOutline { sheet, column, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.set_column_outline(*column, new_value.0, new_value.1)?;
+                }
+                Diff::SetPrintArea { sheet, new_value, old_value: _ } => {
+                    self.write_print_area(*sheet, *new_value)?;
                 }
                 Diff::SetPageSetup { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = new_value.clone();

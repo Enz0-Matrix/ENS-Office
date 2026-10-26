@@ -26,6 +26,12 @@ pub(crate) fn get_workbook_xml_rels(workbook: &Workbook) -> String {
     relationships_str.push(
         format!("<Relationship Id=\"rId{id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme\" Target=\"theme/theme1.xml\"/>")
     );
+    if !workbook.ens_change_log.is_empty() {
+        id += 1;
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml\" Target=\"../customXml/item1.xml\"/>"
+        ));
+    }
     format!(
         "{XML_DECLARATION}\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}</Relationships>",
         relationships_str.join("")

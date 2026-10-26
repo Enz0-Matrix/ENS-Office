@@ -235,6 +235,8 @@ pub struct UserModel<'a> {
     pub(crate) history: History,
     send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
+    /// ENS-Office: what changed since the book was opened or saved (change log).
+    pub(crate) ens_changes: super::ens_changes::ChangeTracker,
 }
 
 /// Given the index of the currently selected sheet, returns the index that same
@@ -272,6 +274,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            ens_changes: Default::default(),
         }
     }
 
@@ -291,6 +294,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            ens_changes: Default::default(),
         })
     }
 
@@ -305,6 +309,7 @@ impl<'a> UserModel<'a> {
             history: History::default(),
             send_queue: vec![],
             pause_evaluation: false,
+            ens_changes: Default::default(),
         })
     }
 
@@ -2354,6 +2359,7 @@ impl<'a> UserModel<'a> {
     }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
+        self.track_changes(&diff_list);
         self.send_queue.push(QueueDiffs {
             r#type: DiffType::Redo,
             list: diff_list.clone(),

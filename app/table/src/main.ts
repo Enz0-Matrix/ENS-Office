@@ -5,7 +5,8 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { DEFAULT_PRINT, fromSaved, printSheet, renderPreview, toSaved } from './print';
+import { showLog } from './changelog';
+import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
@@ -373,6 +374,22 @@ function goTo(ref: Ref): void {
       Math.max(ref.row, ref.row2), Math.max(ref.column, ref.column2));
   } else {
     grid.select(ref.row, ref.column);
+  }
+  focusGrid();
+}
+
+/** Переход к листу и области из журнала изменений: «A1:C5», «5:7» (строки), «B:D» (столбцы). */
+function goToArea(sheet: string, area: string): void {
+  const index = model.getWorksheetsProperties().findIndex((p) => p.name === sheet);
+  if (index < 0) { showToast(`Листа «${sheet}» в книге уже нет.`); return; }
+  if (index !== grid.sheet) setSheet(index);
+  const rows = /^(\d+):(\d+)$/.exec(area);
+  const cols = /^([A-Z]+):([A-Z]+)$/.exec(area);
+  if (rows) grid.selectRange(Number(rows[1]), 1, Number(rows[2]), 16_384);
+  else if (cols) grid.selectRange(1, columnNumber(cols[1]), 1_048_576, columnNumber(cols[2]));
+  else {
+    const r = refsIn(area)[0];
+    if (r) goTo({ ...r, sheet: undefined });
   }
   focusGrid();
 }
@@ -2456,7 +2473,16 @@ initBackstage({
   },
   recoveryFolder: () => desk.recoveryFolder(),
   chooseRecoveryFolder: () => desk.chooseRecoveryFolder(),
-  printPreview: (el, opts) => renderPreview(el, model, grid.sheet, opts, grid.sel),
+  printPreview: (el, opts) => renderPreview(el, model, grid.sheet, opts, grid.sel, doc.title),
+  printArea: () => {
+    const a = printAreaOf(model, grid.sheet);
+    return a ? `${columnName(a.c1)}${a.r1}:${columnName(a.c2)}${a.r2}` : '';
+  },
+  setPrintArea: (clear) => {
+    const s = grid.sel;
+    try { model.setPrintArea(grid.sheet, clear ? [] : [s.r1, s.c1, Math.min(s.r2, 1_048_576), Math.min(s.c2, 16_384)]); } catch (e) { showToast(String(e)); }
+  },
+  showChangeLog: () => showLog(model, { goTo: goToArea }),
   printOptions: () => { try { return fromSaved(model.getPageSetup(grid.sheet)); } catch { return { ...DEFAULT_PRINT }; } },
   savePrintOptions: (opts) => { try { model.setPageSetup(grid.sheet, toSaved(opts)); } catch { /* старый движок */ } },
   print: (opts) => {
@@ -2478,4 +2504,5 @@ await desk.start({
   doc: () => doc,
   onDocChanged: syncDocTitle,
   toast: showToast,
+  goTo: goToArea,
 });

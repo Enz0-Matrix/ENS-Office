@@ -137,6 +137,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
             }
         }
     };
+    let ens_change_log = load_change_log(&mut archive);
     let mut views = HashMap::new();
     views.insert(
         0,
@@ -160,7 +161,32 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         tables,
         views,
         theme,
+        ens_change_log,
     })
+}
+
+/// ENS-Office: the change log from `customXml/item*.xml` (root `<ensChangeLog>`).
+fn load_change_log<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> String {
+    let names: Vec<String> = archive
+        .file_names()
+        .filter(|n| n.starts_with("customXml/item") && !n.contains("Props") && n.ends_with(".xml"))
+        .map(|n| n.to_string())
+        .collect();
+    for name in names {
+        let mut text = String::new();
+        if let Ok(mut f) = archive.by_name(&name) {
+            if f.read_to_string(&mut text).is_err() {
+                continue;
+            }
+        }
+        let Ok(root) = XmlNode::parse(text.as_bytes()) else {
+            continue;
+        };
+        if root.has_tag_name("ensChangeLog") {
+            return root.text().unwrap_or_default().to_string();
+        }
+    }
+    String::new()
 }
 
 // Imports a file from disk into an internal representation

@@ -132,6 +132,9 @@ pub struct Workbook {
     pub tables: HashMap<String, Table>,
     pub views: HashMap<u32, WorkbookView>,
     pub theme: Theme,
+    /// ENS-Office: the change log ("who changed what and when"), JSON list of
+    /// entries; saved to xlsx as a custom XML part (`customXml/item1.xml`).
+    pub ens_change_log: String,
 }
 
 /// A defined name. The `sheet_id` is the sheet index in case the name is local

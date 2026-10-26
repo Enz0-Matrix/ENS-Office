@@ -68,11 +68,12 @@ fn test_ens_autofilter_export() {
 fn test_ens_page_setup_export() {
     let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
     model.set_user_input(0, 1, 1, "x").unwrap();
-    let json = r#"{"landscape":true,"paper":"A3","fit":"width","marginMm":[10,6,10,6],"gridlines":true,"centerH":true}"#;
+    let json = r#"{"landscape":true,"paper":"A3","fit":"width","marginMm":[10,6,10,6],"gridlines":true,"centerH":true,"footer":"&CСтраница &P из &N"}"#;
     model.set_page_setup(0, json).unwrap();
     model.undo().unwrap();
     assert_eq!(model.get_page_setup(0).unwrap(), "");
     model.redo().unwrap();
+    model.set_print_area(0, Some([1, 1, 20, 3])).unwrap();
     let name = "temp_ens_page_setup.xlsx";
     save_to_xlsx(model.get_model(), name).unwrap();
     let f = std::fs::File::open(name).unwrap();
@@ -90,4 +91,27 @@ fn test_ens_page_setup_export() {
     assert_eq!(v["gridlines"], true);
     assert_eq!(v["centerH"], true);
     assert_eq!(v["marginMm"][0], 10.0);
+    assert_eq!(v["footer"], "&CСтраница &P из &N");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_print_area(0).unwrap(), Some([1, 1, 20, 3]));
+}
+
+// ENS-Office: the change log is kept in customXml and read back.
+#[test]
+fn test_ens_change_log_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_change_log(r#"[{"u":"Иванов <И.>","t":1}]"#);
+    model.set_last_modified_by("Иванов");
+    let name = "temp_ens_change_log.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut rels = String::new();
+    zip.by_name("xl/_rels/workbook.xml.rels").unwrap().read_to_string(&mut rels).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(rels.contains("../customXml/item1.xml"), "{rels}");
+    assert_eq!(back.workbook.ens_change_log, r#"[{"u":"Иванов <И.>","t":1}]"#);
+    assert_eq!(back.workbook.metadata.last_modified_by, "Иванов");
 }

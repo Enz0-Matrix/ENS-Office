@@ -55,8 +55,13 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         r#"<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>"#.to_string(),
         r#"<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>"#.to_string(),
         r#"<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>"#.to_string(),
-        r#"</Types>"#.to_string(),
     ]);
+    if !workbook.ens_change_log.is_empty() {
+        content.push(
+            r#"<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>"#.to_string(),
+        );
+    }
+    content.push(r#"</Types>"#.to_string());
     format!("{XML_DECLARATION}\n{}", content.join(""))
 }
 
@@ -109,6 +114,34 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     zip.start_file("xl/metadata.xml", options)?;
     let metadata_xml = include_str!("metadata.xml");
     zip.write_all(metadata_xml.as_bytes())?;
+
+    // ENS-Office: the change log as a custom XML part (Excel keeps it when it saves the file).
+    if !workbook.ens_change_log.is_empty() {
+        zip.add_directory("customXml", options)?;
+        zip.start_file("customXml/item1.xml", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<ensChangeLog xmlns=\"urn:ens-office:change-log\">{}</ensChangeLog>",
+                escape::escape_xml(&workbook.ens_change_log)
+            )
+            .as_bytes(),
+        )?;
+        zip.start_file("customXml/itemProps1.xml", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<ds:datastoreItem ds:itemID=\"{{6E1F3C2A-5B7D-4E8A-9C0B-1D2E3F4A5B6C}}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs/></ds:datastoreItem>"
+            )
+            .as_bytes(),
+        )?;
+        zip.add_directory("customXml/_rels", options)?;
+        zip.start_file("customXml/_rels/item1.xml.rels", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps\" Target=\"itemProps1.xml\"/></Relationships>"
+            )
+            .as_bytes(),
+        )?;
+    }
 
     zip.add_directory("xl/theme", options)?;
     zip.start_file("xl/theme/theme1.xml", options)?;

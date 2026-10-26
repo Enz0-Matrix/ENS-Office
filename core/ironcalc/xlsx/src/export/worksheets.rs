@@ -812,5 +812,17 @@ fn page_setup_xml(json: &str) -> (String, String) {
         _ => "",
     };
     out.push_str(&format!(r#"<pageSetup paperSize="{paper}" orientation="{orientation}"{fit_attrs}/>"#));
+    let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let (header, footer) = (text("header"), text("footer"));
+    if !header.is_empty() || !footer.is_empty() {
+        out.push_str("<headerFooter>");
+        if !header.is_empty() {
+            out.push_str(&format!("<oddHeader>{}</oddHeader>", super::escape::escape_xml(&header)));
+        }
+        if !footer.is_empty() {
+            out.push_str(&format!("<oddFooter>{}</oddFooter>", super::escape::escape_xml(&footer)));
+        }
+        out.push_str("</headerFooter>");
+    }
     (sheet_pr, out)
 }

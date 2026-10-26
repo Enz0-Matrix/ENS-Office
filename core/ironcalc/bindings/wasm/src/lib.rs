@@ -422,6 +422,56 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: что изменено с открытия или сохранения (JSON: листы и диапазоны, заметки).
+    #[wasm_bindgen(js_name = "getEnsChanges")]
+    pub fn get_ens_changes(&self) -> String {
+        self.model.get_ens_changes()
+    }
+
+    #[wasm_bindgen(js_name = "clearEnsChanges")]
+    pub fn clear_ens_changes(&mut self) {
+        self.model.clear_ens_changes()
+    }
+
+    #[wasm_bindgen(js_name = "sheetContentHash")]
+    pub fn sheet_content_hash(&self, sheet: u32) -> Result<String, JsError> {
+        self.model.sheet_content_hash(sheet).map_err(to_js_error)
+    }
+
+    /// ENS-Office: журнал изменений книги (JSON), хранится в xlsx.
+    #[wasm_bindgen(js_name = "getChangeLog")]
+    pub fn get_change_log(&self) -> String {
+        self.model.get_change_log()
+    }
+
+    #[wasm_bindgen(js_name = "setChangeLog")]
+    pub fn set_change_log(&mut self, json: &str) {
+        self.model.set_change_log(json)
+    }
+
+    #[wasm_bindgen(js_name = "getLastModifiedBy")]
+    pub fn get_last_modified_by(&self) -> String {
+        self.model.get_last_modified_by()
+    }
+
+    #[wasm_bindgen(js_name = "setLastModifiedBy")]
+    pub fn set_last_modified_by(&mut self, name: &str) {
+        self.model.set_last_modified_by(name)
+    }
+
+    /// ENS-Office: область печати листа [r1, c1, r2, c2] или пустой массив.
+    #[wasm_bindgen(js_name = "getPrintArea")]
+    pub fn get_print_area(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        Ok(self.model.get_print_area(sheet).map_err(to_js_error)?.map(|a| a.to_vec()).unwrap_or_default())
+    }
+
+    /// ENS-Office: задать область печати (пустой массив — убрать).
+    #[wasm_bindgen(js_name = "setPrintArea")]
+    pub fn set_print_area(&mut self, sheet: u32, area: Vec<i32>) -> Result<(), JsError> {
+        let range = if area.len() == 4 { Some([area[0], area[1], area[2], area[3]]) } else { None };
+        self.model.set_print_area(sheet, range).map_err(to_js_error)
+    }
+
     /// ENS-Office: параметры страницы для печати (JSON), сохраняются в xlsx.
     #[wasm_bindgen(js_name = "getPageSetup")]
     pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {

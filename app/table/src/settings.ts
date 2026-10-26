@@ -31,11 +31,15 @@ export interface Settings {
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
   recent: { path: string; title: string }[];
+  /** Имя для журнала изменений книги ('' — имя пользователя в системе). */
+  userName: string;
+  /** Когда вы последний раз открывали или сохраняли файл (путь → мс): что изменилось с тех пор. */
+  lastOpened: Record<string, number>;
 }
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], userName: '', lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {

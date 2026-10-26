@@ -103,6 +103,15 @@ export interface Model {
   getFilterCriteria(sheet: number): string;
   setFilterCriteria(sheet: number, json: string): void;
   getPageSetup(sheet: number): string;
+  getPrintArea(sheet: number): number[];
+  setPrintArea(sheet: number, area: number[]): void;
+  getEnsChanges(): string;
+  clearEnsChanges(): void;
+  sheetContentHash(sheet: number): string;
+  getChangeLog(): string;
+  setChangeLog(json: string): void;
+  getLastModifiedBy(): string;
+  setLastModifiedBy(name: string): void;
   setPageSetup(sheet: number, json: string): void;
   /** Имена (используются для второго и следующих фильтров листа). */
   getDefinedNameList(): { name: string; scope?: number | null; formula: string }[];
@@ -221,6 +230,7 @@ export function newWorkbook(locale: string, name = 'Книга1'): Model {
   // По желанию пользователя: в новых книгах — по центру по вертикали.
   try { model.setDefaultVerticalCenter(); } catch { /* старый движок */ }
   model.flushSendQueue(); // переименование — не правка пользователя
+  try { model.clearEnsChanges(); } catch { /* старый движок */ }
   return model;
 }
 

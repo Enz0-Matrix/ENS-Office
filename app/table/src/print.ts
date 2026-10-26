@@ -21,11 +21,15 @@ export interface PrintOptions {
   repeatHeader: boolean;
   /** По центру страницы по горизонтали. */
   centerH: boolean;
+  /** Колонтитулы в записи Excel: &L/&C/&R — части, &P — страница, &N — страниц,
+   *  &F — файл, &A — лист, &D — дата, &T — время. */
+  header: string;
+  footer: string;
 }
 
 export const DEFAULT_PRINT: PrintOptions = {
   what: 'sheet', landscape: false, paper: 'A4', fit: 'width', margins: 'normal', marginMm: [19, 18, 19, 18],
-  gridlines: false, repeatHeader: false, centerH: false,
+  gridlines: false, repeatHeader: false, centerH: false, header: '', footer: '',
 };
 
 interface Range { r1: number; c1: number; r2: number; c2: number }
@@ -54,6 +58,7 @@ export function fromSaved(json: string): PrintOptions {
   if (v.paper && v.paper in PAPERS) o.paper = v.paper;
   if (v.fit === 'none' || v.fit === 'width' || v.fit === 'page') o.fit = v.fit;
   for (const k of ['gridlines', 'repeatHeader', 'centerH'] as const) if (typeof v[k] === 'boolean') o[k] = v[k];
+  for (const k of ['header', 'footer'] as const) if (typeof v[k] === 'string') o[k] = v[k];
   if (Array.isArray(v.marginMm) && v.marginMm.length === 4 && v.marginMm.every((x) => typeof x === 'number')) {
     o.marginMm = v.marginMm;
     const preset = (Object.keys(MARGINS_MM) as (keyof typeof MARGINS_MM)[])
@@ -64,8 +69,8 @@ export function fromSaved(json: string): PrintOptions {
 }
 
 export function toSaved(o: PrintOptions): string {
-  const { landscape, paper, fit, gridlines, repeatHeader, centerH } = o;
-  return JSON.stringify({ landscape, paper, fit, marginMm: marginsOf(o), gridlines, repeatHeader, centerH });
+  const { landscape, paper, fit, gridlines, repeatHeader, centerH, header, footer } = o;
+  return JSON.stringify({ landscape, paper, fit, marginMm: marginsOf(o), gridlines, repeatHeader, centerH, header, footer });
 }
 const MAX_CELLS = 400_000;
 const ROW_SCALE = 22 / 25;
@@ -107,27 +112,42 @@ function cellCss(st: CellStyle | null, model: Model, type: number): string {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-/** Что печатаем: выделение или занятая часть листа. */
+/** Что печатаем: выделение, область печати листа или занятая часть листа. */
 export function printRange(model: Model, sheet: number, opts: PrintOptions, sel: Range): Range | null {
   if (opts.what === 'selection' && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)) {
     return { r1: sel.r1, c1: sel.c1, r2: Math.min(sel.r2, 1_048_576), c2: Math.min(sel.c2, 16_384) };
   }
+  const area = printAreaOf(model, sheet);
+  if (area) return area;
   const [r1, c1, r2, c2] = model.getSheetDimension(sheet);
   if (r1 === r2 && c1 === c2 && model.getFormattedCellValue(sheet, r1, c1) === '') return null;
   return { r1: 1, c1: 1, r2, c2 };
 }
 
-/** Таблица для печати и предпросмотра. Возвращает её ширину и высоту в px. */
-export function buildTable(model: Model, sheet: number, r: Range, opts: PrintOptions): { html: string; width: number; height: number } {
+/** Область печати листа (Excel: _xlnm.Print_Area) или null. */
+export function printAreaOf(model: Model, sheet: number): Range | null {
+  try {
+    const a = model.getPrintArea(sheet);
+    return a.length === 4 ? { r1: a[0], c1: a[1], r2: a[2], c2: a[3] } : null;
+  } catch { return null; }
+}
+
+interface PrintRow { html: string; h: number; /** нельзя начинать с неё страницу (внутри объединения) */ keep: boolean }
+interface Built { colgroup: string; cls: string; width: number; head: PrintRow[]; body: PrintRow[] }
+
+/** Строки таблицы для печати и предпросмотра. */
+function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions): Built {
   if ((r.r2 - r.r1 + 1) * (r.c2 - r.c1 + 1) > MAX_CELLS) {
     throw new Error('Слишком большая область для печати. Выделите нужный диапазон и выберите «Выделенный диапазон».');
   }
   const merges = (() => { try { return model.getMergedCells(sheet); } catch { return []; } })();
   const covered = new Set<string>();
+  const insideMerge = new Set<number>();
   const spans = new Map<string, [number, number]>();
   for (const m of merges) {
     spans.set(`${m.row}:${m.column}`, [m.height, m.width]);
     for (let rr = m.row; rr < m.row + m.height; rr++) {
+      if (rr > m.row) insideMerge.add(rr);
       for (let cc = m.column; cc < m.column + m.width; cc++) if (rr !== m.row || cc !== m.column) covered.add(`${rr}:${cc}`);
     }
   }
@@ -138,11 +158,9 @@ export function buildTable(model: Model, sheet: number, r: Range, opts: PrintOpt
     cols.push(w);
     width += w;
   }
-  let height = 0;
-  const rowHtml = (row: number): string => {
+  const rowOf = (row: number): PrintRow | null => {
     const h = Math.round(model.getRowHeight(sheet, row) * ROW_SCALE);
-    if (h === 0) return ''; // скрытая строка не печатается
-    height += h;
+    if (h === 0) return null; // скрытая строка не печатается
     let tds = '';
     for (let c = r.c1; c <= r.c2; c++) {
       if (cols[c - r.c1] === 0 || covered.has(`${row}:${c}`)) continue;
@@ -152,20 +170,25 @@ export function buildTable(model: Model, sheet: number, r: Range, opts: PrintOpt
       const attrs = span ? ` rowspan="${span[0]}" colspan="${span[1]}"` : '';
       tds += `<td${attrs} style="${esc(cellCss(st, model, text ? model.getCellType(sheet, row, c) : 0))}">${esc(text)}</td>`;
     }
-    return `<tr style="height:${h}px">${tds}</tr>`;
+    return { html: `<tr style="height:${h}px">${tds}</tr>`, h, keep: insideMerge.has(row) };
   };
   // Заголовок на каждой странице: закреплённые строки (если область начинается в них), иначе первая.
   const frozen = (() => { try { return model.getFrozenRowsCount(sheet); } catch { return 0; } })();
   const headEnd = opts.repeatHeader ? (frozen >= r.r1 ? Math.min(frozen, r.r2) : r.r1) : r.r1 - 1;
-  let first = '';
-  for (let row = r.r1; row <= headEnd; row++) first += rowHtml(row);
-  let body = '';
-  for (let row = headEnd + 1; row <= r.r2; row++) body += rowHtml(row);
+  const head: PrintRow[] = [];
+  const body: PrintRow[] = [];
+  for (let row = r.r1; row <= r.r2; row++) {
+    const pr = rowOf(row);
+    if (pr) (row <= headEnd ? head : body).push(pr);
+  }
   const colgroup = `<colgroup>${cols.map((w) => (w ? `<col style="width:${w}px">` : '')).join('')}</colgroup>`;
-  const head = opts.repeatHeader ? `<thead>${first}</thead><tbody>${body}</tbody>` : `<tbody>${body}</tbody>`;
-  const cls = `print-table${opts.gridlines ? ' grid' : ''}`;
+  return { colgroup, cls: `print-table${opts.gridlines ? ' grid' : ''}`, width, head, body };
+}
+
+function tableHtml(b: Built, opts: PrintOptions, rows: PrintRow[]): string {
   const center = opts.centerH ? 'margin:0 auto;' : '';
-  return { html: `<table class="${cls}" style="${center}width:${width}px">${colgroup}${head}</table>`, width, height };
+  const head = b.head.length ? `<thead>${b.head.map((x) => x.html).join('')}</thead>` : '';
+  return `<table class="${b.cls}" style="${center}width:${b.width}px">${b.colgroup}${head}<tbody>${rows.map((x) => x.html).join('')}</tbody></table>`;
 }
 
 /** Размер области печати на странице (без полей), px. */
@@ -183,29 +206,117 @@ function zoomFor(opts: PrintOptions, width: number, height: number): number {
   return 1;
 }
 
-/** Сколько страниц получится (оценка: по ширине × по высоте). */
-function pageCount(opts: PrintOptions, width: number, height: number, z: number): number {
-  const [pxW, pxH] = pageArea(opts);
-  return Math.max(1, Math.ceil((width * z) / pxW - 0.01)) * Math.max(1, Math.ceil((height * z) / pxH - 0.01));
+/** Разбивка строк на страницы (как будет напечатано): заголовок — на каждой. */
+function paginate(b: Built, opts: PrintOptions): { pages: PrintRow[][]; zoom: number } {
+  const headH = b.head.reduce((s, x) => s + x.h, 0);
+  const total = headH + b.body.reduce((s, x) => s + x.h, 0);
+  const zoom = zoomFor(opts, b.width, total);
+  // Небольшой запас: в печати строки с переносом бывают чуть выше.
+  const avail = Math.max(20, (pageArea(opts)[1] / zoom) * 0.98 - headH);
+  const pages: PrintRow[][] = [];
+  let cur: PrintRow[] = [];
+  let used = 0;
+  for (const row of b.body) {
+    if (cur.length && used + row.h > avail && !row.keep) {
+      pages.push(cur);
+      cur = [];
+      used = 0;
+    }
+    cur.push(row);
+    used += row.h;
+  }
+  if (cur.length || !pages.length) pages.push(cur);
+  return { pages, zoom };
+}
+
+// --- Колонтитулы (запись Excel: &L, &C, &R, &P, &N, &D, &T, &F, &A) ---
+
+export const HEADER_PRESETS: [string, string][] = [
+  ['', 'Нет'], ['&C&F', 'Имя файла'], ['&C&A', 'Имя листа'], ['&L&F&R&A', 'Имя файла и лист'], ['&R&D', 'Дата печати'],
+];
+export const FOOTER_PRESETS: [string, string][] = [
+  ['', 'Нет'], ['&CСтраница &P', 'Страница 1'], ['&CСтраница &P из &N', 'Страница 1 из N'],
+  ['&L&F&RСтраница &P из &N', 'Имя файла; страница 1 из N'], ['&L&A&RСтраница &P из &N', 'Имя листа; страница 1 из N'],
+];
+
+interface HfContext { page: number; pages: number; file: string; sheet: string }
+
+/** Колонтитул Excel → три части (слева, по центру, справа). Шрифтовые коды пропускаются. */
+export function hfParts(code: string, ctx: HfContext): [string, string, string] {
+  const parts: [string, string, string] = ['', '', ''];
+  let sec = 1;
+  const now = new Date();
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (ch !== '&') { parts[sec] += ch; continue; }
+    const n = code[++i] ?? '';
+    switch (n.toUpperCase()) {
+      case 'L': sec = 0; break;
+      case 'C': sec = 1; break;
+      case 'R': sec = 2; break;
+      case 'P': parts[sec] += String(ctx.page); break;
+      case 'N': parts[sec] += String(ctx.pages); break;
+      case 'F': parts[sec] += ctx.file; break;
+      case 'A': parts[sec] += ctx.sheet; break;
+      case 'D': parts[sec] += now.toLocaleDateString('ru-RU'); break;
+      case 'T': parts[sec] += now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); break;
+      case '&': parts[sec] += '&'; break;
+      case '"': { const end = code.indexOf('"', i + 1); i = end < 0 ? code.length : end; break; } // &"Шрифт,Жирный"
+      case 'K': i += 6; break; // &Kцвет
+      default:
+        if (/\d/.test(n)) { while (/\d/.test(code[i + 1] ?? '')) i++; } // &12 — размер шрифта
+        // &B, &I, &U, &S, &E, &X, &Y — начертание: пропускаем
+    }
+  }
+  return parts;
+}
+
+function hfHtml(code: string, ctx: HfContext, pos: string): string {
+  if (!code) return '';
+  const [l, c, r] = hfParts(code, ctx);
+  return `<div class="print-hf" style="${pos}"><span>${esc(l)}</span><span>${esc(c)}</span><span>${esc(r)}</span></div>`;
+}
+
+/** Одна страница: бумага, поля, колонтитулы, часть таблицы. */
+function pageHtml(b: Built, opts: PrintOptions, rows: PrintRow[], zoom: number, ctx: HfContext, scaleForPreview = false): string {
+  const [mt, mr, mb, ml] = marginsOf(opts);
+  const [w, h] = paperOf(opts);
+  const size = scaleForPreview ? '' : `width:${w}mm;height:${h - 0.5}mm;`;
+  return `<div class="print-pg" style="${size}padding:${mt}mm ${mr}mm ${mb}mm ${ml}mm">
+    ${hfHtml(opts.header, ctx, `left:${ml}mm;right:${mr}mm;top:${Math.max(3, mt / 2 - 2)}mm`)}${hfHtml(opts.footer, ctx, `left:${ml}mm;right:${mr}mm;bottom:${Math.max(3, mb / 2 - 2)}mm`)}
+    <div class="print-zoom" style="zoom:${zoom}">${tableHtml(b, opts, rows)}</div></div>`;
 }
 
 const PAPER_LABEL: Record<Paper, string> = { A4: 'A4', A3: 'A3', A5: 'A5', Letter: 'Letter' };
+let previewPage = 0;
 
-/** Предпросмотр: лист бумаги с таблицей в масштабе. */
-export function renderPreview(host: HTMLElement, model: Model, sheet: number, opts: PrintOptions, sel: Range): void {
+/** Предпросмотр: страница с таблицей в масштабе, листание страниц. */
+export function renderPreview(host: HTMLElement, model: Model, sheet: number, opts: PrintOptions, sel: Range, file = ''): void {
   const r = printRange(model, sheet, opts, sel);
   if (!r) { host.innerHTML = '<p class="bs-muted">На листе нет данных для печати.</p>'; return; }
-  let t;
-  try { t = buildTable(model, sheet, r, opts); } catch (e) { host.innerHTML = `<p class="bs-muted">${esc(String((e as Error).message ?? e))}</p>`; return; }
-  const [mt, mr, mb, ml] = marginsOf(opts);
+  let b: Built;
+  try { b = buildRows(model, sheet, r, opts); } catch (e) { host.innerHTML = `<p class="bs-muted">${esc(String((e as Error).message ?? e))}</p>`; return; }
+  const { pages, zoom } = paginate(b, opts);
+  previewPage = Math.max(0, Math.min(previewPage, pages.length - 1));
   const [paperW, paperH] = paperOf(opts);
-  const z = zoomFor(opts, t.width, t.height);
-  const pages = pageCount(opts, t.width, t.height, z);
+  const sheetName = model.getWorksheetsProperties()[sheet]?.name ?? '';
+  const ctx: HfContext = { page: previewPage + 1, pages: pages.length, file, sheet: sheetName };
+  const tooWide = opts.fit === 'none' && b.width > pageArea(opts)[0];
+  const area = printAreaOf(model, sheet) && opts.what === 'sheet' ? ' · область печати' : '';
   host.innerHTML = `<div class="print-paper" style="aspect-ratio:${paperW}/${paperH}">
-    <div class="print-sheet" style="padding:${mt}mm ${mr}mm ${mb}mm ${ml}mm">
-      <div class="print-zoom" style="zoom:${z}">${t.html}</div></div></div>
-    <p class="bs-muted">${opts.fit === 'none' ? 'Без масштабирования' : `Масштаб ${Math.round(z * 100)}%`} · ${PAPER_LABEL[opts.paper]} ·
-      ${opts.landscape ? 'альбомная' : 'книжная'} · страниц: ${pages} · строк: ${r.r2 - r.r1 + 1}, столбцов: ${r.c2 - r.c1 + 1}</p>`;
+      <div class="print-sheet">${pageHtml(b, opts, pages[previewPage], zoom, ctx, true)}</div></div>
+    <div class="print-nav">
+      <button data-pg="-1" ${previewPage ? '' : 'disabled'} title="Предыдущая страница">◀</button>
+      <span>Страница ${previewPage + 1} из ${pages.length}</span>
+      <button data-pg="1" ${previewPage < pages.length - 1 ? '' : 'disabled'} title="Следующая страница">▶</button>
+    </div>
+    <p class="bs-muted">${opts.fit === 'none' ? 'Без масштабирования' : `Масштаб ${Math.round(zoom * 100)}%`} · ${PAPER_LABEL[opts.paper]} ·
+      ${opts.landscape ? 'альбомная' : 'книжная'}${area} · строк: ${r.r2 - r.r1 + 1}, столбцов: ${r.c2 - r.c1 + 1}
+      ${tooWide ? '<br>Таблица шире страницы: правые столбцы не поместятся — выберите «Вписать все столбцы на одну страницу».' : ''}</p>`;
+  host.querySelectorAll<HTMLButtonElement>('[data-pg]').forEach((btn) => btn.addEventListener('click', () => {
+    previewPage += Number(btn.dataset.pg);
+    renderPreview(host, model, sheet, opts, sel, file);
+  }));
   // Бумага в предпросмотре — уменьшенная копия: подгоняем масштаб под ширину окна.
   const paper = host.querySelector<HTMLElement>('.print-paper')!;
   const inner = host.querySelector<HTMLElement>('.print-sheet')!;
@@ -215,28 +326,27 @@ export function renderPreview(host: HTMLElement, model: Model, sheet: number, op
   inner.style.height = `${paperH * 96 / 25.4}px`;
 }
 
-/** Печать: системное окно (принтер или PDF). */
+export function resetPreviewPage(): void { previewPage = 0; }
+
+/** Печать: системное окно (принтер или PDF). Страницы раскладываем сами — так на
+ *  каждой будут колонтитулы с номером страницы, в любом браузерном движке. */
 export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel: Range, title: string): void {
   const r = printRange(model, sheet, opts, sel);
   if (!r) throw new Error('На листе нет данных для печати.');
-  const t = buildTable(model, sheet, r, opts);
-  const [mt, mr, mb, ml] = marginsOf(opts);
+  const b = buildRows(model, sheet, r, opts);
+  const { pages, zoom } = paginate(b, opts);
+  const sheetName = model.getWorksheetsProperties()[sheet]?.name ?? '';
   let root = document.getElementById('print-root');
   if (!root) {
     root = document.createElement('div');
     root.id = 'print-root';
     document.body.append(root);
   }
-  // Поля страницы — нулевые: тогда браузер не печатает в них свои дату, имя и
-  // путь к файлу. Наши поля — пустые строки шапки и подвала внешней таблицы
-  // (повторяются на каждой странице) и отступы слева/справа.
+  // Поля страницы у браузера — нулевые: тогда он не печатает в них свои дату, имя и
+  // путь к файлу. Наши поля и колонтитулы — внутри каждой страницы.
   const size = opts.paper === 'Letter' ? 'letter' : opts.paper;
   root.innerHTML = `<style>@page { size: ${size} ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
-    <table class="print-page" style="padding: 0 ${mr}mm 0 ${ml}mm; width: 100%">
-      <thead><tr><td style="height:${mt}mm"></td></tr></thead>
-      <tfoot><tr><td style="height:${mb}mm"></td></tr></tfoot>
-      <tbody><tr><td><div class="print-zoom" style="zoom:${zoomFor(opts, t.width, t.height)}">${t.html}</div></td></tr></tbody>
-    </table>`;
+    ${pages.map((rows, i) => pageHtml(b, opts, rows, zoom, { page: i + 1, pages: pages.length, file: title, sheet: sheetName })).join('')}`;
   const old = document.title;
   document.title = title; // имя PDF по умолчанию
   document.body.classList.add('printing');

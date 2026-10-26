@@ -1083,7 +1083,7 @@ fn load_page_setup(ws: &XmlNode) -> String {
     let child = |name: &str| ws.children().find(|n| n.has_tag_name(name));
     let setup = child("pageSetup");
     let margins = child("pageMargins");
-    if setup.is_none() && margins.is_none() {
+    if setup.is_none() && margins.is_none() && child("headerFooter").is_none() {
         return String::new();
     }
     let attr = |n: Option<&XmlNode>, a: &str| n.and_then(|n| n.attribute(a).map(|v| v.to_string()));
@@ -1109,6 +1109,13 @@ fn load_page_setup(ws: &XmlNode) -> String {
         (inches * 25.4 * 10.0).round() / 10.0
     };
     let options = child("printOptions");
+    let hf = child("headerFooter");
+    let hf_text = |name: &str| {
+        hf.and_then(|h| h.children().find(|n| n.has_tag_name(name)))
+            .and_then(|n| n.text())
+            .unwrap_or_default()
+            .to_string()
+    };
     serde_json::json!({
         "landscape": attr(setup, "orientation").as_deref() == Some("landscape"),
         "paper": paper,
@@ -1116,6 +1123,8 @@ fn load_page_setup(ws: &XmlNode) -> String {
         "marginMm": [mm("top", 0.75), mm("right", 0.7), mm("bottom", 0.75), mm("left", 0.7)],
         "gridlines": flag(options, "gridLines"),
         "centerH": flag(options, "horizontalCentered"),
+        "header": hf_text("oddHeader"),
+        "footer": hf_text("oddFooter"),
     })
     .to_string()
 }

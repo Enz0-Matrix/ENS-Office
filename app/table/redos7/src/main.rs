@@ -185,6 +185,7 @@ fn api(app: &App, cmd: &str, headers: &[(String, String)], body: Vec<u8>) -> Rep
     let j = || -> Value { serde_json::from_slice(&body).unwrap_or(Value::Null) };
     let rec = &app.recovery;
     match cmd {
+        "user_name" => json_reply(json!(files::user_name())),
         "inspect_file" => json_reply(json!(files::inspect_file(arg(&j(), "path")?)?)),
         "read_file" => {
             let p = PathBuf::from(arg(&j(), "path")?);
@@ -205,6 +206,8 @@ fn api(app: &App, cmd: &str, headers: &[(String, String)], body: Vec<u8>) -> Rep
             json_reply(json!(rec.begin(arg(&v, "id")?, meta)?))
         }
         "recovery_snapshot" => json_reply(json!(rec.snapshot(header("id").ok_or("нет id")?, body)?)),
+        "recovery_snapshot_xlsx" => json_reply(json!(rec.snapshot_xlsx(header("id").ok_or("нет id")?, body)?)),
+        "recovery_load_snapshot_xlsx" => { let v = j(); bytes_reply(rec.load_snapshot_xlsx(arg(&v, "session")?, arg(&v, "id")?)?) }
         "recovery_append" => json_reply(json!(rec.append(header("id").ok_or("нет id")?, body)?)),
         "recovery_forget" => json_reply(json!(rec.forget(arg(&j(), "id")?)?)),
         "recovery_end_session" => json_reply(json!(rec.end_session()?)),

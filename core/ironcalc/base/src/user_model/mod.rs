@@ -6,6 +6,7 @@ mod border_utils;
 mod clipboard;
 mod common;
 mod conditional_formatting;
+mod ens_changes;
 mod ens_tools;
 pub(crate) mod history;
 mod links;

@@ -111,6 +111,12 @@ pub(crate) enum Diff {
         new_value: (u8, bool),
         old_value: (u8, bool),
     },
+    /// ENS-Office: print area of a sheet (`_xlnm.Print_Area`), [r1, c1, r2, c2].
+    SetPrintArea {
+        sheet: u32,
+        new_value: Option<[i32; 4]>,
+        old_value: Option<[i32; 4]>,
+    },
     /// ENS-Office: page setup of a sheet (JSON, see `Worksheet::ens_page_setup`).
     SetPageSetup {
         sheet: u32,

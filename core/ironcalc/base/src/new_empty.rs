@@ -680,6 +680,7 @@ impl<'a> Model<'a> {
             tables: HashMap::new(),
             views,
             theme: Default::default(),
+            ens_change_log: String::new(),
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;
