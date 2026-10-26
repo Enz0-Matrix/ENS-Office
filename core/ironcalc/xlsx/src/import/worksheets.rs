@@ -1070,9 +1070,41 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             views,
             conditional_formatting,
             links,
+            ens_filter_criteria: load_filter_criteria(ws),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: Excel's autofilter choices (`<filterColumn><filters><filter val=…/>`)
+/// as the JSON kept in `Worksheet::ens_filter_criteria` (first filter of the sheet).
+fn load_filter_criteria(ws: &XmlNode) -> String {
+    let Some(af) = ws.children().find(|n| n.has_tag_name("autoFilter")) else {
+        return String::new();
+    };
+    let mut columns = Vec::new();
+    for fc in af.children().filter(|n| n.has_tag_name("filterColumn")) {
+        let Some(col) = fc.attribute("colId").and_then(|v| v.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(filters) = fc.children().find(|n| n.has_tag_name("filters")) else {
+            continue; // custom/top10/dynamic filters are not supported yet
+        };
+        let mut values: Vec<serde_json::Value> = filters
+            .children()
+            .filter(|n| n.has_tag_name("filter"))
+            .filter_map(|n| n.attribute("val"))
+            .map(|v| serde_json::Value::String(v.to_lowercase()))
+            .collect();
+        if filters.attribute("blank") == Some("1") || filters.attribute("blank") == Some("true") {
+            values.push(serde_json::Value::String("(пустые)".to_string()));
+        }
+        columns.push(serde_json::json!([col, values]));
+    }
+    if columns.is_empty() {
+        return String::new();
+    }
+    serde_json::json!([columns]).to_string()
 }
 
 pub(super) fn load_sheets<R: Read + std::io::Seek>(

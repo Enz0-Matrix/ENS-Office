@@ -2,7 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { type BorderType, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { printSheet, renderPreview } from './print';
@@ -1029,15 +1029,46 @@ grid.onResize = (kind, index, px) => {
 
 // Маркер заполнения: формулы протягиваются со сдвигом ссылок, ряды
 // продолжаются (1, 2 → 3, 4…; январь → февраль…), как в Excel.
-grid.onFill = (t) => {
+grid.onFill = async (t) => {
   const s = grid.sel;
   const area = selectionArea();
+  const rows = t.r1 !== s.r1 || t.r2 !== s.r2;
+  // Куда тянем (без исходных ячеек): там могут быть скрытые строки/столбцы.
+  const ext: Rect = rows
+    ? (t.r1 < s.r1 ? { r1: t.r1, c1: s.c1, r2: s.r1 - 1, c2: s.c2 } : { r1: s.r2 + 1, c1: s.c1, r2: t.r2, c2: s.c2 })
+    : (t.c1 < s.c1 ? { r1: s.r1, c1: t.c1, r2: s.r2, c2: s.c1 - 1 } : { r1: s.r1, c1: s.c2 + 1, r2: s.r2, c2: t.c2 });
+  const info = hiddenIn(ext);
+  let visibleOnly = false;
+  if (info.rows || info.cols) {
+    const c = await askHidden('Протягивание', info);
+    if (!c) return;
+    visibleOnly = c === 'visible';
+  }
+  // Только видимые: запоминаем скрытые ячейки и возвращаем их после протягивания.
+  const keep: { r: number; c: number; content: string; style: CellStyle }[] = [];
+  if (visibleOnly) {
+    for (let r = ext.r1; r <= ext.r2; r++) {
+      for (let c = ext.c1; c <= ext.c2; c++) {
+        if (model.getRowHeight(grid.sheet, r) === 0 || model.getColumnWidth(grid.sheet, c) === 0) {
+          keep.push({ r, c, content: model.getCellContent(grid.sheet, r, c), style: model.getCellStyle(grid.sheet, r, c).style });
+        }
+      }
+    }
+  }
+  const mark = model.undoMark();
   try {
-    if (t.r1 !== s.r1 || t.r2 !== s.r2) model.autoFillRows(area, t.r1 < s.r1 ? t.r1 : t.r2);
+    if (rows) model.autoFillRows(area, t.r1 < s.r1 ? t.r1 : t.r2);
     else model.autoFillColumns(area, t.c1 < s.c1 ? t.c1 : t.c2);
+    for (const k of keep) {
+      if (k.content) model.setUserInput(grid.sheet, k.r, k.c, k.content);
+      else model.rangeClearContents(grid.sheet, k.r, k.c, k.r, k.c);
+      model.setSelectedCell(k.r, k.c);
+      model.onPasteStyles([[k.style]]);
+    }
   } catch (e) {
     showToast(`Не получилось протянуть: ${e}`);
   }
+  model.mergeUndoSince(mark);
   grid.selectRange(t.r1, t.c1, t.r2, t.c2);
   updateFormulaBar();
   updateStatus();
@@ -1561,8 +1592,27 @@ function pasteHere(text: string): void {
 editor.addEventListener('copy', (e) => {
   if (editing) return;
   e.preventDefault();
-  e.clipboardData?.setData('text/plain', takeClip(false));
+  e.clipboardData?.setData('text/plain', visibleCopyText() ?? takeClip(false));
 });
+
+/** Копирование с отобранным фильтром (или «только видимые» в настройке): только видимые
+ *  строки и столбцы, значениями, как в Excel. Вопрос задать нельзя (буфер ждать не будет),
+ *  поэтому при «спрашивать» — как в Excel. null — копировать как обычно. */
+function visibleCopyText(): string | null {
+  const s = grid.sel;
+  if (grid.extraRanges.length) return null;
+  const info = hiddenIn({ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 });
+  if (!info.rows && !info.cols) return null;
+  const visible = settings.hiddenPolicy === 'visible' || (settings.hiddenPolicy !== 'all' && info.filtered);
+  if (!visible) return null;
+  const parts = visibleParts({ r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 });
+  const rowsSet = [...new Set(parts.flatMap((p) => Array.from({ length: p.r2 - p.r1 + 1 }, (_, i) => p.r1 + i)))].sort((a, b) => a - b);
+  const colsSet = [...new Set(parts.flatMap((p) => Array.from({ length: p.c2 - p.c1 + 1 }, (_, i) => p.c1 + i)))].sort((a, b) => a - b);
+  const text = rowsSet.map((r) => colsSet.map((c) => model.getFormattedCellValue(grid.sheet, r, c)).join('\t')).join('\n');
+  dropClip();
+  showToast(`Скопированы только видимые строки (${rowsSet.length}) — значениями, как в Excel. Изменить: «Вид → Скрытое».`);
+  return text;
+}
 editor.addEventListener('cut', (e) => {
   if (editing) return;
   e.preventDefault();
@@ -1920,7 +1970,7 @@ register(
     void onTargets('Очистка', () => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); })
       .then(() => { grid.render(); updateFormulaBar(); });
   } },
-  { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм', 'итог'], keys: ['Alt+Equal'], run: autosum },
+  { id: 'edit.autosum', label: 'Автосумма', keywords: ['sum', 'сумма', 'сумм', 'итог'], keys: ['Alt+Equal'], run: () => void autosum() },
   { id: 'edit.insertFunction', label: 'Вставить функцию', keywords: ['insert function', 'функция', 'fx', 'мастер функций'], keys: ['Shift+F3'],
     run: () => { search.value = 'ƒ '; search.focus(); showPicker(functionList(''), search); } },
   { id: 'clipboard.copy', label: 'Копировать', keywords: ['copy'], keys: ['Ctrl+KeyC'], nativeKeys: true,
@@ -2319,9 +2369,17 @@ renderSheetTabs();
 grid.select(1, 1);
 focusGrid();
 
-function autosum(): void {
+async function autosum(): Promise<void> {
   if (editing) commitEdit(0, 0);
   const s = grid.sel;
+  // Скрытые строки в суммируемом: СУММ — со всеми, ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109) — только видимые.
+  const sumOf = async (r1: number, c1: number, r2: number, c2: number): Promise<string | null> => {
+    const info = hiddenIn({ r1, c1, r2, c2 });
+    if (!info.rows && !info.cols) return 'СУММ(';
+    const c = await askHidden('Автосумма', info);
+    if (!c) return null;
+    return c === 'visible' ? 'ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;' : 'СУММ(';
+  };
   const isNum = (r: number, c: number) => model.getCellType(grid.sheet, r, c) === 1;
   const sheet = grid.sheet;
   const ref = (r1: number, c1: number, r2: number, c2: number) =>
@@ -2333,7 +2391,11 @@ function autosum(): void {
       .every((c) => !model.getFormattedCellValue(sheet, s.r2, c));
     const target = lastEmpty && s.r2 > s.r1 ? s.r2 : s.r2 + 1;
     const bottom = lastEmpty && s.r2 > s.r1 ? s.r2 - 1 : s.r2;
-    for (let c = s.c1; c <= s.c2; c++) model.setUserInput(sheet, target, c, `=СУММ(${ref(s.r1, c, bottom, c)})`);
+    const fn = await sumOf(s.r1, s.c1, bottom, s.c2);
+    if (!fn) return;
+    const mark = model.undoMark();
+    for (let c = s.c1; c <= s.c2; c++) model.setUserInput(sheet, target, c, `=${fn}${ref(s.r1, c, bottom, c)})`);
+    model.mergeUndoSince(mark);
     grid.select(target, s.c1);
     grid.render();
     return;
@@ -2341,10 +2403,19 @@ function autosum(): void {
   // Одна ячейка: сумма чисел над ней, а если над ней пусто — слева.
   let top = s.row - 1;
   while (top >= 1 && isNum(top, s.column)) top--;
-  if (top < s.row - 1) { startEdit(`=СУММ(${ref(top + 1, s.column, s.row - 1, s.column)})`); return; }
+  if (top < s.row - 1) {
+    const fn = await sumOf(top + 1, s.column, s.row - 1, s.column);
+    if (fn) startEdit(`=${fn}${ref(top + 1, s.column, s.row - 1, s.column)})`);
+    return;
+  }
   let left = s.column - 1;
   while (left >= 1 && isNum(s.row, left)) left--;
-  startEdit(left < s.column - 1 ? `=СУММ(${ref(s.row, left + 1, s.row, s.column - 1)})` : '=СУММ()');
+  if (left < s.column - 1) {
+    const fn = await sumOf(s.row, left + 1, s.row, s.column - 1);
+    if (fn) startEdit(`=${fn}${ref(s.row, left + 1, s.row, s.column - 1)})`);
+    return;
+  }
+  startEdit('=СУММ()');
 }
 
 async function newBook(): Promise<void> {

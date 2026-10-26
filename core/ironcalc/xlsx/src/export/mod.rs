@@ -155,11 +155,17 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             .find(|d| d.sheet_id == Some(worksheet.sheet_id) && d.name.eq_ignore_ascii_case(ironcalc_base::FILTER_DATABASE))
             .and_then(|d| ironcalc_base::parse_filter_range(&d.formula))
             .map(|(r1, c1, r2, c2)| {
-                format!(
-                    "<autoFilter ref=\"{}{r1}:{}{r2}\"/>",
+                let range = format!(
+                    "{}{r1}:{}{r2}",
                     number_to_column(c1).unwrap_or_default(),
                     number_to_column(c2).unwrap_or_default()
-                )
+                );
+                let columns = filter_columns_xml(&worksheet.ens_filter_criteria);
+                if columns.is_empty() {
+                    format!("<autoFilter ref=\"{range}\"/>")
+                } else {
+                    format!("<autoFilter ref=\"{range}\">{columns}</autoFilter>")
+                }
             })
             .unwrap_or_default();
         zip.write_all(
@@ -189,4 +195,31 @@ pub fn save_to_icalc(model: &Model, file_name: &str) -> Result<(), XlsxError> {
     file.write_all(&s)?;
 
     Ok(())
+}
+
+
+/// ENS-Office: the first filter's choices as Excel's `<filterColumn>` elements.
+fn filter_columns_xml(criteria: &str) -> String {
+    let Ok(serde_json::Value::Array(filters)) = serde_json::from_str::<serde_json::Value>(criteria) else {
+        return String::new();
+    };
+    let Some(serde_json::Value::Array(columns)) = filters.first() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for c in columns {
+        let (Some(col), Some(serde_json::Value::Array(values))) = (c.get(0).and_then(|v| v.as_i64()), c.get(1)) else {
+            continue;
+        };
+        let blank = values.iter().any(|v| v.as_str() == Some("(пустые)"));
+        let items: String = values
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|v| *v != "(пустые)")
+            .map(|v| format!("<filter val=\"{}\"/>", escape::escape_xml(v)))
+            .collect();
+        let blank_attr = if blank { " blank=\"1\"" } else { "" };
+        out.push_str(&format!("<filterColumn colId=\"{col}\"><filters{blank_attr}>{items}</filters></filterColumn>"));
+    }
+    out
 }

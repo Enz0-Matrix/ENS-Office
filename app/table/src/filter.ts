@@ -62,6 +62,15 @@ export function filtersOf(sheet: number): SheetFilter[] {
         if (rect) list.push({ ...rect, criteria: new Map() });
       }
     } catch { /* старый движок */ }
+    // Отбор (что показано) — из книги: [[[смещение столбца, [значения…]], …], …].
+    try {
+      const saved = JSON.parse(m.getFilterCriteria(sheet) || '[]') as [number, string[]][][];
+      saved.forEach((cols, i) => {
+        const f = list![i];
+        if (!f || !Array.isArray(cols)) return;
+        for (const [off, vals] of cols) if (Array.isArray(vals)) f.criteria.set(f.c1 + off, new Set(vals.map((v) => String(v).toLowerCase())));
+      });
+    } catch { /* нет отбора или старый движок */ }
     filters.set(sheet, list);
   }
   return list ?? [];
@@ -87,6 +96,10 @@ function persist(sheet: number): void {
   const m = host.model();
   const list = filtersOf(sheet);
   try { m.setAutoFilter(sheet, list[0] ? [list[0].r1, list[0].c1, list[0].r2, list[0].c2] : []); } catch { /* старый движок */ }
+  try {
+    const crit = list.map((f) => [...f.criteria].map(([c, vals]) => [c - f.c1, [...vals]]));
+    m.setFilterCriteria(sheet, crit.some((c) => c.length) ? JSON.stringify(crit) : '');
+  } catch { /* старый движок */ }
   try {
     const name = m.getWorksheetsProperties()[sheet].name;
     const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;

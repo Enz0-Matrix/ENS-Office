@@ -99,6 +99,9 @@ export interface Model {
   onPasteStyles(styles: CellStyle[][]): void;
   setRowsHidden(sheet: number, rowStart: number, rowEnd: number, hidden: boolean): void;
   setColumnsHidden(sheet: number, columnStart: number, columnEnd: number, hidden: boolean): void;
+  /** Отбор фильтров листа (JSON), сохраняется в xlsx. */
+  getFilterCriteria(sheet: number): string;
+  setFilterCriteria(sheet: number, json: string): void;
   /** Имена (используются для второго и следующих фильтров листа). */
   getDefinedNameList(): { name: string; scope?: number | null; formula: string }[];
   newDefinedName(name: string, scope: number | null | undefined, formula: string): void;

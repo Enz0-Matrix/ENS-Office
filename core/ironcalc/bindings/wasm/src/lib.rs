@@ -422,6 +422,17 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: отбор фильтров листа (JSON), сохраняется в xlsx.
+    #[wasm_bindgen(js_name = "getFilterCriteria")]
+    pub fn get_filter_criteria(&self, sheet: u32) -> Result<String, JsError> {
+        self.model.get_filter_criteria(sheet).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "setFilterCriteria")]
+    pub fn set_filter_criteria(&mut self, sheet: u32, json: &str) -> Result<(), JsError> {
+        self.model.set_filter_criteria(sheet, json).map_err(to_js_error)
+    }
+
     /// ENS-Office: группы строк: [строка, уровень, свёрнуто 0/1, …].
     #[wasm_bindgen(js_name = "getRowOutline")]
     pub fn get_row_outline(&self, sheet: u32) -> Result<Vec<i32>, JsError> {

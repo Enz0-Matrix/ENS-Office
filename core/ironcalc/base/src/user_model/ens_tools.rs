@@ -137,6 +137,17 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// ENS-Office: what the sheet's filters show (JSON, see `Worksheet::ens_filter_criteria`).
+    pub fn get_filter_criteria(&self, sheet: u32) -> Result<String, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_filter_criteria.clone())
+    }
+
+    /// ENS-Office: remembers what the sheet's filters show (saved to xlsx).
+    pub fn set_filter_criteria(&mut self, sheet: u32, json: &str) -> Result<(), String> {
+        self.model.workbook.worksheet_mut(sheet)?.ens_filter_criteria = json.to_string();
+        Ok(())
+    }
+
     /// ENS-Office: outline (grouping) of rows, `[row, level, collapsed (0/1), …]`
     /// for the rows in a group or carrying a "collapsed" flag.
     pub fn get_row_outline(&self, sheet: u32) -> Result<Vec<i32>, String> {

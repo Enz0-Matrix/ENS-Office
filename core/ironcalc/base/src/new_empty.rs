@@ -76,6 +76,7 @@ impl<'a> Model<'a> {
             views,
             conditional_formatting: vec![],
             links: HashMap::new(),
+            ens_filter_criteria: String::new(),
         }
     }
 

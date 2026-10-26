@@ -276,6 +276,10 @@ pub struct Worksheet {
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Hyperlinks in the worksheet, keyed by (row, column) of the cell they are attached to
     pub links: HashMap<(i32, i32), Link>,
+    /// ENS-Office: what the sheet's filters show, JSON `[[[column offset, [values…]], …], …]`
+    /// (one entry per filter; values as shown, lower case; "(пустые)" — blanks).
+    /// The first filter is saved to xlsx as Excel's `<filterColumn>`.
+    pub ens_filter_criteria: String,
 }
 
 /// Internal representation of Excel's sheet_data
