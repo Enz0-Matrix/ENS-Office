@@ -252,6 +252,11 @@ footer { display: flex; flex-direction: column; }
 .print-go { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; padding: 10px 22px; border: 0; border-radius: 8px;
   background: var(--accent); color: #fff; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; box-shadow: 0 2px 6px rgba(43,122,107,.3); }
 .print-go:hover { background: var(--accent-dark); }
+.print-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.print-btns .print-go { margin-bottom: 0; }
+.print-margins { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.print-margins[hidden] { display: none; }
+.print-options input[type=number] { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font: inherit; color: var(--text); background: #fff; width: 100%; box-sizing: border-box; }
 .print-paper { width: 100%; max-width: 560px; background: #fff; overflow: hidden; border-radius: 2px;
   box-shadow: 0 4px 18px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.05); }
 .print-sheet { transform-origin: 0 0; box-sizing: border-box; overflow: hidden; }

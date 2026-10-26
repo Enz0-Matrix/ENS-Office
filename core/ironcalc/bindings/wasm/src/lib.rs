@@ -422,6 +422,17 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// ENS-Office: параметры страницы для печати (JSON), сохраняются в xlsx.
+    #[wasm_bindgen(js_name = "getPageSetup")]
+    pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {
+        self.model.get_page_setup(sheet).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "setPageSetup")]
+    pub fn set_page_setup(&mut self, sheet: u32, json: &str) -> Result<(), JsError> {
+        self.model.set_page_setup(sheet, json).map_err(to_js_error)
+    }
+
     /// ENS-Office: отбор фильтров листа (JSON), сохраняется в xlsx.
     #[wasm_bindgen(js_name = "getFilterCriteria")]
     pub fn get_filter_criteria(&self, sheet: u32) -> Result<String, JsError> {

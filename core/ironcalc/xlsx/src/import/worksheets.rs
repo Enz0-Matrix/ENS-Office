@@ -1071,9 +1071,53 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             conditional_formatting,
             links,
             ens_filter_criteria: load_filter_criteria(ws),
+            ens_page_setup: load_page_setup(ws),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: Excel's page setup (`<pageSetup>`, `<pageMargins>`, `<printOptions>`,
+/// `<sheetPr><pageSetUpPr fitToPage>`) as the JSON kept in `Worksheet::ens_page_setup`.
+fn load_page_setup(ws: &XmlNode) -> String {
+    let child = |name: &str| ws.children().find(|n| n.has_tag_name(name));
+    let setup = child("pageSetup");
+    let margins = child("pageMargins");
+    if setup.is_none() && margins.is_none() {
+        return String::new();
+    }
+    let attr = |n: Option<&XmlNode>, a: &str| n.and_then(|n| n.attribute(a).map(|v| v.to_string()));
+    let flag = |n: Option<&XmlNode>, a: &str| matches!(attr(n, a).as_deref(), Some("1" | "true"));
+    let fit_to_page = child("sheetPr")
+        .and_then(|p| p.children().find(|n| n.has_tag_name("pageSetUpPr")))
+        .is_some_and(|n| matches!(n.attribute("fitToPage"), Some("1" | "true")));
+    let fit = if !fit_to_page {
+        "none"
+    } else if attr(setup, "fitToHeight").as_deref() == Some("0") {
+        "width"
+    } else {
+        "page"
+    };
+    let paper = match attr(setup, "paperSize").as_deref() {
+        Some("1") => "Letter",
+        Some("8") => "A3",
+        Some("11") => "A5",
+        _ => "A4",
+    };
+    let mm = |a: &str, default: f64| {
+        let inches = attr(margins, a).and_then(|v| v.parse::<f64>().ok()).unwrap_or(default);
+        (inches * 25.4 * 10.0).round() / 10.0
+    };
+    let options = child("printOptions");
+    serde_json::json!({
+        "landscape": attr(setup, "orientation").as_deref() == Some("landscape"),
+        "paper": paper,
+        "fit": fit,
+        "marginMm": [mm("top", 0.75), mm("right", 0.7), mm("bottom", 0.75), mm("left", 0.7)],
+        "gridlines": flag(options, "gridLines"),
+        "centerH": flag(options, "horizontalCentered"),
+    })
+    .to_string()
 }
 
 /// ENS-Office: Excel's autofilter choices (`<filterColumn><filters><filter val=…/>`)

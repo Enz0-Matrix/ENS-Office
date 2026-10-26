@@ -137,6 +137,22 @@ impl UserModel<'_> {
         Ok(out)
     }
 
+    /// ENS-Office: page setup for printing (JSON, see `Worksheet::ens_page_setup`).
+    pub fn get_page_setup(&self, sheet: u32) -> Result<String, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_page_setup.clone())
+    }
+
+    /// ENS-Office: changes the page setup (an undoable step, so the book counts as changed).
+    pub fn set_page_setup(&mut self, sheet: u32, json: &str) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        if ws.ens_page_setup == json {
+            return Ok(());
+        }
+        let old_value = std::mem::replace(&mut ws.ens_page_setup, json.to_string());
+        self.push_diff_list(vec![Diff::SetPageSetup { sheet, new_value: json.to_string(), old_value }]);
+        Ok(())
+    }
+
     /// ENS-Office: what the sheet's filters show (JSON, see `Worksheet::ens_filter_criteria`).
     pub fn get_filter_criteria(&self, sheet: u32) -> Result<String, String> {
         Ok(self.model.workbook.worksheet(sheet)?.ens_filter_criteria.clone())

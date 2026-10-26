@@ -102,6 +102,8 @@ export interface Model {
   /** Отбор фильтров листа (JSON), сохраняется в xlsx. */
   getFilterCriteria(sheet: number): string;
   setFilterCriteria(sheet: number, json: string): void;
+  getPageSetup(sheet: number): string;
+  setPageSetup(sheet: number, json: string): void;
   /** Имена (используются для второго и следующих фильтров листа). */
   getDefinedNameList(): { name: string; scope?: number | null; formula: string }[];
   newDefinedName(name: string, scope: number | null | undefined, formula: string): void;

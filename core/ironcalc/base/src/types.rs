@@ -280,6 +280,10 @@ pub struct Worksheet {
     /// (one entry per filter; values as shown, lower case; "(пустые)" — blanks).
     /// The first filter is saved to xlsx as Excel's `<filterColumn>`.
     pub ens_filter_criteria: String,
+    /// ENS-Office: page setup for printing, JSON `{"landscape", "paper", "fit", "marginMm": [top, right,
+    /// bottom, left], "gridlines", "centerH", "repeatHeader"}`; saved to xlsx as Excel's
+    /// `<printOptions>`, `<pageMargins>` and `<pageSetup>`. Empty — defaults.
+    pub ens_page_setup: String,
 }
 
 /// Internal representation of Excel's sheet_data

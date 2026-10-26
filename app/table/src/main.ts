@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { printSheet, renderPreview } from './print';
+import { DEFAULT_PRINT, fromSaved, printSheet, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
@@ -2457,6 +2457,8 @@ initBackstage({
   recoveryFolder: () => desk.recoveryFolder(),
   chooseRecoveryFolder: () => desk.chooseRecoveryFolder(),
   printPreview: (el, opts) => renderPreview(el, model, grid.sheet, opts, grid.sel),
+  printOptions: () => { try { return fromSaved(model.getPageSetup(grid.sheet)); } catch { return { ...DEFAULT_PRINT }; } },
+  savePrintOptions: (opts) => { try { model.setPageSetup(grid.sheet, toSaved(opts)); } catch { /* старый движок */ } },
   print: (opts) => {
     try { printSheet(model, grid.sheet, opts, grid.sel, doc.title); } catch (e) { showToast(String((e as Error).message ?? e)); }
   },

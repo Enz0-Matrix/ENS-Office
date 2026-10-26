@@ -105,11 +105,15 @@ const ICON_SETS: [string, string, [string, string][]][] = [
   ['3Flags', '3 флажка', [['Flag', '#F8696B'], ['Flag', '#F2C200'], ['Flag', '#63BE7B']]],
   ['4Arrows', '4 стрелки', [['ArrowDown', '#E43400'], ['ArrowAngleDown', '#F2C200'], ['ArrowAngleUp', '#F2C200'], ['ArrowUp', '#84CB1F']]],
   ['5Arrows', '5 стрелок', [['ArrowDown', '#E43400'], ['ArrowAngleDown', '#F2C200'], ['ArrowRight', '#F2C200'], ['ArrowAngleUp', '#F2C200'], ['ArrowUp', '#84CB1F']]],
+  // Рейтинг: в ячейке ряд значков, закрашено тем больше, чем больше значение.
+  ['Rating5Star', 'Рейтинг: 5 звёзд', Array.from({ length: 5 }, () => ['Star', '#FFC000'] as [string, string])],
+  ['Rating3Star', 'Рейтинг: 3 звезды', Array.from({ length: 3 }, () => ['Star', '#FFC000'] as [string, string])],
+  ['Rating5Heart', 'Рейтинг: 5 сердец', Array.from({ length: 5 }, () => ['Heart', '#E8557A'] as [string, string])],
 ];
 
 const SYMBOL: Record<string, string> = {
   ArrowUp: '↑', ArrowDown: '↓', ArrowRight: '→', ArrowAngleUp: '↗', ArrowAngleDown: '↘', Circle: '●', Flag: '⚑',
-  Check: '✔', Cross: '✖', Exclamation: '!', TriangleUp: '▲', TriangleDown: '▼', FlatRectangle: '▬', Star: '★',
+  Check: '✔', Cross: '✖', Exclamation: '!', TriangleUp: '▲', TriangleDown: '▼', FlatRectangle: '▬', Star: '★', Heart: '♥',
 };
 
 const iconPreview = (icons: [string, string][]) =>
@@ -127,7 +131,9 @@ const PERIODS: [string, string][] = [
   ['LastWeek', 'на прошлой неделе'], ['ThisWeek', 'на этой неделе'], ['NextWeek', 'на следующей неделе'],
   ['LastMonth', 'в прошлом месяце'], ['ThisMonth', 'в этом месяце'], ['NextMonth', 'в следующем месяце'],
   ['LastYear', 'в прошлом году'], ['ThisYear', 'в этом году'], ['NextYear', 'в следующем году'],
+  ['Between', 'между датами'], ['NotBetween', 'вне дат'],
 ];
+const ruDate = (iso: unknown) => String(iso ?? '').replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3.$2.$1');
 
 type Kind = 'cell' | 'text' | 'date' | 'top' | 'avg' | 'dup' | 'blank' | 'formula' | 'bar' | 'scale' | 'icons';
 
@@ -177,7 +183,11 @@ export function describe(rule: CfRule): string {
       return `Значение ${label(VALUE_OPS, op)} ${valueText(r.formula)}`;
     }
     case 'Text': return `Текст ${label(TEXT_OPS, r.operator)} «${r.value}»`;
-    case 'TimePeriod': return `Дата ${label(PERIODS, r.time_period)}`;
+    case 'TimePeriod':
+      if (r.time_period === 'Between' || r.time_period === 'NotBetween') {
+        return `Дата ${r.time_period === 'Between' ? 'между' : 'вне'} ${ruDate(r.date1)} и ${ruDate(r.date2)}`;
+      }
+      return `Дата ${label(PERIODS, r.time_period)}`;
     case 'Formula': return `Формула: ${r.formula}`;
     case 'DuplicateValues': return 'Повторяющиеся значения';
     case 'UniqueValues': return 'Уникальные значения';
@@ -212,7 +222,10 @@ function sample(view: CfView): string {
     const icons = (r.thresholds as { icon: string; color: unknown }[]).map((t) => [t.icon, hex(t.color, '#808080')] as [string, string]);
     return `<span class="cf-sample cf-icons">${iconPreview(icons)}</span>`;
   }
-  if (view.cf_rule.type === 'IconRating') return `<span class="cf-sample cf-icons"><b style="color:${hex(r.color, '#FFC000')}">★★★</b></span>`;
+  if (view.cf_rule.type === 'IconRating') {
+    const sym = SYMBOL[String(r.icon)] ?? '★';
+    return `<span class="cf-sample cf-icons"><b style="color:${hex(r.color, '#FFC000')}">${sym.repeat(Math.min(5, (r.thresholds as unknown[]).length || 3))}</b></span>`;
+  }
   let dxf: Dxf | null = null;
   try { dxf = host.model().getDxfForConditionalFormatting(host.sheet(), view.index); } catch { dxf = null; }
   return `<span class="cf-sample" style="${dxfCss(dxf)}">АаБб 123</span>`;
@@ -329,6 +342,12 @@ const scaleRule = (low: string, mid: string, high: string): CfRule => ({
 function iconRule(set: number, showValue: boolean): CfRule {
   const icons = ICON_SETS[set][2];
   const n = icons.length;
+  if (ICON_SETS[set][0].startsWith('Rating')) {
+    return {
+      type: 'IconRating', icon: icons[0][0], color: icons[0][1], show_value: showValue,
+      thresholds: icons.map((_, i) => [{ Percent: Math.round((100 * i) / n) }, true]),
+    };
+  }
   return {
     type: 'IconSet',
     show_value: showValue,
@@ -340,7 +359,7 @@ function iconRule(set: number, showValue: boolean): CfRule {
 
 interface FormState {
   range: string; kind: Kind; stop: boolean;
-  op: string; v1: string; v2: string; textOp: string; text: string; period: string;
+  op: string; v1: string; v2: string; textOp: string; text: string; period: string; d1: string; d2: string;
   top: string; rank: number; percent: boolean; avg: string; dup: string; blank: string; formula: string;
   barColor: string; gradient: boolean; showValue: boolean;
   scaleLow: string; scaleMid: string; scaleHigh: string; scale3: boolean; iconSet: number;
@@ -348,7 +367,7 @@ interface FormState {
 }
 
 const DEFAULTS: FormState = {
-  range: '', kind: 'cell', stop: false, op: 'GreaterThan', v1: '', v2: '', textOp: 'Contains', text: '', period: 'Today',
+  range: '', kind: 'cell', stop: false, op: 'GreaterThan', v1: '', v2: '', textOp: 'Contains', text: '', period: 'Today', d1: '', d2: '',
   top: 'Top10', rank: 10, percent: false, avg: 'AboveAverage', dup: 'DuplicateValues', blank: 'Blanks', formula: '',
   barColor: '#638EC6', gradient: true, showValue: true, scaleLow: '#F8696B', scaleMid: '#FFEB84', scaleHigh: '#63BE7B', scale3: true, iconSet: 0,
   preset: 'red', look: { ...PRESETS[0][2] },
@@ -370,7 +389,7 @@ function stateOf(view: CfView): Partial<FormState> | null {
   switch (view.cf_rule.type) {
     case 'CellIs': return { ...base, kind: 'cell', op: r.operator as string, v1: valueText(r.formula), v2: valueText(r.formula2) };
     case 'Text': return { ...base, kind: 'text', textOp: r.operator as string, text: String(r.value ?? '') };
-    case 'TimePeriod': return PERIODS.some((p) => p[0] === r.time_period) ? { ...base, kind: 'date', period: r.time_period as string } : null;
+    case 'TimePeriod': return PERIODS.some((p) => p[0] === r.time_period) ? { ...base, kind: 'date', period: r.time_period as string, d1: String(r.date1 ?? ''), d2: String(r.date2 ?? '') } : null;
     case 'Formula': return { ...base, kind: 'formula', formula: String(r.formula ?? '') };
     case 'DuplicateValues': case 'UniqueValues': return { ...base, kind: 'dup', dup: view.cf_rule.type };
     case 'Blanks': case 'NotBlanks': case 'Errors': case 'NoErrors': return { ...base, kind: 'blank', blank: view.cf_rule.type };
@@ -385,6 +404,11 @@ function stateOf(view: CfView): Partial<FormState> | null {
       const icons = (r.thresholds as { icon: string }[]).map((x) => x.icon).join();
       const i = ICON_SETS.findIndex((s) => s[2].map((x) => x[0]).join() === icons);
       return { ...base, kind: 'icons', iconSet: Math.max(0, i), showValue: r.show_value !== false };
+    }
+    case 'IconRating': {
+      const n = (r.thresholds as unknown[]).length;
+      const i = ICON_SETS.findIndex((s) => s[0].startsWith('Rating') && s[2].length === n && s[2][0][0] === r.icon);
+      return { ...base, kind: 'icons', iconSet: i < 0 ? ICON_SETS.findIndex((s) => s[0] === 'Rating5Star') : i, showValue: r.show_value !== false };
     }
     default: return null;
   }
@@ -411,7 +435,11 @@ function build(st: FormState): CfRule | string {
     case 'text':
       if (!st.text) return 'Укажите текст.';
       return { type: 'Text', operator: st.textOp, value: st.text, format, stop_if_true };
-    case 'date': return { type: 'TimePeriod', time_period: st.period, date1: null, date2: null, format, stop_if_true };
+    case 'date': {
+      const two = st.period === 'Between' || st.period === 'NotBetween';
+      if (two && (!st.d1 || !st.d2)) return 'Укажите обе даты.';
+      return { type: 'TimePeriod', time_period: st.period, date1: two ? st.d1 : null, date2: two ? st.d2 : null, format, stop_if_true };
+    }
     case 'top':
       if (!(st.rank >= 1 && st.rank <= (st.percent ? 100 : 1000))) return st.percent ? 'Процент — от 1 до 100.' : 'Число — от 1 до 1000.';
       return { type: st.top, rank: Math.round(st.rank), percent: st.percent, format, stop_if_true };
@@ -450,7 +478,8 @@ export function editRule(view: CfView | null, init: Partial<FormState>, quick = 
       <span data-two>и</span><input data-f="v2" data-two value="${esc(st.v2)}" placeholder="второе значение">
     </div>
     <div class="cf-params" data-k="text"><select data-f="textOp">${opt(TEXT_OPS, st.textOp)}</select><input data-f="text" value="${esc(st.text)}" placeholder="текст"></div>
-    <div class="cf-params" data-k="date"><span>Дата</span><select data-f="period">${opt(PERIODS, st.period)}</select></div>
+    <div class="cf-params" data-k="date"><span>Дата</span><select data-f="period">${opt(PERIODS, st.period)}</select>
+      <input type="date" data-f="d1" data-dates value="${esc(st.d1)}"><span data-dates>и</span><input type="date" data-f="d2" data-dates value="${esc(st.d2)}"></div>
     <div class="cf-params" data-k="top">
       <select data-f="top">${opt([['Top10', 'Первые'], ['Bottom10', 'Последние']], st.top)}</select>
       <input data-f="rank" type="number" min="1" max="1000" value="${st.rank}" class="cf-num">
@@ -501,7 +530,7 @@ export function editRule(view: CfView | null, init: Partial<FormState>, quick = 
     st.range = normalizeRange(val('range'));
     st.kind = val('kind') as Kind;
     Object.assign(st, {
-      op: val('op'), v1: val('v1'), v2: val('v2'), textOp: val('textOp'), text: val('text'), period: val('period'),
+      op: val('op'), v1: val('v1'), v2: val('v2'), textOp: val('textOp'), text: val('text'), period: val('period'), d1: val('d1'), d2: val('d2'),
       top: val('top'), rank: Number(val('rank')), percent: checked('percent'), avg: val('avg'), dup: val('dup'), blank: val('blank'),
       formula: val('formula'), barColor: val('barColor').toUpperCase(), gradient: checked('gradient'), showValue: checked('showValue'),
       scaleLow: val('scaleLow').toUpperCase(), scaleMid: val('scaleMid').toUpperCase(), scaleHigh: val('scaleHigh').toUpperCase(),
@@ -518,6 +547,8 @@ export function editRule(view: CfView | null, init: Partial<FormState>, quick = 
     m.querySelector<HTMLElement>('.cf-format')!.hidden = !DXF_KINDS.has(st.kind);
     const two = st.op === 'Between' || st.op === 'NotBetween';
     m.querySelectorAll<HTMLElement>('[data-two]').forEach((el) => { el.hidden = !two; });
+    const dates = st.period === 'Between' || st.period === 'NotBetween';
+    m.querySelectorAll<HTMLElement>('[data-dates]').forEach((el) => { el.hidden = !dates; });
     f('scaleMid').hidden = !st.scale3;
     f('fill').toggleAttribute('disabled', !!st.look.noFill);
     m.querySelector<HTMLElement>('.cf-icon-preview')!.innerHTML = iconPreview(ICON_SETS[st.iconSet][2]);

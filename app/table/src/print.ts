@@ -5,23 +5,68 @@
 import type { BorderItem, CellStyle, Model } from './engine';
 import { fontStack } from './fonts';
 
+export type Paper = 'A4' | 'A3' | 'A5' | 'Letter';
+type Margins = 'normal' | 'narrow' | 'wide' | 'custom';
+
 export interface PrintOptions {
   what: 'sheet' | 'selection';
   landscape: boolean;
+  paper: Paper;
   fit: 'none' | 'width' | 'page';
-  margins: 'normal' | 'narrow' | 'wide';
+  margins: Margins;
+  /** Поля, мм: верх, право, низ, лево (для «Настраиваемые»). */
+  marginMm: [number, number, number, number];
   gridlines: boolean;
-  /** Первая строка печатается на каждой странице. */
+  /** Заголовок (первая строка или закреплённые строки) — на каждой странице. */
   repeatHeader: boolean;
+  /** По центру страницы по горизонтали. */
+  centerH: boolean;
 }
 
 export const DEFAULT_PRINT: PrintOptions = {
-  what: 'sheet', landscape: false, fit: 'width', margins: 'normal', gridlines: false, repeatHeader: false,
+  what: 'sheet', landscape: false, paper: 'A4', fit: 'width', margins: 'normal', marginMm: [19, 18, 19, 18],
+  gridlines: false, repeatHeader: false, centerH: false,
 };
 
 interface Range { r1: number; c1: number; r2: number; c2: number }
 
-const MARGINS_MM = { normal: [19, 18], narrow: [10, 6], wide: [25, 25] } as const; // [верх/низ, лево/право]
+export const PAPERS: Record<Paper, [number, number]> = { A4: [210, 297], A3: [297, 420], A5: [148, 210], Letter: [216, 279] };
+// Как в Excel: обычные, узкие, широкие (мм: верх, право, низ, лево).
+const MARGINS_MM: Record<Exclude<Margins, 'custom'>, [number, number, number, number]> = {
+  normal: [19, 18, 19, 18], narrow: [19, 6, 19, 6], wide: [25, 25, 25, 25],
+};
+
+export function marginsOf(o: PrintOptions): [number, number, number, number] {
+  return o.margins === 'custom' ? o.marginMm : MARGINS_MM[o.margins];
+}
+
+function paperOf(o: PrintOptions): [number, number] {
+  const [w, h] = PAPERS[o.paper] ?? PAPERS.A4;
+  return o.landscape ? [h, w] : [w, h];
+}
+
+/** Параметры листа из книги (Worksheet.ens_page_setup, из xlsx — pageSetup Excel). */
+export function fromSaved(json: string): PrintOptions {
+  const o: PrintOptions = { ...DEFAULT_PRINT };
+  let v: Partial<PrintOptions> = {};
+  try { v = json ? JSON.parse(json) : {}; } catch { /* по умолчанию */ }
+  if (typeof v.landscape === 'boolean') o.landscape = v.landscape;
+  if (v.paper && v.paper in PAPERS) o.paper = v.paper;
+  if (v.fit === 'none' || v.fit === 'width' || v.fit === 'page') o.fit = v.fit;
+  for (const k of ['gridlines', 'repeatHeader', 'centerH'] as const) if (typeof v[k] === 'boolean') o[k] = v[k];
+  if (Array.isArray(v.marginMm) && v.marginMm.length === 4 && v.marginMm.every((x) => typeof x === 'number')) {
+    o.marginMm = v.marginMm;
+    const preset = (Object.keys(MARGINS_MM) as (keyof typeof MARGINS_MM)[])
+      .find((k) => MARGINS_MM[k].every((x, i) => Math.abs(x - o.marginMm[i]) < 1.5));
+    o.margins = preset ?? 'custom';
+  }
+  return o;
+}
+
+export function toSaved(o: PrintOptions): string {
+  const { landscape, paper, fit, gridlines, repeatHeader, centerH } = o;
+  return JSON.stringify({ landscape, paper, fit, marginMm: marginsOf(o), gridlines, repeatHeader, centerH });
+}
 const MAX_CELLS = 400_000;
 const ROW_SCALE = 22 / 25;
 
@@ -109,24 +154,42 @@ export function buildTable(model: Model, sheet: number, r: Range, opts: PrintOpt
     }
     return `<tr style="height:${h}px">${tds}</tr>`;
   };
-  const first = rowHtml(r.r1);
+  // Заголовок на каждой странице: закреплённые строки (если область начинается в них), иначе первая.
+  const frozen = (() => { try { return model.getFrozenRowsCount(sheet); } catch { return 0; } })();
+  const headEnd = opts.repeatHeader ? (frozen >= r.r1 ? Math.min(frozen, r.r2) : r.r1) : r.r1 - 1;
+  let first = '';
+  for (let row = r.r1; row <= headEnd; row++) first += rowHtml(row);
   let body = '';
-  for (let row = r.r1 + 1; row <= r.r2; row++) body += rowHtml(row);
+  for (let row = headEnd + 1; row <= r.r2; row++) body += rowHtml(row);
   const colgroup = `<colgroup>${cols.map((w) => (w ? `<col style="width:${w}px">` : '')).join('')}</colgroup>`;
-  const head = opts.repeatHeader ? `<thead>${first}</thead><tbody>${body}</tbody>` : `<tbody>${first}${body}</tbody>`;
+  const head = opts.repeatHeader ? `<thead>${first}</thead><tbody>${body}</tbody>` : `<tbody>${body}</tbody>`;
   const cls = `print-table${opts.gridlines ? ' grid' : ''}`;
-  return { html: `<table class="${cls}" style="width:${width}px">${colgroup}${head}</table>`, width, height };
+  const center = opts.centerH ? 'margin:0 auto;' : '';
+  return { html: `<table class="${cls}" style="${center}width:${width}px">${colgroup}${head}</table>`, width, height };
 }
 
-/** Масштаб, чтобы вписать в страницу (A4). */
+/** Размер области печати на странице (без полей), px. */
+function pageArea(opts: PrintOptions): [number, number] {
+  const [t, rt, b, l] = marginsOf(opts);
+  const [w, h] = paperOf(opts);
+  return [Math.max(20, w - l - rt) * 96 / 25.4, Math.max(20, h - t - b) * 96 / 25.4];
+}
+
+/** Масштаб, чтобы вписать в страницу. */
 function zoomFor(opts: PrintOptions, width: number, height: number): number {
-  const [mv, mh] = MARGINS_MM[opts.margins];
-  const pageW = (opts.landscape ? 297 : 210) - 2 * mh, pageH = (opts.landscape ? 210 : 297) - 2 * mv;
-  const pxW = pageW * 96 / 25.4, pxH = pageH * 96 / 25.4;
+  const [pxW, pxH] = pageArea(opts);
   if (opts.fit === 'width') return Math.min(1, pxW / width);
   if (opts.fit === 'page') return Math.min(1, pxW / width, pxH / Math.max(1, height));
   return 1;
 }
+
+/** Сколько страниц получится (оценка: по ширине × по высоте). */
+function pageCount(opts: PrintOptions, width: number, height: number, z: number): number {
+  const [pxW, pxH] = pageArea(opts);
+  return Math.max(1, Math.ceil((width * z) / pxW - 0.01)) * Math.max(1, Math.ceil((height * z) / pxH - 0.01));
+}
+
+const PAPER_LABEL: Record<Paper, string> = { A4: 'A4', A3: 'A3', A5: 'A5', Letter: 'Letter' };
 
 /** Предпросмотр: лист бумаги с таблицей в масштабе. */
 export function renderPreview(host: HTMLElement, model: Model, sheet: number, opts: PrintOptions, sel: Range): void {
@@ -134,14 +197,15 @@ export function renderPreview(host: HTMLElement, model: Model, sheet: number, op
   if (!r) { host.innerHTML = '<p class="bs-muted">На листе нет данных для печати.</p>'; return; }
   let t;
   try { t = buildTable(model, sheet, r, opts); } catch (e) { host.innerHTML = `<p class="bs-muted">${esc(String((e as Error).message ?? e))}</p>`; return; }
-  const [mv, mh] = MARGINS_MM[opts.margins];
-  const paperW = opts.landscape ? 297 : 210, paperH = opts.landscape ? 210 : 297;
+  const [mt, mr, mb, ml] = marginsOf(opts);
+  const [paperW, paperH] = paperOf(opts);
   const z = zoomFor(opts, t.width, t.height);
+  const pages = pageCount(opts, t.width, t.height, z);
   host.innerHTML = `<div class="print-paper" style="aspect-ratio:${paperW}/${paperH}">
-    <div class="print-sheet" style="padding:${mv}mm ${mh}mm">
+    <div class="print-sheet" style="padding:${mt}mm ${mr}mm ${mb}mm ${ml}mm">
       <div class="print-zoom" style="zoom:${z}">${t.html}</div></div></div>
-    <p class="bs-muted">${opts.fit === 'none' ? 'Без масштабирования' : `Масштаб ${Math.round(z * 100)}%`} · A4 ·
-      ${opts.landscape ? 'альбомная' : 'книжная'} · строк: ${r.r2 - r.r1 + 1}, столбцов: ${r.c2 - r.c1 + 1}</p>`;
+    <p class="bs-muted">${opts.fit === 'none' ? 'Без масштабирования' : `Масштаб ${Math.round(z * 100)}%`} · ${PAPER_LABEL[opts.paper]} ·
+      ${opts.landscape ? 'альбомная' : 'книжная'} · страниц: ${pages} · строк: ${r.r2 - r.r1 + 1}, столбцов: ${r.c2 - r.c1 + 1}</p>`;
   // Бумага в предпросмотре — уменьшенная копия: подгоняем масштаб под ширину окна.
   const paper = host.querySelector<HTMLElement>('.print-paper')!;
   const inner = host.querySelector<HTMLElement>('.print-sheet')!;
@@ -156,7 +220,7 @@ export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel:
   const r = printRange(model, sheet, opts, sel);
   if (!r) throw new Error('На листе нет данных для печати.');
   const t = buildTable(model, sheet, r, opts);
-  const [mv, mh] = MARGINS_MM[opts.margins];
+  const [mt, mr, mb, ml] = marginsOf(opts);
   let root = document.getElementById('print-root');
   if (!root) {
     root = document.createElement('div');
@@ -166,10 +230,11 @@ export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel:
   // Поля страницы — нулевые: тогда браузер не печатает в них свои дату, имя и
   // путь к файлу. Наши поля — пустые строки шапки и подвала внешней таблицы
   // (повторяются на каждой странице) и отступы слева/справа.
-  root.innerHTML = `<style>@page { size: A4 ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
-    <table class="print-page" style="padding: 0 ${mh}mm">
-      <thead><tr><td style="height:${mv}mm"></td></tr></thead>
-      <tfoot><tr><td style="height:${mv}mm"></td></tr></tfoot>
+  const size = opts.paper === 'Letter' ? 'letter' : opts.paper;
+  root.innerHTML = `<style>@page { size: ${size} ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
+    <table class="print-page" style="padding: 0 ${mr}mm 0 ${ml}mm; width: 100%">
+      <thead><tr><td style="height:${mt}mm"></td></tr></thead>
+      <tfoot><tr><td style="height:${mb}mm"></td></tr></tfoot>
       <tbody><tr><td><div class="print-zoom" style="zoom:${zoomFor(opts, t.width, t.height)}">${t.html}</div></td></tr></tbody>
     </table>`;
   const old = document.title;

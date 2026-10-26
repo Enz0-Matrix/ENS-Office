@@ -62,3 +62,32 @@ fn test_ens_autofilter_export() {
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_auto_filter(0).unwrap(), Some([1, 1, 2, 2]));
 }
+
+// ENS-Office: page setup round trip (pageSetup, pageMargins, printOptions, fitToPage).
+#[test]
+fn test_ens_page_setup_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    let json = r#"{"landscape":true,"paper":"A3","fit":"width","marginMm":[10,6,10,6],"gridlines":true,"centerH":true}"#;
+    model.set_page_setup(0, json).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_page_setup(0).unwrap(), "");
+    model.redo().unwrap();
+    let name = "temp_ens_page_setup.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(xml.contains(r#"<pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/>"#), "{xml}");
+    assert!(xml.contains(r#"<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>"#), "{xml}");
+    let v: serde_json::Value = serde_json::from_str(&back.workbook.worksheets[0].ens_page_setup).unwrap();
+    assert_eq!(v["landscape"], true);
+    assert_eq!(v["paper"], "A3");
+    assert_eq!(v["fit"], "width");
+    assert_eq!(v["gridlines"], true);
+    assert_eq!(v["centerH"], true);
+    assert_eq!(v["marginMm"][0], 10.0);
+}

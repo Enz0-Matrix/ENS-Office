@@ -4,9 +4,10 @@ import { icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
 import { DONATE_URL } from './modules';
-import { DEFAULT_PRINT, type PrintOptions } from './print';
+import { DEFAULT_PRINT, marginsOf, type PrintOptions } from './print';
 
 let printOpts: PrintOptions = { ...DEFAULT_PRINT };
+const isWindows = navigator.userAgent.includes('Windows');
 
 export interface BackstageHost {
   docInfo(): { title: string; path: string; dirty: boolean };
@@ -20,6 +21,9 @@ export interface BackstageHost {
   applySettings(): void;
   printPreview(el: HTMLElement, opts: PrintOptions): void;
   print(opts: PrintOptions): void;
+  /** Parameters of the active sheet (saved in the book). */
+  printOptions(): PrintOptions;
+  savePrintOptions(opts: PrintOptions): void;
   recoveryFolder(): Promise<string>;
   chooseRecoveryFolder(): Promise<void>;
 }
@@ -118,35 +122,64 @@ function render(section: Section): void {
     body.innerHTML = `<h1>Печать</h1>
       <div class="print-layout">
         <div class="print-options">
-          <button class="print-go" data-act="print">${icon('print', 20)}Печать…</button>
-          <p class="bs-muted">В окне печати можно выбрать принтер или «Сохранить как PDF».</p>
+          <div class="print-btns">
+            <button class="print-go" data-act="print">${icon('print', 20)}Печать…</button>
+            <button class="print-go" data-act="pdf">${icon('save', 20)}Сохранить в PDF…</button>
+          </div>
+          <p class="bs-muted">PDF: в окне печати выберите принтер «${isWindows ? 'Microsoft Print to PDF' : 'Печать в файл (PDF)'}» или «Сохранить как PDF».</p>
           <label>Что печатать
             <select data-p="what"><option value="sheet">Активный лист</option><option value="selection">Выделенный диапазон</option></select></label>
           <label>Ориентация
             <select data-p="landscape"><option value="false">Книжная</option><option value="true">Альбомная</option></select></label>
+          <label>Размер бумаги
+            <select data-p="paper"><option value="A4">A4 (210 × 297 мм)</option><option value="A3">A3 (297 × 420 мм)</option>
+            <option value="A5">A5 (148 × 210 мм)</option><option value="Letter">Letter (216 × 279 мм)</option></select></label>
           <label>Масштаб
             <select data-p="fit"><option value="none">Текущий (100%)</option><option value="width">Вписать все столбцы на одну страницу</option>
             <option value="page">Вписать лист на одну страницу</option></select></label>
           <label>Поля
-            <select data-p="margins"><option value="normal">Обычные</option><option value="narrow">Узкие</option><option value="wide">Широкие</option></select></label>
+            <select data-p="margins"><option value="normal">Обычные</option><option value="narrow">Узкие</option><option value="wide">Широкие</option>
+            <option value="custom">Настраиваемые…</option></select></label>
+          <div class="print-margins" hidden>
+            ${['Верхнее', 'Правое', 'Нижнее', 'Левое'].map((t, i) => `<label>${t}, мм <input type="number" min="0" max="100" step="1" data-m="${i}"></label>`).join('')}
+          </div>
+          <label class="check"><input type="checkbox" data-p="centerH"> По центру страницы</label>
           <label class="check"><input type="checkbox" data-p="gridlines"> Печатать сетку</label>
-          <label class="check"><input type="checkbox" data-p="repeatHeader"> Первая строка на каждой странице</label>
+          <label class="check"><input type="checkbox" data-p="repeatHeader"> Заголовок на каждой странице (первая или закреплённые строки)</label>
+          <p class="bs-muted">Параметры страницы сохраняются в книге для каждого листа.</p>
         </div>
         <div class="print-preview"></div>
       </div>`;
     const preview = body.querySelector<HTMLElement>('.print-preview')!;
-    const refresh = () => host.printPreview(preview, printOpts);
+    printOpts = { ...host.printOptions(), what: printOpts.what };
+    const marginBox = body.querySelector<HTMLElement>('.print-margins')!;
+    const marginInputs = [...marginBox.querySelectorAll<HTMLInputElement>('[data-m]')];
+    const showMargins = () => {
+      marginBox.hidden = printOpts.margins !== 'custom';
+      marginsOf(printOpts).forEach((v, i) => { marginInputs[i].value = String(Math.round(v)); });
+    };
+    const refresh = () => { showMargins(); host.printPreview(preview, printOpts); };
+    const changed = () => { host.savePrintOptions(printOpts); refresh(); };
     body.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-p]').forEach((el) => {
       const k = el.dataset.p as keyof PrintOptions;
       if (el instanceof HTMLInputElement) el.checked = !!printOpts[k];
       else el.value = String(printOpts[k]);
       el.addEventListener('change', () => {
         const v = el instanceof HTMLInputElement ? el.checked : el.value === 'true' ? true : el.value === 'false' ? false : el.value;
+        // «Настраиваемые» начинаются с текущих полей.
+        if (k === 'margins' && v === 'custom') printOpts = { ...printOpts, marginMm: marginsOf(printOpts) };
         printOpts = { ...printOpts, [k]: v } as PrintOptions;
-        refresh();
+        changed();
       });
     });
+    marginInputs.forEach((inp, i) => inp.addEventListener('change', () => {
+      const mm = [...printOpts.marginMm] as PrintOptions['marginMm'];
+      mm[i] = Math.max(0, Math.min(100, Number(inp.value.replace(',', '.')) || 0));
+      printOpts = { ...printOpts, marginMm: mm };
+      changed();
+    }));
     body.querySelector('[data-act="print"]')!.addEventListener('click', () => { hideBackstage(); host.print(printOpts); });
+    body.querySelector('[data-act="pdf"]')!.addEventListener('click', () => { hideBackstage(); host.print(printOpts); });
     requestAnimationFrame(refresh);
   } else if (section === 'options') {
     body.innerHTML = `<h1>Параметры</h1>

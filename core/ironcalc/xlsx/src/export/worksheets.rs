@@ -733,10 +733,12 @@ pub(crate) fn get_worksheet_xml(
         String::new()
     };
     let auto_filter_section = auto_filter;
+    let (sheet_pr, page_setup) = page_setup_xml(&worksheet.ens_page_setup);
 
     format!(
         "{XML_DECLARATION}\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+  {sheet_pr}\
   <dimension ref=\"{dimension}\"/>\
   <sheetViews>\
     <sheetView workbookViewId=\"0\"{show_grid_lines}{tab_selected}>\
@@ -752,7 +754,63 @@ pub(crate) fn get_worksheet_xml(
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\
+  {page_setup}\
   {cf_ext_lst}\
 </worksheet>"
     )
+}
+
+
+/// ENS-Office: the sheet's page setup (JSON, see `Worksheet::ens_page_setup`) as Excel's
+/// `<sheetPr>` (fit to page) and `<printOptions>`, `<pageMargins>`, `<pageSetup>`.
+fn page_setup_xml(json: &str) -> (String, String) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return (String::new(), String::new());
+    };
+    let flag = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+    let fit = v.get("fit").and_then(|x| x.as_str()).unwrap_or("none");
+    let sheet_pr = if fit == "none" {
+        String::new()
+    } else {
+        r#"<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>"#.to_string()
+    };
+    let mut out = String::new();
+    if flag("gridlines") || flag("centerH") {
+        out.push_str("<printOptions");
+        if flag("centerH") {
+            out.push_str(r#" horizontalCentered="1""#);
+        }
+        if flag("gridlines") {
+            out.push_str(r#" gridLines="1""#);
+        }
+        out.push_str("/>");
+    }
+    let m: Vec<f64> = v
+        .get("marginMm")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+        .unwrap_or_default();
+    let (top, right, bottom, left) = if m.len() == 4 { (m[0], m[1], m[2], m[3]) } else { (19.05, 17.78, 19.05, 17.78) };
+    let inch = |mm: f64| (mm / 25.4 * 1000.0).round() / 1000.0;
+    out.push_str(&format!(
+        r#"<pageMargins left="{}" right="{}" top="{}" bottom="{}" header="0.3" footer="0.3"/>"#,
+        inch(left),
+        inch(right),
+        inch(top),
+        inch(bottom)
+    ));
+    let paper = match v.get("paper").and_then(|x| x.as_str()) {
+        Some("Letter") => 1,
+        Some("A3") => 8,
+        Some("A5") => 11,
+        _ => 9,
+    };
+    let orientation = if flag("landscape") { "landscape" } else { "portrait" };
+    let fit_attrs = match fit {
+        "width" => r#" fitToWidth="1" fitToHeight="0""#,
+        "page" => r#" fitToWidth="1" fitToHeight="1""#,
+        _ => "",
+    };
+    out.push_str(&format!(r#"<pageSetup paperSize="{paper}" orientation="{orientation}"{fit_attrs}/>"#));
+    (sheet_pr, out)
 }

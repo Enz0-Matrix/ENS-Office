@@ -136,11 +136,11 @@ export interface FormatHost {
   apply: (code: string) => void;
 }
 
-type Category = 'general' | 'number' | 'currency' | 'date' | 'time' | 'percent' | 'scientific' | 'text' | 'custom';
+type Category = 'general' | 'number' | 'currency' | 'date' | 'time' | 'percent' | 'fraction' | 'scientific' | 'text' | 'custom';
 
 const CATEGORIES: [Category, string][] = [
   ['general', 'Общий'], ['number', 'Числовой'], ['currency', 'Денежный'], ['date', 'Дата'], ['time', 'Время'],
-  ['percent', 'Процентный'], ['scientific', 'Экспоненциальный'], ['text', 'Текстовый'], ['custom', 'Все форматы'],
+  ['percent', 'Процентный'], ['fraction', 'Дробный'], ['scientific', 'Экспоненциальный'], ['text', 'Текстовый'], ['custom', 'Все форматы'],
 ];
 
 const CURRENCIES: [string, string][] = [['₽', '₽ (рубль)'], ['$', '$ (доллар)'], ['€', '€ (евро)'], ['¥', '¥ (юань)'], ['', 'нет']];
@@ -152,6 +152,7 @@ const NEGATIVES: [string, string][] = [
 ];
 
 export const DATE_CODES = ['dd.mm.yyyy', 'dd.mm.yy', 'd mmmm yyyy', 'd mmm yyyy', 'dddd, d mmmm yyyy', 'mmmm yyyy', 'mmm yy', 'dd.mm', 'dd.mm.yyyy hh:mm', 'yyyy-mm-dd'];
+export const FRACTION_CODES = ['# ?/?', '# ??/??', '# ???/???', '# ?/2', '# ?/4', '# ?/8', '# ??/16', '# ?/10', '# ??/100'];
 export const TIME_CODES = ['hh:mm', 'hh:mm:ss', 'h:mm AM/PM', '[h]:mm', '[h]:mm:ss', 'mm:ss', 'dd.mm.yyyy hh:mm:ss'];
 
 const CUSTOM_CODES = [
@@ -177,6 +178,7 @@ function classify(code: string): { cat: Category; num: Num } {
   if (isText(code)) return { cat: 'text', num };
   if (DATE_CODES.includes(code)) return { cat: 'date', num };
   if (TIME_CODES.includes(code)) return { cat: 'time', num };
+  if (FRACTION_CODES.includes(code)) return { cat: 'fraction', num };
   num.negative = 'minus'; // у существующего кода — как в нём записано
   const first = sections(code)[0];
   let decimals = 0;
@@ -206,6 +208,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
   let cat: Category = init.cat;
   const num = init.num;
   let dateCode = DATE_CODES.includes(current) ? current : DATE_CODES[0];
+  let fractionCode = FRACTION_CODES.includes(current) ? current : FRACTION_CODES[0];
   let timeCode = TIME_CODES.includes(current) ? current : TIME_CODES[0];
   let custom = isGeneral(current) ? 'general' : current;
 
@@ -235,6 +238,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       case 'currency': return numberCode(num, 'currency');
       case 'date': return dateCode;
       case 'time': return timeCode;
+      case 'fraction': return fractionCode;
       case 'percent': return `0${num.decimals ? '.' + zeros(num.decimals) : ''}%`;
       case 'scientific': return `0${num.decimals ? '.' + zeros(num.decimals) : ''}E+00`;
       case 'text': return '@';
@@ -266,6 +270,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       date: 'Дата хранится числом (дни с 1900 года), формат меняет только вид.',
       time: 'Время — доля суток. [ч]:мм показывает больше 24 часов (табель, длительность).',
       percent: 'Значение умножается на 100 и показывается со знаком %: 0,15 → 15%.',
+      fraction: 'Число простой дробью: 1,5 → 1 1/2. ?/? — знаменатель до 9, ??/?? — до 99, ?/8 — восьмые доли.',
       scientific: 'Очень большие и маленькие числа: 1,23E+06 = 1 230 000.',
       text: 'Ячейка — текст, даже если в ней цифры (номера, коды, ИНН). Действует на новый ввод.',
       custom: 'Свой код в записи Excel: 0 — обязательная цифра, # — необязательная, «,» — разряды, «.» — дробная часть, ; — отрицательные, "текст" — надпись.',
@@ -283,6 +288,8 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       opts.innerHTML = decimalsField;
     } else if (cat === 'date') {
       opts.innerHTML = listField('date', DATE_CODES, dateCode);
+    } else if (cat === 'fraction') {
+      opts.innerHTML = listField('fraction', FRACTION_CODES, fractionCode);
     } else if (cat === 'time') {
       opts.innerHTML = listField('time', TIME_CODES, timeCode);
     } else if (cat === 'custom') {
@@ -326,6 +333,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
         const v = item.dataset.code!;
         if (list === 'date') dateCode = v;
         else if (list === 'time') timeCode = v;
+        else if (list === 'fraction') fractionCode = v;
         else { custom = v; }
         render();
         return;

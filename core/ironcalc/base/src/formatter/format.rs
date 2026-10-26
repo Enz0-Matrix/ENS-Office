@@ -150,7 +150,162 @@ pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
     out
 }
 
+/// ENS-Office: the sections of a format code (split at `;` outside quotes).
+fn format_sections(format: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (i, c) in format.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if c == ';' && !quoted {
+            out.push(&format[start..i]);
+            start = i + 1;
+        }
+    }
+    out.push(&format[start..]);
+    out
+}
+
+/// ENS-Office: digits of a fraction part padded as Excel does: `?` → space, `0` → zero.
+fn pad_fraction(digits: String, pattern: &str, left: bool) -> String {
+    let n = pattern.chars().count();
+    let len = digits.chars().count();
+    if len >= n {
+        return digits;
+    }
+    let mut pad = String::new();
+    for c in pattern.chars().take(n - len) {
+        match c {
+            '?' => pad.push(' '),
+            '0' if left => pad.push('0'),
+            '0' => pad.push(' '),
+            _ => {}
+        }
+    }
+    if left {
+        format!("{pad}{digits}")
+    } else {
+        format!("{digits}{pad}")
+    }
+}
+
+/// ENS-Office: fraction formats as in Excel — `# ?/?`, `# ??/??`, `?/?`, `# ?/8`, `# ??/100`.
+/// None when the code is not a fraction format (then the usual formatter runs).
+fn format_fraction(value_original: f64, format: &str) -> Option<Formatted> {
+    if !format.contains('/') {
+        return None;
+    }
+    let sections = format_sections(format);
+    let v = value_original;
+    let (section, value, signed) = match sections.len() {
+        1 => (sections[0], v, true),
+        2 => if v >= 0.0 { (sections[0], v, false) } else { (sections[1], -v, false) },
+        _ => {
+            if v > 0.0 {
+                (sections[0], v, false)
+            } else if v < 0.0 {
+                (sections[1], -v, false)
+            } else {
+                (sections[2], 0.0, false)
+            }
+        }
+    };
+    // [Цвет] / [условие] в начале раздела
+    let mut body = section;
+    let mut prefix = String::new();
+    while body.starts_with('[') {
+        let end = body.find(']')?;
+        prefix.push_str(&body[..=end]);
+        body = &body[end + 1..];
+    }
+    let (left, den) = body.split_once('/')?;
+    let is_digit_pattern = |s: &str| !s.is_empty() && s.chars().all(|c| matches!(c, '?' | '#' | '0'));
+    let fixed_den: Option<u64> = if den.chars().all(|c| c.is_ascii_digit()) && !den.starts_with('0') && !den.is_empty() {
+        den.parse().ok()
+    } else if is_digit_pattern(den) && den.len() <= 4 {
+        None
+    } else {
+        return None;
+    };
+    let left_trim = left.trim_end_matches(['?', '#', '0']);
+    let num_pattern = &left[left_trim.len()..];
+    if num_pattern.is_empty() {
+        return None;
+    }
+    let int_end = left_trim.trim_end();
+    let int_pattern = &int_end[int_end.trim_end_matches(['?', '#', '0', ',']).len()..];
+    let has_int = !int_pattern.is_empty();
+    if has_int && int_end.len() == left_trim.len() {
+        return None; // «#?/?» без пробела — не дробь
+    }
+    // текст перед числом («-», "ок. »)
+    let lead_src = if has_int { &int_end[..int_end.len() - int_pattern.len()] } else { left_trim };
+    let lead: String = lead_src.chars().filter(|c| !matches!(c, '"' | '\\')).collect();
+    if lead.chars().any(|c| matches!(c, '?' | '#' | '0')) {
+        return None;
+    }
+    let left_trim = &left_trim[lead_src.len()..];
+    let int_pattern = if has_int { int_pattern } else { "" };
+
+    let x = value.abs();
+    let (mut int, frac) = if has_int { (x.floor(), x - x.floor()) } else { (0.0, x) };
+    let (mut n, d) = match fixed_den {
+        Some(d) => ((frac * d as f64).round() as u64, d),
+        None => {
+            let max_d = 10u64.pow(den.len() as u32) - 1;
+            let (mut best_n, mut best_d, mut best_err) = (frac.round() as u64, 1u64, f64::MAX);
+            for d in 1..=max_d {
+                let n = (frac * d as f64).round();
+                let err = (frac - n / d as f64).abs();
+                if err < best_err - 1e-12 {
+                    (best_n, best_d, best_err) = (n as u64, d, err);
+                }
+            }
+            (best_n, best_d)
+        }
+    };
+    if has_int && n >= d {
+        int += (n / d) as f64;
+        n %= d;
+    }
+    let minus = if signed && value < 0.0 && (int > 0.0 || n > 0) { "-" } else { "" };
+    let gap = " ".repeat(left_trim.len() - int_pattern.len());
+    let int_text = if int > 0.0 || int_pattern.contains('0') { format!("{int}") } else { String::new() };
+    let text = if has_int && n == 0 {
+        // целое: на месте дроби — пробелы (числа в столбце выравниваются)
+        let width = num_pattern.chars().count() + 1 + den.chars().count();
+        let int_text = if int_text.is_empty() { "0".to_string() } else { int_text };
+        format!("{minus}{int_text}{gap}{}", " ".repeat(width))
+    } else {
+        let num = pad_fraction(n.to_string(), num_pattern, true);
+        let den_text = match fixed_den {
+            Some(d) => d.to_string(),
+            None => pad_fraction(d.to_string(), den, false),
+        };
+        if int_text.is_empty() {
+            format!("{minus}{num}/{den_text}")
+        } else {
+            format!("{minus}{int_text}{gap}{num}/{den_text}")
+        }
+    };
+    let text = format!("{lead}{text}");
+    let mut parser = Parser::new(&format!("{prefix}0"));
+    parser.parse();
+    let color = match parser.parts.first() {
+        Some(ParsePart::Number(p)) => p.color,
+        _ => None,
+    };
+    Some(Formatted { text, color, error: None })
+}
+
 pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Formatted {
+    if let Some(f) = format_fraction(value_original, format) {
+        return f;
+    }
     let mut parser = Parser::new(format);
     parser.parse();
     let parts = parser.parts;

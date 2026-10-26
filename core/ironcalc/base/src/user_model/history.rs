@@ -111,6 +111,12 @@ pub(crate) enum Diff {
         new_value: (u8, bool),
         old_value: (u8, bool),
     },
+    /// ENS-Office: page setup of a sheet (JSON, see `Worksheet::ens_page_setup`).
+    SetPageSetup {
+        sheet: u32,
+        new_value: String,
+        old_value: String,
+    },
     /// ENS-Office: outline level and "collapsed" flag of a column.
     SetColumnOutline {
         sheet: u32,
