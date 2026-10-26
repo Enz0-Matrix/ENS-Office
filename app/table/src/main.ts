@@ -889,6 +889,8 @@ function fitRow(row: number): number {
   for (const c of model.getColumnsWithData(grid.sheet, row)) {
     const st = model.getCellStyle(grid.sheet, row, c).style;
     const text = model.getFormattedCellValue(grid.sheet, row, c);
+    const rot = st.alignment?.text_rotation ?? 0;
+    if (rot && text) { need = Math.max(need, rotatedHeight(text, st, rot)); continue; }
     need = Math.max(need, st.alignment?.wrap_text && text
       ? grid.measureWrapped(text, st, grid.columnPx(c))
       : Math.round((st.font.sz ?? 11) * 1.33 + 8));
@@ -896,11 +898,25 @@ function fitRow(row: number): number {
   return need;
 }
 
+/** Высота под повёрнутый текст (как рисует grid.drawText); 255 — буквы столбиком. */
+function rotatedHeight(text: string, st: CellStyle, rot: number): number {
+  const f = st.font;
+  const px = Math.round((f.sz ?? 11) * 1.33);
+  if (rot === 255) return Math.min(409, [...text.replace(/\n/g, '')].length * Math.round(px * 1.1) + 8);
+  measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${px}px ${fontStack(f.name)}`;
+  const tw = measure.measureText(text.replace(/\n/g, ' ')).width;
+  const rad = ((rot <= 90 ? rot : rot - 90) * Math.PI) / 180;
+  return Math.min(409, Math.ceil(tw * Math.sin(rad) + px * Math.cos(rad) + 8));
+}
+
 /** Высота строк с переносом текста — по содержимому, как в Excel (только увеличиваем). */
 function fitRows(r1: number, r2: number): void {
   if (r2 - r1 > 500) return;
   for (let r = r1; r <= r2; r++) {
-    const wrapped = [...model.getColumnsWithData(grid.sheet, r)].some((c) => model.getCellStyle(grid.sheet, r, c).style.alignment?.wrap_text);
+    const wrapped = [...model.getColumnsWithData(grid.sheet, r)].some((c) => {
+      const al = model.getCellStyle(grid.sheet, r, c).style.alignment;
+      return al?.wrap_text || al?.text_rotation;
+    });
     if (!wrapped) continue;
     const need = fitRow(r);
     const now = Math.round(model.getRowHeight(grid.sheet, r) * 22 / 25);
