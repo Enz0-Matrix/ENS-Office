@@ -12,6 +12,7 @@ pub(crate) mod history;
 mod links;
 mod merged_cells;
 mod named_cell_styles;
+mod scoped_undo;
 mod sequence_detector;
 mod ui;
 mod undo_redo;
@@ -23,4 +24,5 @@ pub use ui::SelectedView;
 
 pub use clipboard::ClipboardData;
 pub use common::BorderArea;
+pub use scoped_undo::{ScopedResult, UndoScope};
 pub use ens_tools::{parse_filter_range, Blanks, FindOptions, FoundCell, FILTER_DATABASE};

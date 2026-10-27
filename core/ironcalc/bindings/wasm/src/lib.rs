@@ -17,6 +17,18 @@ use ironcalc_base::{
     Blanks, BorderArea, ClipboardData, FindOptions, FoundCell, UserModel as BaseModel,
 };
 
+fn scope_of(mode: u8) -> ironcalc_base::UndoScope {
+    if mode == 0 { ironcalc_base::UndoScope::Sheet } else { ironcalc_base::UndoScope::OtherSheets }
+}
+
+fn scoped_code(r: ironcalc_base::ScopedResult) -> u8 {
+    match r {
+        ironcalc_base::ScopedResult::Done => 0,
+        ironcalc_base::ScopedResult::Nothing => 1,
+        ironcalc_base::ScopedResult::Blocked => 2,
+    }
+}
+
 fn to_js_error(error: String) -> JsError {
     JsError::new(&error.to_string())
 }
@@ -483,6 +495,30 @@ impl Model {
     #[wasm_bindgen(js_name = "setOutlineSummary")]
     pub fn set_outline_summary(&mut self, sheet: u32, below: bool, right: bool) -> Result<(), JsError> {
         self.model.set_outline_summary(sheet, below, right).map_err(to_js_error)
+    }
+
+    /// ENS-Office: undo limited to a sheet. `mode`: 0 — only this sheet, 1 — all sheets but this.
+    /// Returns 0 — done, 1 — nothing to undo there, 2 — blocked by a structural step.
+    #[wasm_bindgen(js_name = "undoScoped")]
+    pub fn undo_scoped(&mut self, sheet: u32, mode: u8) -> Result<u8, JsError> {
+        let r = self.model.undo_scoped(sheet, scope_of(mode)).map_err(to_js_error)?;
+        Ok(scoped_code(r))
+    }
+
+    #[wasm_bindgen(js_name = "redoScoped")]
+    pub fn redo_scoped(&mut self, sheet: u32, mode: u8) -> Result<u8, JsError> {
+        let r = self.model.redo_scoped(sheet, scope_of(mode)).map_err(to_js_error)?;
+        Ok(scoped_code(r))
+    }
+
+    #[wasm_bindgen(js_name = "canUndoScoped")]
+    pub fn can_undo_scoped(&self, sheet: u32, mode: u8) -> bool {
+        self.model.can_undo_scoped(sheet, scope_of(mode))
+    }
+
+    #[wasm_bindgen(js_name = "canRedoScoped")]
+    pub fn can_redo_scoped(&self, sheet: u32, mode: u8) -> bool {
+        self.model.can_redo_scoped(sheet, scope_of(mode))
     }
 
     #[wasm_bindgen(js_name = "getPageSetup")]

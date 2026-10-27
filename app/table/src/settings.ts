@@ -31,6 +31,8 @@ export interface Settings {
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
   recent: { path: string; title: string }[];
+  /** Что отменяют стрелки: вся книга, только этот лист или все листы, кроме этого. */
+  undoScope: 'book' | 'sheet' | 'others';
   /** Шрифт по умолчанию для новых книг. */
   defaultFont: string;
   defaultFontSize: number;
@@ -42,7 +44,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], userName: '', lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], userName: '', lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {

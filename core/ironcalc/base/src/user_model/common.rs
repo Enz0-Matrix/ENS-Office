@@ -242,7 +242,7 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
 pub struct UserModel<'a> {
     pub(crate) model: Model<'a>,
     pub(crate) history: History,
-    send_queue: Vec<QueueDiffs>,
+    pub(super) send_queue: Vec<QueueDiffs>,
     pause_evaluation: bool,
     /// ENS-Office: what changed since the book was opened or saved (change log).
     pub(crate) ens_changes: super::ens_changes::ChangeTracker,

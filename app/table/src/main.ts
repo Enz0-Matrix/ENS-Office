@@ -1325,7 +1325,43 @@ function wink(kind: 'undo' | 'redo'): void {
   }
 }
 
+const SCOPES: ['book' | 'sheet' | 'others', string][] = [
+  ['book', 'Вся книга'], ['sheet', 'Только этот лист'], ['others', 'Все листы, кроме этого'],
+];
+const qaScope = $<HTMLButtonElement>('qa-scope');
+function showScope(): void {
+  const label = SCOPES.find(([k]) => k === settings.undoScope)![1];
+  qaScope.textContent = settings.undoScope === 'book' ? '▾' : `▾ ${settings.undoScope === 'sheet' ? 'лист' : 'др.'}`;
+  qaScope.title = `Что отменяют стрелки: ${label}`;
+}
+showScope();
+qaScope.addEventListener('mousedown', (e) => e.preventDefault());
+qaScope.addEventListener('click', () => {
+  const r = qaScope.getBoundingClientRect();
+  showMenu(SCOPES.map(([k, text]) => ({
+    label: text, checked: settings.undoScope === k,
+    run: () => { settings.undoScope = k; saveSettings(); showScope(); syncUndoState(); },
+  })), r.left, r.bottom + 2);
+});
+
+/** 0 — вся книга, иначе режим отмены по листам. */
+const scopeMode = () => (settings.undoScope === 'sheet' ? 0 : 1);
+
 function undoRedo(kind: 'undo' | 'redo'): void {
+  if (settings.undoScope !== 'book') {
+    const code = kind === 'undo' ? model.undoScoped(grid.sheet, scopeMode()) : model.redoScoped(grid.sheet, scopeMode());
+    if (code === 1) { showToast(kind === 'undo' ? 'Отменять нечего (в выбранной области).' : 'Повторять нечего (в выбранной области).'); return; }
+    if (code === 2) {
+      showToast('Дальше отмена по листам невозможна: следующее действие меняет строки, столбцы или листы целиком. Переключите область на «Вся книга».');
+      return;
+    }
+    wink(kind);
+    grid.invalidateLayout();
+    updateFormulaBar();
+    updateStatus();
+    syncUndoState();
+    return;
+  }
   const can = kind === 'undo' ? model.canUndo() : model.canRedo();
   if (!can) { showToast(kind === 'undo' ? 'Отменять нечего.' : 'Повторять нечего.'); return; }
   if (kind === 'undo') model.undo(); else model.redo();
@@ -1340,7 +1376,8 @@ function undoRedo(kind: 'undo' | 'redo'): void {
 function syncUndoState(): void {
   syncOutline();
   syncPins();
-  const u = model.canUndo(), r = model.canRedo();
+  const u = model.canUndo(); // с отменой по листам кнопка живая, пока есть что отменять: при препятствии объяснит причину
+  const r = model.canRedo();
   qaUndo.disabled = !u;
   qaRedo.disabled = !r;
   document.querySelectorAll<HTMLElement>('.btn[data-command="edit.undo"]').forEach((b) => b.classList.toggle('disabled', !u));

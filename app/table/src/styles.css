@@ -61,6 +61,7 @@ body { display: flex; flex-direction: column; }
 .qa { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #fff; display: inline-flex;
   align-items: center; justify-content: center; cursor: pointer; }
 .qa svg { width: 18px; height: 18px; fill: currentColor; }
+.qa-scope { width: auto; padding: 0 6px; font-size: 11px; }
 .qa:hover:not(:disabled) { background: rgba(255,255,255,.18); }
 .qa:disabled { color: rgba(255,255,255,.4); cursor: default; }
 .btn[data-command="edit.undo"]:not(.disabled) svg, .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--accent); }

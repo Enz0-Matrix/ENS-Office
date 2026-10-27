@@ -168,6 +168,11 @@ export interface Model {
   pasteCsvText(area: Area, csv: string): void;
   undo(): void;
   redo(): void;
+  /** Отмена по листам: mode 0 — только этот лист, 1 — все листы, кроме этого. Ответ: 0 — сделано, 1 — нечего, 2 — мешает структурное изменение. */
+  undoScoped(sheet: number, mode: number): number;
+  redoScoped(sheet: number, mode: number): number;
+  canUndoScoped(sheet: number, mode: number): boolean;
+  canRedoScoped(sheet: number, mode: number): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
   newSheet(): void;
