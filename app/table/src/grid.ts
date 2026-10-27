@@ -331,7 +331,7 @@ export class Grid {
   private columnWidth(column: number): number {
     if (this.resizing?.kind === 'column' && this.resizing.index === column) return this.resizing.size;
     try {
-      return Math.max(4, Math.round(this.model().getColumnWidth(this.sheet, column)));
+      return Math.max(0, Math.round(this.model().getColumnWidth(this.sheet, column)));
     } catch {
       return 100;
     }
