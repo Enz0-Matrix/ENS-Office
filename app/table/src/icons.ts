@@ -6,6 +6,10 @@ import cut20 from '@fluentui/svg-icons/icons/cut_20_regular.svg?raw';
 import copy20 from '@fluentui/svg-icons/icons/copy_20_regular.svg?raw';
 import textBold20 from '@fluentui/svg-icons/icons/text_bold_20_regular.svg?raw';
 import textItalic20 from '@fluentui/svg-icons/icons/text_italic_20_regular.svg?raw';
+import i_text_strike_20 from '@fluentui/svg-icons/icons/text_strikethrough_20_regular.svg?raw';
+import i_text_sub_20 from '@fluentui/svg-icons/icons/text_subscript_20_regular.svg?raw';
+import i_text_sup_20 from '@fluentui/svg-icons/icons/text_superscript_20_regular.svg?raw';
+import i_text_justify_24 from '@fluentui/svg-icons/icons/text_align_justify_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
 import textColor20 from '@fluentui/svg-icons/icons/text_color_20_regular.svg?raw';
@@ -84,6 +88,10 @@ export const ICONS: Record<string, string> = {
   'text_bold_20': textBold20,
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
+  'text_strike_20': i_text_strike_20,
+  'text_sub_20': i_text_sub_20,
+  'text_sup_20': i_text_sup_20,
+  'text_align_justify_24': i_text_justify_24,
   'paint_bucket_20': paintBucket20,
   'text_color_20': textColor20,
   'text_align_left_20': textAlignLeft20,

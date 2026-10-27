@@ -389,6 +389,10 @@ function jumpMark(dir: 1 | -1): void {
   else grid.select(grid.sel.row, next.index);
 }
 
+/** Положение текста активной ячейки: 'superscript', 'subscript' или 'baseline'. */
+const vertAlignOfStyle = (st: CellStyle) => (st.font as { vert_align?: string }).vert_align ?? 'baseline';
+const vertAlignOf = () => vertAlignOfStyle(model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style);
+
 const backStack: { sheet: number; row: number; column: number }[] = [];
 
 function goTo(ref: Ref): void {
@@ -2187,6 +2191,14 @@ register(
     run: () => style('font.i', (cur) => String(!cur), (st) => st.font.i) },
   { id: 'format.underline', label: 'Подчёркнутый', keywords: ['underline'], keys: ['Ctrl+KeyU'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.u,
     run: () => style('font.u', (cur) => String(!cur), (st) => st.font.u) },
+  { id: 'format.strike', label: 'Зачёркнутый', keywords: ['strikethrough', 'зачеркнуть', 'зачёркивание'], keys: ['Ctrl+Digit5'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.strike,
+    run: () => style('font.strike', (cur) => String(!cur), (st) => st.font.strike) },
+  { id: 'format.superscript', label: 'Надстрочный', keywords: ['superscript', 'верхний индекс', 'степень'], checked: () => vertAlignOf() === 'superscript',
+    run: () => style('font.vert_align', () => (vertAlignOf() === 'superscript' ? 'baseline' : 'superscript')) },
+  { id: 'format.subscript', label: 'Подстрочный', keywords: ['subscript', 'нижний индекс'], checked: () => vertAlignOf() === 'subscript',
+    run: () => style('font.vert_align', () => (vertAlignOf() === 'subscript' ? 'baseline' : 'subscript')) },
+  { id: 'align.justify', label: 'По ширине', keywords: ['justify', 'выровнять по ширине'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.horizontal === 'justify',
+    run: () => style('alignment.horizontal', () => 'justify') },
   { id: 'format.fill', label: 'Цвет заливки', keywords: ['fill', 'заливка', 'цвет', 'фон'], run: (c) => style('fill.fg_color', () => c ?? '') },
   { id: 'format.fontColor', label: 'Цвет шрифта', keywords: ['font color', 'цвет текста'], run: (c) => style('font.color', () => c ?? '') },
   { id: 'format.fontName', label: 'Шрифт', keywords: ['font', 'гарнитура', 'начертание'], run: (f) => { if (f) style('font.name', () => f); } },

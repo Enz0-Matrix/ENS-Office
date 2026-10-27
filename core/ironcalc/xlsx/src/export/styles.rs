@@ -28,6 +28,11 @@ fn get_fonts_xml(styles: &Styles) -> String {
         let italic = if font.i { "<i/>" } else { "" };
         let underline = if font.u { "<u/>" } else { "" };
         let strike = if font.strike { "<strike/>" } else { "" };
+        let vert_align = match font.vert_align {
+            ironcalc_base::types::VertAlign::Superscript => "<vertAlign val=\"superscript\"/>",
+            ironcalc_base::types::VertAlign::Subscript => "<vertAlign val=\"subscript\"/>",
+            ironcalc_base::types::VertAlign::Baseline => "",
+        };
         let family = format!("<family val=\"{}\"/>", font.family);
         let scheme = format!("<scheme val=\"{}\"/>", font.scheme);
         fonts_str.push(format!(
@@ -39,6 +44,7 @@ fn get_fonts_xml(styles: &Styles) -> String {
                 {italic}\
                 {underline}\
                 {strike}\
+                {vert_align}\
                 {family}\
                 {scheme}\
              </font>"

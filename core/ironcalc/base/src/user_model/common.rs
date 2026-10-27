@@ -112,6 +112,15 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
         "font.strike" => {
             style.font.strike = boolean(value)?;
         }
+        // ENS-Office: "superscript", "subscript" or "baseline".
+        "font.vert_align" => {
+            style.font.vert_align = match value {
+                "superscript" => crate::types::VertAlign::Superscript,
+                "subscript" => crate::types::VertAlign::Subscript,
+                "baseline" | "" => crate::types::VertAlign::Baseline,
+                _ => return Err(format!("Invalid value for vertical text position: '{value}'.")),
+            };
+        }
         "font.color" => {
             style.font.color = Color::from_param(value)?;
         }

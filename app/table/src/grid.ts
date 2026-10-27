@@ -1244,7 +1244,11 @@ export class Grid {
     const ctx = this.ctx, model = this.model();
     const f = style?.font;
     const px = Math.round((f?.sz ?? 11) * 1.33);
-    ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${px}px ${fontStack(f?.name)}`;
+    // Надстрочный и подстрочный текст — мельче и со сдвигом от базовой линии.
+    const vert = (f as { vert_align?: string } | undefined)?.vert_align;
+    const drawPx = vert === 'superscript' || vert === 'subscript' ? Math.round(px * 0.7) : px;
+    const shift = vert === 'superscript' ? -Math.round(px * 0.3) : vert === 'subscript' ? Math.round(px * 0.2) : 0;
+    ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${drawPx}px ${fontStack(f?.name)}`;
     ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
     // Направление текста (Excel textRotation): 1..90 — против часовой стрелки,
     // 91..180 — по часовой (90 + угол), 255 — буквы столбиком.
@@ -1291,9 +1295,17 @@ export class Grid {
     ctx.textBaseline = 'middle';
     ctx.textAlign = align === 'right' ? 'right' : align === 'center' || align === 'centercontinuous' ? 'center' : 'left';
     const tx = ctx.textAlign === 'right' ? cell.x + cell.w - 3 : ctx.textAlign === 'center' ? cell.x + cell.w / 2 : cell.x + 3;
-    for (const line of lines) {
-      const ty = y0 + lineH / 2 + 1;
-      if (align === 'fill' && line) {
+    lines.forEach((line, n) => {
+      const ty = y0 + lineH / 2 + 1 + shift;
+      if (align === 'justify' && wrap && n < lines.length - 1 && line.includes(' ')) {
+        // «По ширине»: пробелы растягиваются так, чтобы строка заняла всю ширину (кроме последней).
+        const words = line.split(' ');
+        const free = cell.w - 6 - words.reduce((sum, w) => sum + ctx.measureText(w).width, 0);
+        const gap = free / (words.length - 1);
+        let wx = cell.x + 3;
+        ctx.textAlign = 'left';
+        for (const w of words) { ctx.fillText(w, wx, ty); wx += ctx.measureText(w).width + gap; }
+      } else if (align === 'fill' && line) {
         // «С заполнением»: текст повторяется на всю ширину.
         let t = line;
         while (ctx.measureText(t + line).width <= cell.w - 6) t += line;
@@ -1308,7 +1320,7 @@ export class Grid {
         if (f?.strike) ctx.fillRect(ux, ty, tw, 1);
       }
       y0 += lineH;
-    }
+    });
     ctx.restore();
   }
 

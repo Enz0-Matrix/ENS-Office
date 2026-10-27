@@ -152,6 +152,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
         let mut color: Color = Color::None;
         let mut family = 2;
         let mut scheme = FontScheme::default();
+        let mut vert_align = ironcalc_base::types::VertAlign::default();
         for feature in font.children() {
             match feature.tag_name() {
                 "sz" => {
@@ -174,6 +175,13 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
                 }
                 "strike" => {
                     strike = flag_on(feature.attribute("val"));
+                }
+                "vertAlign" => {
+                    vert_align = match feature.attribute("val") {
+                        Some("superscript") => ironcalc_base::types::VertAlign::Superscript,
+                        Some("subscript") => ironcalc_base::types::VertAlign::Subscript,
+                        _ => ironcalc_base::types::VertAlign::Baseline,
+                    };
                 }
                 // ECMA-376 §18.8.29 (`name`): the `val` attribute is the font's typeface.
                 "name" => {
@@ -212,6 +220,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             name,
             family,
             scheme,
+            vert_align,
         });
     }
 

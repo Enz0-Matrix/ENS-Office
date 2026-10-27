@@ -638,6 +638,22 @@ impl Display for FontScheme {
     }
 }
 
+/// ENS-Office: superscript / subscript text (`<vertAlign>`).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VertAlign {
+    #[default]
+    Baseline,
+    Superscript,
+    Subscript,
+}
+
+impl VertAlign {
+    pub fn is_baseline(&self) -> bool {
+        *self == VertAlign::Baseline
+    }
+}
+
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone)]
 pub struct Font {
     #[serde(default = "default_as_false")]
@@ -664,6 +680,9 @@ pub struct Font {
     // ...
     pub family: i32,
     pub scheme: FontScheme,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "VertAlign::is_baseline")]
+    pub vert_align: VertAlign,
 }
 
 impl Default for Font {
@@ -678,6 +697,7 @@ impl Default for Font {
             name: "Inter".to_string(),
             family: 2,
             scheme: FontScheme::Minor,
+            vert_align: VertAlign::Baseline,
         }
     }
 }

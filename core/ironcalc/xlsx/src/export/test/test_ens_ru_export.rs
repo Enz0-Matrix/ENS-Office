@@ -123,6 +123,26 @@ fn test_ens_outline_summary_export() {
     assert_eq!(default_back.workbook.worksheets[0].ens_summary, (true, true));
 }
 
+// ENS-Office: superscript / subscript round trip (`<vertAlign>`).
+#[test]
+fn test_ens_vert_align_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x2").unwrap();
+    let area = |column| ironcalc_base::expressions::types::Area { sheet: 0, row: 1, column, width: 1, height: 1 };
+    model.update_range_style(&area(1), "font.vert_align", "superscript").unwrap();
+    model.set_user_input(0, 1, 2, "H2O").unwrap();
+    model.update_range_style(&area(2), "font.vert_align", "subscript").unwrap();
+    let name = "temp_ens_vert_align.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    let back = ironcalc_base::UserModel::from_model(back);
+    let v = |c| back.get_cell_style(0, 1, c).unwrap().font.vert_align;
+    assert_eq!(v(1), ironcalc_base::types::VertAlign::Superscript);
+    assert_eq!(v(2), ironcalc_base::types::VertAlign::Subscript);
+    assert_eq!(v(3), ironcalc_base::types::VertAlign::Baseline);
+}
+
 // ENS-Office: the change log is kept in customXml and read back.
 #[test]
 fn test_ens_change_log_export() {
