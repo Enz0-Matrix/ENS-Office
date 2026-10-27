@@ -903,7 +903,10 @@ function fitColumn(column: number): number {
 
 function fitRow(row: number): number {
   let need = 22;
+  // Как Excel: объединённые ячейки в автоподгонке высоты не участвуют.
+  const merged = model.getMergedCells(grid.sheet).filter((m) => m.row <= row && row <= m.row + m.height - 1);
   for (const c of model.getColumnsWithData(grid.sheet, row)) {
+    if (merged.some((m) => c >= m.column && c <= m.column + m.width - 1)) continue;
     const st = model.getCellStyle(grid.sheet, row, c).style;
     const text = model.getFormattedCellValue(grid.sheet, row, c);
     const rot = st.alignment?.text_rotation ?? 0;
@@ -912,7 +915,15 @@ function fitRow(row: number): number {
       ? grid.measureWrapped(text, st, grid.columnPx(c))
       : Math.round((st.font.sz ?? 11) * 1.33 + 8));
   }
-  return need;
+  return Math.min(409, need);
+}
+
+/** Высоты, которые поставила сама подгонка: лист → строка → px. Остальные — заданы вручную. */
+const autoHeights = new Map<number, Map<number, number>>();
+
+/** Высота строки не менялась вручную: стандартная или ровно та, что поставила подгонка. */
+function isAutoHeight(row: number, nowPx: number): boolean {
+  return nowPx === 22 || autoHeights.get(grid.sheet)?.get(row) === nowPx;
 }
 
 /** Высота под повёрнутый текст (как рисует grid.drawText); 255 — буквы столбиком. */
@@ -926,7 +937,7 @@ function rotatedHeight(text: string, st: CellStyle, rot: number): number {
   return Math.min(409, Math.ceil(tw * Math.sin(rad) + px * Math.cos(rad) + 8));
 }
 
-/** Высота строк с переносом текста — по содержимому, как в Excel (только увеличиваем). */
+/** Высота строк с переносом текста — по содержимому, как в Excel; строки с ручной высотой не трогаем. */
 function fitRows(r1: number, r2: number): void {
   if (r2 - r1 > 500) return;
   for (let r = r1; r <= r2; r++) {
@@ -935,9 +946,14 @@ function fitRows(r1: number, r2: number): void {
       return al?.wrap_text || al?.text_rotation;
     });
     if (!wrapped) continue;
-    const need = fitRow(r);
     const now = Math.round(model.getRowHeight(grid.sheet, r) * 22 / 25);
-    if (need !== now) setSize('row', r, r, need);
+    if (!isAutoHeight(r, now)) continue;
+    const need = fitRow(r);
+    if (need === now) continue;
+    setSize('row', r, r, need);
+    let rows = autoHeights.get(grid.sheet);
+    if (!rows) autoHeights.set(grid.sheet, rows = new Map());
+    rows.set(r, need);
   }
 }
 
@@ -1057,7 +1073,16 @@ grid.onResize = (kind, index, px) => {
     : s.c1 === 1 && s.c2 === LAST_COLUMN && index >= s.r1 && index <= s.r2;
   const [from, to] = many ? (kind === 'column' ? [s.c1, s.c2] : [s.r1, s.r2]) : [index, index];
   if (px !== null) { setSize(kind, from, to, px); return; }
-  for (let i = from; i <= Math.min(to, from + 500); i++) setSize(kind, i, i, kind === 'column' ? fitColumn(i) : fitRow(i));
+  for (let i = from; i <= Math.min(to, from + 500); i++) {
+    const fit = kind === 'column' ? fitColumn(i) : fitRow(i);
+    setSize(kind, i, i, fit);
+    if (kind === 'row') {
+      // Подгонка по двойному щелчку возвращает строку в «авто», как в Excel.
+      let rows = autoHeights.get(grid.sheet);
+      if (!rows) autoHeights.set(grid.sheet, rows = new Map());
+      rows.set(i, fit);
+    }
+  }
 };
 
 // Маркер заполнения: формулы протягиваются со сдвигом ссылок, ряды
