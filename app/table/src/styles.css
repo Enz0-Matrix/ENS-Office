@@ -200,6 +200,12 @@ footer { display: flex; flex-direction: column; }
 .find-row { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
 .find-row input { flex: 1; height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; }
 .find-row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(43,122,107,.15); }
+/* «Параметры >>»: дополнительные настройки сворачиваются, как в Excel. */
+.find-panel:not(.more) .find-more { display: none; }
+.find-fmt { flex-basis: 100%; display: flex; align-items: center; gap: 6px; }
+.find-fmt b { font-weight: 400; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-fmt button { border: 1px solid var(--border); background: var(--panel-alt); color: var(--text); border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
+.find-options { margin-right: auto; }
 .find-panel:not(.replace) .find-repl { display: none; }
 .find-panel.replace .find-only { display: none; }
 .find-opts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; color: var(--muted); }
