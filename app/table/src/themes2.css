@@ -112,7 +112,7 @@
 
 /* --- «Панцири»: зелёные панцири-шестиугольники, цветные повязки, канализация --- */
 :root[data-theme="shell"] {
-  --accent: #3f8f2f; --accent-dark: #25591b; --accent2: #f28c28; --bg: #1c2620; --panel: #24302a; --border: #3a4a3e; --text: #e3f0dd; --muted: #a3bb9c;
+  --accent: #3f8f2f; --accent-dark: #25591b; --accent2: #f28c28; --bg: #1c2620; --panel: #24302a; --hover: #35493c; --panel-alt: #2c3a31; --border: #3a4a3e; --text: #e3f0dd; --muted: #a3bb9c;
   --hi: #b6f07a; --hover: #2f3e33; --on-bg: #34501f; --input-bg: #151d18; --sheet: #f4f8ee; --scroll: #4f9b3a;
   --brand-bg:
     radial-gradient(circle at 50% 50%, rgba(0,0,0,.18) 0 9px, transparent 10px) 0 0 / 26px 22px,
@@ -158,7 +158,7 @@
 
 /* --- «Броня»: красный металл, золотая кромка, голубое свечение реактора, HUD --- */
 :root[data-theme="armor"] {
-  --accent: #b3121f; --accent-dark: #7a0b14; --accent2: #e0b23a; --bg: #12090b; --panel: #1d1012; --border: #4a2a23; --text: #f3e6d0; --muted: #c9a982;
+  --accent: #b3121f; --accent-dark: #7a0b14; --accent2: #e0b23a; --bg: #12090b; --panel: #1d1012; --hover: #3a1c1f; --panel-alt: #2a1517; --border: #4a2a23; --text: #f3e6d0; --muted: #c9a982;
   --hi: #6fe8ff; --hover: #2b1517; --on-bg: #4a1018; --input-bg: #0c0607; --sheet: #fbf6ee; --scroll: #b3121f;
   --brand-bg:
     linear-gradient(90deg, transparent 0 18%, rgba(224,178,58,.9) 18% 18.4%, transparent 18.4% 81.6%, rgba(224,178,58,.9) 81.6% 82%, transparent 82%),
