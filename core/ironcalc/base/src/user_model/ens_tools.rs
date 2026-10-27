@@ -396,16 +396,42 @@ impl UserModel<'_> {
         }
         let (r1, c1) = (area.row, area.column);
         let (r2, c2) = (area.row + area.height - 1, area.column + area.width - 1);
-        if self.model.get_merged_cells(sheet)?.iter().any(|m| m.intersects(r1, c1, area.width, area.height)) {
-            return Err("Нельзя сортировать диапазон с объединёнными ячейками".to_string());
-        }
+        // As Excel: merged cells are sorted as blocks, so they must all have the same
+        // size and stand the same way in every block of rows.
+        let block = {
+            let merges: Vec<_> = self.model.get_merged_cells(sheet)?
+                .into_iter()
+                .filter(|m| m.intersects(r1, c1, area.width, area.height))
+                .collect();
+            let message = "Для сортировки все объединённые ячейки должны быть одного размера и стоять одинаково в каждой строке (блоке строк)".to_string();
+            if merges.is_empty() {
+                1
+            } else {
+                let h = merges[0].height;
+                if area.height % h != 0
+                    || merges.iter().any(|m| {
+                        m.height != h || m.row < r1 || m.row + m.height - 1 > r2 || m.column < c1 || m.column + m.width - 1 > c2 || (m.row - r1) % h != 0
+                    })
+                {
+                    return Err(message);
+                }
+                let mut patterns = vec![std::collections::BTreeSet::new(); (area.height / h) as usize];
+                for m in &merges {
+                    patterns[((m.row - r1) / h) as usize].insert((m.column, m.width));
+                }
+                if patterns.iter().any(|p| p != &patterns[0]) {
+                    return Err(message);
+                }
+                h
+            }
+        };
         let hidden: std::collections::HashSet<i32> = if skip_hidden {
             self.model.workbook.worksheet(sheet)?.rows.iter().filter(|r| r.hidden).map(|r| r.r).collect()
         } else {
             Default::default()
         };
         // The rows that take part; a sorted row goes to the slot of its position.
-        let slots: Vec<i32> = (r1..=r2).filter(|r| !hidden.contains(r)).collect();
+        let slots: Vec<i32> = (r1..=r2).step_by(block as usize).filter(|r| !hidden.contains(r)).collect();
         // values[k][i] — key k of row slots[i]
         let values: Vec<Vec<CellValue>> = keys
             .iter()
@@ -447,17 +473,20 @@ impl UserModel<'_> {
             if source_row == target_row {
                 continue;
             }
-            for column in c1..=c2 {
-                let content = self.model.get_localized_cell_content(sheet, source_row, column)?;
-                let source = CellReferenceIndex { sheet, row: source_row, column };
-                let target = CellReferenceIndex { sheet, row: target_row, column };
-                let value = if content.is_empty() {
-                    String::new()
-                } else {
-                    self.model.extend_copied_value(&content, &source, &target)?
-                };
-                let style = self.model.get_cell_style_or_none(sheet, source_row, column)?;
-                planned.push((target_row, column, value, style));
+            for offset in 0..block {
+                let (source_row, target_row) = (source_row + offset, target_row + offset);
+                for column in c1..=c2 {
+                    let content = self.model.get_localized_cell_content(sheet, source_row, column)?;
+                    let source = CellReferenceIndex { sheet, row: source_row, column };
+                    let target = CellReferenceIndex { sheet, row: target_row, column };
+                    let value = if content.is_empty() {
+                        String::new()
+                    } else {
+                        self.model.extend_copied_value(&content, &source, &target)?
+                    };
+                    let style = self.model.get_cell_style_or_none(sheet, source_row, column)?;
+                    planned.push((target_row, column, value, style));
+                }
             }
         }
         let mut diff_list = Vec::new();
@@ -832,6 +861,26 @@ mod tests {
         assert_eq!(m.get_cell_content(0, 1, 1).unwrap(), "=СУММ(B2:B3)");
         assert_eq!(m.get_formatted_cell_value(0, 1, 3).unwrap(), "b");
         assert_eq!(m.get_column_width(0, 1).unwrap(), 200.0);
+    }
+
+    #[test]
+    fn ens_sort_blocks_with_merged_cells() {
+        let mut m = model();
+        // Блоки по две строки: A объединён по вертикали, B — обычный.
+        for (r, v) in [(1, "30"), (3, "10"), (5, "20")] {
+            m.set_user_input(0, r, 1, v).unwrap();
+            m.merge_cells(&Area { sheet: 0, row: r, column: 1, width: 1, height: 2 }).unwrap();
+            m.set_user_input(0, r, 2, &format!("a{v}")).unwrap();
+            m.set_user_input(0, r + 1, 2, &format!("b{v}")).unwrap();
+        }
+        let area = Area { sheet: 0, row: 1, column: 1, width: 2, height: 6 };
+        m.sort_range_by(&area, &[(1, false)], Blanks::Last).unwrap();
+        let col = |c| (1..=6).map(|r| m.get_formatted_cell_value(0, r, c).unwrap()).collect::<Vec<_>>();
+        assert_eq!(col(1), ["10", "", "20", "", "30", ""]);
+        assert_eq!(col(2), ["a10", "b10", "a20", "b20", "a30", "b30"]);
+        // Разные размеры объединений — понятная ошибка.
+        m.unmerge_cells(&Area { sheet: 0, row: 3, column: 1, width: 1, height: 2 }).unwrap();
+        assert!(m.sort_range_by(&area, &[(1, false)], Blanks::Last).is_err());
     }
 
     #[test]
