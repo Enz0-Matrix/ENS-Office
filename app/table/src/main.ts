@@ -16,7 +16,7 @@ import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilt
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
-import { icon, onRibbonDrawn, renderRibbon } from './ribbon';
+import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
 import * as desk from './desktop';
@@ -761,6 +761,12 @@ function sheetMenu(index: number, x: number, y: number): void {
     s.addEventListener('click', () => { menu.hidden = true; model.setSheetColor(index, c); renderSheetTabs(); });
     colors.append(s);
   }
+  const more = document.createElement('button');
+  more.className = 'swatch';
+  more.textContent = '…';
+  more.title = 'Другие цвета…';
+  more.addEventListener('click', () => { menu.hidden = true; pickColor('#2B7A6B', (c) => { model.setSheetColor(index, c); renderSheetTabs(); }); });
+  colors.append(more);
   const label = document.createElement('div');
   label.className = 'menu-label';
   label.textContent = 'Цвет ярлычка';

@@ -74,6 +74,18 @@ document.addEventListener('mousedown', (e) => {
   if (!palette.hidden && !palette.contains(t) && !t.closest('.split-arrow')) palette.hidden = true;
 });
 
+/** «Другие цвета…»: окно выбора любого цвета системы; результат — #RRGGBB. */
+export function pickColor(initial: string, done: (color: string) => void): void {
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = /^#[0-9a-f]{6}$/i.test(initial) ? initial : '#2b7a6b';
+  input.style.cssText = 'position:fixed;left:-100px;top:-100px;opacity:0';
+  document.body.append(input);
+  input.addEventListener('change', () => { done(input.value.toUpperCase()); input.remove(); });
+  input.addEventListener('blur', () => setTimeout(() => input.remove(), 500));
+  input.click();
+}
+
 function openPalette(anchor: HTMLElement, kind: 'fill' | 'font', pick: (color: string) => void): void {
   const swatch = (color: string) => {
     const b = document.createElement('button');
@@ -97,7 +109,15 @@ function openPalette(anchor: HTMLElement, kind: 'fill' | 'font', pick: (color: s
   const std = document.createElement('div');
   std.className = 'palette-grid';
   for (const c of STANDARD) std.append(swatch(c));
-  palette.append(none, title('Цвета темы'), grid, title('Стандартные цвета'), std);
+  const custom = document.createElement('button');
+  custom.className = 'palette-none';
+  custom.textContent = 'Другие цвета…';
+  custom.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    palette.hidden = true;
+    pickColor(kind === 'fill' ? lastColor.fill : lastColor.font, pick);
+  });
+  palette.append(none, title('Цвета темы'), grid, title('Стандартные цвета'), std, custom);
   const r = anchor.getBoundingClientRect();
   palette.style.left = `${r.left}px`;
   palette.style.top = `${r.bottom + 2}px`;
