@@ -2122,6 +2122,16 @@ register(
     run: () => { grid.focusCell.enabled = !grid.focusCell.enabled; grid.render(); refreshRibbon(); } },
   { id: 'file.print', label: 'Печать и PDF', keywords: ['print', 'печать', 'pdf', 'распечатать'], keys: ['Ctrl+KeyP'],
     run: () => showBackstage('print') },
+  { id: 'edit.selectAll', label: 'Выделить всё', keywords: ['select all', 'выделить все', 'выделить всё'], keys: ['Ctrl+KeyA'],
+    run: () => {
+      // Как Excel: сначала текущая область данных, повторное нажатие — весь лист.
+      const s = grid.sel;
+      const single = s.r1 === s.r2 && s.c1 === s.c2;
+      const region = currentRegion(s.row, s.column, single ? undefined : s);
+      const same = region.r1 === s.r1 && region.c1 === s.c1 && region.r2 === s.r2 && region.c2 === s.c2;
+      if (same || (single && region.r1 === region.r2 && region.c1 === region.c2)) grid.selectRange(1, 1, LAST_ROW, LAST_COLUMN);
+      else grid.selectRange(region.r1, region.c1, region.r2, region.c2);
+    } },
   { id: 'edit.find', label: 'Найти', keywords: ['find', 'поиск', 'найти'], keys: ['Ctrl+KeyF'],
     run: () => showFind('find') },
   { id: 'edit.replace', label: 'Заменить', keywords: ['replace', 'замена', 'заменить'], keys: ['Ctrl+KeyH'], run: () => showFind('replace') },
