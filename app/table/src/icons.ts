@@ -10,6 +10,12 @@ import i_text_strike_20 from '@fluentui/svg-icons/icons/text_strikethrough_20_re
 import i_text_sub_20 from '@fluentui/svg-icons/icons/text_subscript_20_regular.svg?raw';
 import i_text_sup_20 from '@fluentui/svg-icons/icons/text_superscript_20_regular.svg?raw';
 import i_text_justify_24 from '@fluentui/svg-icons/icons/text_align_justify_24_regular.svg?raw';
+import i_money_24 from '@fluentui/svg-icons/icons/money_24_regular.svg?raw';
+import i_calc_24 from '@fluentui/svg-icons/icons/calculator_24_regular.svg?raw';
+import i_font_24 from '@fluentui/svg-icons/icons/text_font_24_regular.svg?raw';
+import i_fork_24 from '@fluentui/svg-icons/icons/branch_fork_24_regular.svg?raw';
+import i_more_24 from '@fluentui/svg-icons/icons/more_horizontal_24_regular.svg?raw';
+import i_book_24 from '@fluentui/svg-icons/icons/book_open_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
 import textColor20 from '@fluentui/svg-icons/icons/text_color_20_regular.svg?raw';
@@ -88,6 +94,12 @@ export const ICONS: Record<string, string> = {
   'text_bold_20': textBold20,
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
+  'money_24': i_money_24,
+  'calculator_24': i_calc_24,
+  'text_font_24': i_font_24,
+  'branch_fork_24': i_fork_24,
+  'more_horizontal_24': i_more_24,
+  'book_open_24': i_book_24,
   'text_strike_20': i_text_strike_20,
   'text_sub_20': i_text_sub_20,
   'text_sup_20': i_text_sup_20,

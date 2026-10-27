@@ -250,7 +250,18 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'edit.insertFunction', icon: 'math_formula', label: 'Вставить функцию' },
           { type: 'large', command: 'edit.autosum', icon: 'autosum', label: 'Автосумма' },
+          { type: 'large', command: 'fn.finance', icon: 'money', label: 'Финансовые' },
+          { type: 'large', command: 'fn.logic', icon: 'branch_fork', label: 'Логические' },
+          { type: 'large', command: 'fn.text', icon: 'text_font', label: 'Текстовые' },
+          { type: 'large', command: 'fn.date', icon: 'calendar_ltr', label: 'Дата и время' },
+          { type: 'large', command: 'fn.lookup', icon: 'search', label: 'Ссылки и массивы' },
+          { type: 'large', command: 'fn.math', icon: 'calculator', label: 'Математические' },
+          { type: 'large', command: 'fn.other', icon: 'more_horizontal', label: 'Другие функции' },
         ],
+      },
+      {
+        name: 'Определённые имена',
+        items: [{ type: 'large', command: 'formulas.names', icon: 'book_open', label: 'Диспетчер имён' }],
       },
       {
         name: 'Зависимости формул',

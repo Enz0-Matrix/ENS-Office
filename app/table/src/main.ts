@@ -16,6 +16,7 @@ import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilt
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
+import { FUNCTION_CATEGORIES } from './funclib';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
@@ -392,6 +393,20 @@ function jumpMark(dir: 1 | -1): void {
 /** Положение текста активной ячейки: 'superscript', 'subscript' или 'baseline'. */
 const vertAlignOfStyle = (st: CellStyle) => (st.font as { vert_align?: string }).vert_align ?? 'baseline';
 const vertAlignOf = () => vertAlignOfStyle(model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style);
+
+/** Вставить функцию из каталога: в редактируемую ячейку, а если ввода нет — в начало ввода формулы. */
+function insertFunctionText(name: string): void {
+  if (!editing) { startEdit(`=${name}(`); return; }
+  const inp = activeInput();
+  const at = inp.selectionStart ?? inp.value.length, end = inp.selectionEnd ?? at;
+  const head = inp.value.startsWith('=') ? '' : '=';
+  const text = `${head}${name}(`;
+  inp.value = inp.value.slice(0, at) + text + inp.value.slice(end);
+  inp.setSelectionRange(at + text.length, at + text.length);
+  (inp === editor ? formula : editor).value = inp.value;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  inp.focus();
+}
 
 const backStack: { sheet: number; row: number; column: number }[] = [];
 
@@ -2191,6 +2206,21 @@ register(
     run: () => style('font.i', (cur) => String(!cur), (st) => st.font.i) },
   { id: 'format.underline', label: 'Подчёркнутый', keywords: ['underline'], keys: ['Ctrl+KeyU'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.u,
     run: () => style('font.u', (cur) => String(!cur), (st) => st.font.u) },
+  ...([
+    ['fn.finance', 'Финансовые', ['Финансовые']], ['fn.logic', 'Логические', ['Логические']], ['fn.text', 'Текстовые', ['Текстовые']],
+    ['fn.date', 'Дата и время', ['Дата и время']], ['fn.lookup', 'Ссылки и массивы', ['Ссылки и массивы']], ['fn.math', 'Математические', ['Математические']],
+    ['fn.other', 'Другие функции', ['Статистические', 'Инженерные', 'Информационные', 'Совместимость', 'Работа с базой данных']],
+  ] as [string, string, string[]][]).map(([id, label, cats]) => ({
+    id, label: `Функции: ${label}`, keywords: ['функции', 'библиотека функций', label.toLowerCase()],
+    run: () => {
+      const b = document.querySelector<HTMLElement>(`.btn[data-command="${id}"]`)?.getBoundingClientRect();
+      const toItem = ([ru, en]: [string, string]): MenuItem => ({ label: ru, keys: en === ru ? undefined : en, run: () => insertFunctionText(ru) });
+      const items: MenuItem[] = cats.length === 1
+        ? (FUNCTION_CATEGORIES[cats[0]] ?? []).map(toItem)
+        : cats.map((c) => ({ label: c, run: () => {}, sub: (FUNCTION_CATEGORIES[c] ?? []).map(toItem) }));
+      showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
+    },
+  })),
   { id: 'format.strike', label: 'Зачёркнутый', keywords: ['strikethrough', 'зачеркнуть', 'зачёркивание'], keys: ['Ctrl+Digit5'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.strike,
     run: () => style('font.strike', (cur) => String(!cur), (st) => st.font.strike) },
   { id: 'format.superscript', label: 'Надстрочный', keywords: ['superscript', 'верхний индекс', 'степень'], checked: () => vertAlignOf() === 'superscript',

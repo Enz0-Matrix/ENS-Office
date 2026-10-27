@@ -142,7 +142,7 @@ footer { display: flex; flex-direction: column; }
 .modal button.danger { color: #a4262c; }
 .cell-editor.away { opacity: 0; pointer-events: none; }
 .sheet-rename { width: 120px; font: inherit; padding: 2px 6px; }
-.context-menu { position: fixed; z-index: 35; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 4px; min-width: 200px; display: flex; flex-direction: column; }
+.context-menu { position: fixed; z-index: 35; background: #fff; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); padding: 4px; min-width: 200px; display: flex; flex-direction: column; max-height: 80vh; overflow-y: auto; }
 .context-menu[hidden] { display: none; }
 .context-menu > button { border: 0; background: none; text-align: left; padding: 6px 12px; font: inherit; cursor: pointer; border-radius: 4px;
   display: flex; justify-content: space-between; gap: 24px; }
