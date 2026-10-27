@@ -119,7 +119,28 @@ export class Grid {
   /** Диапазон, выбираемый для формулы (пунктирная рамка, как в Excel). */
   pointRange: { r1: number; c1: number; r2: number; c2: number } | null = null;
   /** Ссылки редактируемой формулы на этом листе: у каждой свой цвет, как в Excel. */
-  refHighlights: { r1: number; c1: number; r2: number; c2: number; color: string }[] = [];
+  refHighlights: { r1: number; c1: number; r2: number; c2: number; color: string; id?: number }[] = [];
+  /** Цветную рамку ссылки тянут мышью: id — номер ссылки в формуле; rect — новый прямоугольник. */
+  onRefDrag: (id: number, rect: { r1: number; c1: number; r2: number; c2: number }) => void = () => {};
+  private refDrag: { id: number; mode: 'move' | 'resize'; row: number; column: number; orig: { r1: number; c1: number; r2: number; c2: number } } | null = null;
+
+  /** Рамка ссылки под курсором: за угол — растянуть, за край — переместить. */
+  private refFrameAt(e: MouseEvent): { id: number; mode: 'move' | 'resize'; orig: { r1: number; c1: number; r2: number; c2: number } } | null {
+    const cr = this.canvas.getBoundingClientRect();
+    const px = e.clientX - cr.left, py = e.clientY - cr.top;
+    for (const h of this.refHighlights) {
+      if (h.id === undefined) continue;
+      const a = this.cellRect(h.r1, h.c1), b = this.cellRect(h.r2, h.c2);
+      const x1 = a.x, y1 = a.y, x2 = b.x + b.w, y2 = b.y + b.h, t = 4;
+      const inside = px >= x1 - t && px <= x2 + t && py >= y1 - t && py <= y2 + t;
+      if (!inside) continue;
+      const orig = { r1: h.r1, c1: h.c1, r2: h.r2, c2: h.c2 };
+      if (Math.abs(px - x2) <= 6 && Math.abs(py - y2) <= 6) return { id: h.id, mode: 'resize', orig };
+      const onEdge = Math.abs(px - x1) <= t || Math.abs(px - x2) <= t || Math.abs(py - y1) <= t || Math.abs(py - y2) <= t;
+      if (onEdge) return { id: h.id, mode: 'move', orig };
+    }
+    return null;
+  }
   /** Щелчок или протяжка по ячейке во время ввода формулы. Вернуть true,
    *  если щелчок обработан (тогда выделение листа не меняется). */
   onPointer: (row: number, column: number, phase: 'down' | 'drag', shift: boolean) => boolean = () => false;
@@ -309,7 +330,7 @@ export class Grid {
     new ResizeObserver(() => this.resize()).observe(this.scroller);
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
-    window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; this.headerDrag = null; });
+    window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; this.headerDrag = null; this.refDrag = null; });
     window.addEventListener('mouseup', () => { this.endResize(); this.endFill(); });
     this.canvas.addEventListener('dblclick', (e) => {
       const g = this.grip(e);
@@ -774,6 +795,13 @@ export class Grid {
       document.body.style.cursor = 'crosshair';
       return;
     }
+    const frame = this.refFrameAt(e);
+    if (frame) {
+      e.preventDefault(); // фокус остаётся в поле ввода формулы
+      const p = this.hit(e);
+      this.refDrag = { ...frame, row: p.row, column: p.column };
+      return;
+    }
     const h = this.hit(e);
     if (!h.header && h.row >= 1 && h.column >= 1 && this.onPointer(h.row, h.column, 'down', e.shiftKey)) {
       e.preventDefault(); // фокус остаётся в поле ввода формулы
@@ -816,6 +844,20 @@ export class Grid {
       this.render();
       return;
     }
+    if (this.refDrag) {
+      const d = this.refDrag, p = this.hit(e);
+      if (p.row < 1 || p.column < 1) return;
+      let rect = d.orig;
+      if (d.mode === 'resize') {
+        rect = { ...d.orig, r2: Math.max(d.orig.r1, p.row), c2: Math.max(d.orig.c1, p.column) };
+      } else {
+        const dr = Math.max(1 - d.orig.r1, Math.min(LAST_ROW - d.orig.r2, p.row - d.row));
+        const dc = Math.max(1 - d.orig.c1, Math.min(LAST_COLUMN - d.orig.c2, p.column - d.column));
+        rect = { r1: d.orig.r1 + dr, c1: d.orig.c1 + dc, r2: d.orig.r2 + dr, c2: d.orig.c2 + dc };
+      }
+      this.onRefDrag(d.id, rect);
+      return;
+    }
     if (this.filling) {
       const h = this.hit(e), s = this.sel;
       const row = Math.max(1, h.row || s.r2), column = Math.max(1, h.column || s.c2);
@@ -833,7 +875,9 @@ export class Grid {
       const g = this.grip(e);
       const cr = this.canvas.getBoundingClientRect();
       const onHandle = Math.abs(e.clientX - cr.left - this.handle.x) <= 5 && Math.abs(e.clientY - cr.top - this.handle.y) <= 5;
-      this.canvas.style.cursor = g ? (g.kind === 'column' ? 'col-resize' : 'row-resize') : onHandle ? 'crosshair' : '';
+      const frame = g || onHandle ? null : this.refFrameAt(e);
+      this.canvas.style.cursor = g ? (g.kind === 'column' ? 'col-resize' : 'row-resize') : onHandle ? 'crosshair'
+        : frame ? (frame.mode === 'resize' ? 'nwse-resize' : 'move') : '';
     }
     if (this.pointing) {
       const p = this.hit(e);

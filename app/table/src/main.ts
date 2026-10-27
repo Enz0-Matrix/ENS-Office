@@ -362,6 +362,26 @@ function refsIn(text: string): Ref[] {
   return out;
 }
 
+/** Перетащили цветную рамку ссылки: правим её в тексте формулы, знаки $ сохраняются. */
+grid.onRefDrag = (id, rect) => {
+  if (!editing) return;
+  const inp = activeInput();
+  const ref = refsIn(inp.value)[id];
+  if (!ref) return;
+  const corner = (part: string | undefined, row: number, column: number) => {
+    const m = /(\$?)([A-Z]+)(\$?)(\d+)/i.exec(part ?? '');
+    return `${m?.[1] ?? ''}${columnName(column)}${m?.[3] ?? ''}${row}`;
+  };
+  const parts = ref.text.slice(ref.text.lastIndexOf('!') + 1).split(':');
+  const prefix = ref.text.slice(0, ref.text.lastIndexOf('!') + 1);
+  const single = rect.r1 === rect.r2 && rect.c1 === rect.c2 && parts.length === 1;
+  const next = prefix + corner(parts[0], rect.r1, rect.c1) + (single ? '' : `:${corner(parts[1] ?? parts[0], rect.r2, rect.c2)}`);
+  inp.value = inp.value.slice(0, ref.start) + next + inp.value.slice(ref.end);
+  inp.setSelectionRange(ref.start + next.length, ref.start + next.length);
+  (inp === editor ? formula : editor).value = inp.value;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+};
+
 const backStack: { sheet: number; row: number; column: number }[] = [];
 
 function goTo(ref: Ref): void {
@@ -413,16 +433,16 @@ function showRefs(): void {
   const refs = value.startsWith('=') ? refsIn(value) : [];
   const names = model.getWorksheetsProperties().map((p) => p.name.toLowerCase());
   const colorOf = new Map<string, string>();
-  const colored = refs.map((r) => {
+  const colored = refs.map((r, index) => {
     const key = r.text.toUpperCase().replace(/\$/g, '');
     if (!colorOf.has(key)) colorOf.set(key, REF_COLORS[colorOf.size % REF_COLORS.length]);
-    return { ...r, color: colorOf.get(key)! };
+    return { ...r, color: colorOf.get(key)!, index };
   });
   grid.refHighlights = colored
     .filter((r) => (r.sheet ? names.indexOf(r.sheet.toLowerCase()) : editCell.sheet) === grid.sheet)
     .map((r) => ({
       r1: Math.min(r.row, r.row2 ?? r.row), r2: Math.max(r.row, r.row2 ?? r.row),
-      c1: Math.min(r.column, r.column2 ?? r.column), c2: Math.max(r.column, r.column2 ?? r.column), color: r.color,
+      c1: Math.min(r.column, r.column2 ?? r.column), c2: Math.max(r.column, r.column2 ?? r.column), color: r.color, id: r.index,
     }));
   grid.render();
   // Строка формул: под прозрачным текстом поля — тот же текст с цветными ссылками.
