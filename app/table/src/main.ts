@@ -324,7 +324,7 @@ editor.addEventListener('keydown', (e) => {
 editor.addEventListener('blur', () => setTimeout(() => {
   const now = document.activeElement;
   if (!editing || editor.classList.contains('away') || now === formula || now === editor || !document.hasFocus()) return;
-  if (now && (now.closest('#recovery') || now.closest('#context-menu'))) return;
+  if (now && (now.closest('#recovery') || now.closest('#context-menu') || now.closest('#context-submenu'))) return;
   commitEdit(0, 0);
 }, 0));
 
@@ -334,7 +334,7 @@ formula.addEventListener('scroll', () => syncMirror());
 formula.addEventListener('blur', () => setTimeout(() => {
   const now = document.activeElement;
   if (!editing || now === formula || now === editor || !document.hasFocus()) return;
-  if (now && (now.closest('#recovery') || now.closest('#context-menu') || now.closest('.sheet-tabs'))) return;
+  if (now && (now.closest('#recovery') || now.closest('#context-menu') || now.closest('#context-submenu') || now.closest('.sheet-tabs'))) return;
   commitEdit(0, 0);
 }, 0));
 formula.addEventListener('keydown', (e) => editKey(e));
@@ -750,22 +750,44 @@ interface MenuItem {
   label: string; run: () => void; disabled?: boolean; keys?: string; separator?: boolean;
   /** Значок слева (свой SVG) и отметка выбранного пункта. */
   icon?: string; checked?: boolean;
+  /** Подменю: открывается по наведению, без щелчка. */
+  sub?: MenuItem[];
 }
 
-/** Контекстное меню: пункты; separator — черта перед пунктом. */
-function showMenu(items: MenuItem[], x: number, y: number): HTMLElement {
-  const menu = $('context-menu');
+/** Подменю: второе всплывающее меню рядом с пунктом. */
+const subMenu = Object.assign(document.createElement('div'), { id: 'context-submenu', className: 'context-menu', hidden: true });
+document.body.append(subMenu);
+
+function fillMenu(menu: HTMLElement, items: MenuItem[], onPick: () => void): void {
   menu.replaceChildren();
   for (const it of items) {
     if (it.separator) menu.append(Object.assign(document.createElement('hr'), { className: 'menu-sep' }));
     const b = document.createElement('button');
     const ic = it.icon !== undefined ? `<i class="menu-icon">${it.icon}</i>` : '';
-    b.innerHTML = `${ic}<span>${escapeHtml(it.label)}</span>${it.keys ? `<small>${escapeHtml(it.keys)}</small>` : ''}`;
+    b.innerHTML = `${ic}<span>${escapeHtml(it.label)}</span>${it.keys ? `<small>${escapeHtml(it.keys)}</small>` : ''}${it.sub ? '<small>▸</small>' : ''}`;
     if (it.checked) b.classList.add('checked');
     b.disabled = !!it.disabled;
-    b.addEventListener('click', () => { menu.hidden = true; it.run(); });
+    if (it.sub) {
+      const open = () => {
+        fillMenu(subMenu, it.sub!, onPick);
+        const r = b.getBoundingClientRect();
+        placeMenu(subMenu, r.right - 2, r.top, false);
+      };
+      b.addEventListener('mouseenter', open);
+      b.addEventListener('click', open);
+    } else {
+      b.addEventListener('mouseenter', () => { if (menu !== subMenu) subMenu.hidden = true; });
+      b.addEventListener('click', () => { onPick(); it.run(); });
+    }
     menu.append(b);
   }
+}
+
+/** Контекстное меню: пункты; separator — черта перед пунктом. */
+function showMenu(items: MenuItem[], x: number, y: number): HTMLElement {
+  const menu = $('context-menu');
+  subMenu.hidden = true;
+  fillMenu(menu, items, () => { menu.hidden = true; subMenu.hidden = true; });
   placeMenu(menu, x, y, false);
   return menu;
 }
@@ -794,7 +816,7 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     { label: 'Вырезать', keys: keysOf('clipboard.cut'), run: () => run('clipboard.cut') },
     { label: 'Копировать', keys: keysOf('clipboard.copy'), run: () => run('clipboard.copy') },
     { label: 'Вставить', keys: keysOf('clipboard.paste'), run: () => run('clipboard.paste') },
-    { label: 'Специальная вставка…', keys: 'Ctrl+Alt+V', run: () => pasteSpecialMenu(x, y) },
+    { label: 'Специальная вставка', keys: 'Ctrl+Alt+V', run: () => {}, sub: pasteSpecialItems() },
   ];
   // Вырезанные целые строки (столбцы) — вставить между другими, как в Excel «Вставить вырезанные ячейки».
   const cut = clip?.cut && clip.sheet === grid.sheet ? clip.lines : undefined;
@@ -1452,10 +1474,15 @@ initFind({
 
 /** Специальная вставка (Ctrl+Alt+V): значения, форматы, транспонировать. */
 function pasteSpecialMenu(x: number, y: number): void {
+  const items = pasteSpecialItems();
+  if (items) showMenu(items, x, y);
+}
+
+/** Пункты специальной вставки; без скопированного в ENS-Table — одна подсказка. */
+function pasteSpecialItems(): MenuItem[] {
   const c = clip;
   if (!c) {
-    showToast('Сначала скопируйте ячейки в ENS-Table (Ctrl+C): специальная вставка работает с ними.');
-    return;
+    return [{ label: 'Сначала скопируйте ячейки (Ctrl+C)', disabled: true, run: () => {} }];
   }
   const [r1, c1, r2, c2] = c.range;
   const at = () => { model.setSelectedCell(grid.sel.r1, grid.sel.c1); };
@@ -1473,8 +1500,33 @@ function pasteSpecialMenu(x: number, y: number): void {
     return out;
   };
   const run2 = (f: () => void, h: number, w: number) => { try { f(); } catch (e) { showToast(`Не удалось вставить: ${e}`); } done(h, w); };
-  showMenu([
+  // Формулы: как «Вставить всё», но оформление ячеек остаётся прежним.
+  const area = () => ({ r: grid.sel.r1, c: grid.sel.c1 });
+  const keepFormats = (f: () => void) => {
+    const { r, c: col } = area();
+    const kept = [];
+    for (let i = 0; i < r2 - r1 + 1; i++) {
+      const row = [];
+      for (let j = 0; j < c2 - c1 + 1; j++) row.push(model.getCellStyle(grid.sheet, r + i, col + j).style);
+      kept.push(row);
+    }
+    f();
+    model.setSelectedCell(r, col);
+    model.setSelectedRange(r, col, r, col);
+    model.onPasteStyles(kept);
+  };
+  return [
     { label: 'Вставить всё', keys: 'Ctrl+V', run: () => paste(c.text) },
+    { label: 'Формулы', run: () => run2(() => keepFormats(() => { at(); model.pasteFromClipboard(c.sheet, c.range, c.data, false); }), r2 - r1 + 1, c2 - c1 + 1) },
+    { label: 'Текст формулы', run: () => run2(() => {
+      const { r, c: col } = area();
+      for (let i = 0; i <= r2 - r1; i++) {
+        for (let j = 0; j <= c2 - c1; j++) {
+          const text = model.getCellContent(c.sheet, r1 + i, c1 + j);
+          model.setUserInput(grid.sheet, r + i, col + j, text.startsWith('=') ? `'${text}` : text);
+        }
+      }
+    }, r2 - r1 + 1, c2 - c1 + 1) },
     { label: 'Значения', run: () => run2(() => { at(); model.pasteValues(c.sheet, c.range, false); }, r2 - r1 + 1, c2 - c1 + 1) },
     { label: 'Значения и форматы', run: () => run2(() => {
       at(); model.pasteValues(c.sheet, c.range, false);
@@ -1486,7 +1538,7 @@ function pasteSpecialMenu(x: number, y: number): void {
       model.onPasteStyles(styles());
     }, Math.max(r2 - r1 + 1, grid.sel.r2 - grid.sel.r1 + 1), Math.max(c2 - c1 + 1, grid.sel.c2 - grid.sel.c1 + 1)) },
     { label: 'Транспонировать (значения)', separator: true, run: () => run2(() => { at(); model.pasteValues(c.sheet, c.range, true); }, c2 - c1 + 1, r2 - r1 + 1) },
-  ], x, y);
+  ];
 }
 
 grid.onContextMenu = (x, y, header) => {
@@ -1503,11 +1555,11 @@ document.addEventListener('contextmenu', (e) => {
 
 document.addEventListener('mousedown', (e) => {
   const menu = $('context-menu');
-  if (!menu.hidden && !menu.contains(e.target as Node)) menu.hidden = true;
+  if (!menu.hidden && !menu.contains(e.target as Node) && !subMenu.contains(e.target as Node)) { menu.hidden = true; subMenu.hidden = true; }
 });
 document.addEventListener('keydown', (e) => {
   const menu = $('context-menu');
-  if (e.key === 'Escape' && !menu.hidden) { menu.hidden = true; e.stopPropagation(); }
+  if (e.key === 'Escape' && !menu.hidden) { menu.hidden = true; subMenu.hidden = true; e.stopPropagation(); }
 }, true);
 
 // --- Файлы ---
