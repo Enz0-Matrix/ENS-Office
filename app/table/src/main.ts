@@ -957,6 +957,12 @@ function fitRows(r1: number, r2: number): void {
   }
 }
 
+/** Активная ячейка входит в объединение (кнопка «Объединить» нажата). */
+function inMerge(): boolean {
+  const s = grid.sel;
+  return model.getMergedCells(grid.sheet).some((m) => m.row <= s.row && s.row < m.row + m.height && m.column <= s.column && s.column < m.column + m.width);
+}
+
 /** Объединение ячеек, как в Excel: если данных несколько — останется левое верхнее значение. */
 /** Объединение — для каждого выделенного диапазона (Ctrl): каждый станет своей ячейкой. */
 function merge(kind: 'center' | 'plain' | 'across' | 'undo'): void {
@@ -2053,12 +2059,12 @@ register(
   { id: 'format.fontColor', label: 'Цвет шрифта', keywords: ['font color', 'цвет текста'], run: (c) => style('font.color', () => c ?? '') },
   { id: 'format.fontName', label: 'Шрифт', keywords: ['font', 'гарнитура', 'начертание'], run: (f) => { if (f) style('font.name', () => f); } },
   { id: 'format.fontSize', label: 'Размер шрифта', keywords: ['font size', 'кегль'], run: (n) => { if (n) style('font.size', () => n); } },
-  { id: 'align.left', label: 'По левому краю', keywords: ['align left'], run: () => style('alignment.horizontal', () => 'left') },
-  { id: 'align.center', label: 'По центру', keywords: ['align center', 'центр'], run: () => style('alignment.horizontal', () => 'center') },
-  { id: 'align.right', label: 'По правому краю', keywords: ['align right'], run: () => style('alignment.horizontal', () => 'right') },
-  { id: 'align.top', label: 'По верхнему краю', keywords: ['align top', 'вверху'], run: () => style('alignment.vertical', () => 'top') },
-  { id: 'align.middle', label: 'По середине (по вертикали)', keywords: ['middle', 'по вертикали'], run: () => style('alignment.vertical', () => 'center') },
-  { id: 'align.bottom', label: 'По нижнему краю', keywords: ['align bottom', 'внизу'], run: () => style('alignment.vertical', () => 'bottom') },
+  { id: 'align.left', label: 'По левому краю', keywords: ['align left'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.horizontal === 'left', run: () => style('alignment.horizontal', () => 'left') },
+  { id: 'align.center', label: 'По центру', keywords: ['align center', 'центр'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.horizontal === 'center', run: () => style('alignment.horizontal', () => 'center') },
+  { id: 'align.right', label: 'По правому краю', keywords: ['align right'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.horizontal === 'right', run: () => style('alignment.horizontal', () => 'right') },
+  { id: 'align.top', label: 'По верхнему краю', keywords: ['align top', 'вверху'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.vertical === 'top', run: () => style('alignment.vertical', () => 'top') },
+  { id: 'align.middle', label: 'По середине (по вертикали)', keywords: ['middle', 'по вертикали'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.vertical === 'center', run: () => style('alignment.vertical', () => 'center') },
+  { id: 'align.bottom', label: 'По нижнему краю', keywords: ['align bottom', 'внизу'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.vertical === 'bottom', run: () => style('alignment.vertical', () => 'bottom') },
   { id: 'view.formulaBar', label: 'Развернуть или свернуть строку формул', keywords: ['formula bar', 'строка формул', 'высота'], keys: ['Ctrl+Shift+KeyU'],
     run: () => toggleFormulaHeight() },
   { id: 'data.group', label: 'Сгруппировать', keywords: ['group', 'группа', 'свернуть', 'структура'], keys: ['Shift+Alt+ArrowRight'],
@@ -2076,6 +2082,7 @@ register(
     checked: () => !!model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.alignment?.wrap_text,
     run: () => { style('alignment.wrap_text', (cur) => String(!cur), (st) => !!st.alignment?.wrap_text); fitRows(grid.sel.r1, grid.sel.r2); } },
   { id: 'format.merge', label: 'Объединить и поместить в центр', keywords: ['merge', 'объединить ячейки', 'объединение'],
+    checked: () => inMerge(),
     run: () => merge('center') },
   { id: 'format.unmerge', label: 'Отменить объединение ячеек', keywords: ['unmerge', 'разъединить'], run: () => merge('undo') },
   { id: 'format.borders', label: 'Границы (последний выбор)', keywords: ['borders', 'рамка', 'границы', 'обрамление'],
@@ -2102,8 +2109,10 @@ register(
   { id: 'format.grouping', label: 'Разделитель групп разрядов', keywords: ['thousands separator', 'разряды', 'пробел между тысячами'], keys: ['Ctrl+Shift+Digit1'],
     run: () => numFormat(toggleGrouping, 'Разделитель разрядов') },
   { id: 'format.percent', label: 'Процентный формат', keywords: ['percent', 'процент'], keys: ['Ctrl+Shift+Digit5'],
+    checked: () => /%/.test(model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.num_fmt),
     run: () => style('num_fmt', () => '0%') },
   { id: 'format.currency', label: 'Денежный формат (₽)', keywords: ['currency', 'рубли', 'деньги'], keys: ['Ctrl+Shift+Digit4'],
+    checked: () => /₽/.test(model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.num_fmt),
     run: () => style('num_fmt', () => '#,##0.00 "₽";[Red]-#,##0.00 "₽"') },
   { id: 'format.number', label: 'Числовой формат', keywords: ['number format', 'формат ячеек'], run: (fmt) => {
     if (fmt === ':more') { syncNumberFormat(); openFormatCells(); return; }
