@@ -382,6 +382,13 @@ grid.onRefDrag = (id, rect) => {
   inp.dispatchEvent(new Event('input', { bubbles: true }));
 };
 
+function jumpMark(dir: 1 | -1): void {
+  const next = grid.nextMark(dir);
+  if (!next) { showToast('Меток нет: щёлкните по полоске у края номера строки или буквы столбца.'); return; }
+  if (next.kind === 'row') grid.select(next.index, grid.sel.column);
+  else grid.select(grid.sel.row, next.index);
+}
+
 const backStack: { sheet: number; row: number; column: number }[] = [];
 
 function goTo(ref: Ref): void {
@@ -1613,6 +1620,7 @@ function setModel(next: Model, nextDoc: desk.Doc): void {
   model = next;
   doc = nextDoc;
   resetFilters();
+  grid.clearMarks();
   model.setRecognizeDates(settings.recognizeDates);
   syncDocTitle();
   setSheet(0);
@@ -2186,6 +2194,14 @@ register(
     run: () => changeOutline(1) },
   { id: 'data.summary', label: 'Положение «+» у групп', keywords: ['итоги под данными', 'итоги над данными', 'summary below', 'структура'],
     run: () => { const b = document.querySelector<HTMLElement>('.btn[data-command="data.summary"]')?.getBoundingClientRect(); summaryMenu(b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8); } },
+  { id: 'view.markRow', label: 'Метка строки (поставить или снять)', keywords: ['bookmark', 'закладка', 'метка', 'отметить строку'], keys: ['Ctrl+Alt+KeyB'],
+    run: () => grid.toggleMark('row', grid.sel.row) },
+  { id: 'view.markColumn', label: 'Метка столбца (поставить или снять)', keywords: ['bookmark', 'закладка', 'метка', 'отметить столбец'], keys: ['Ctrl+Alt+Shift+KeyB'],
+    run: () => grid.toggleMark('column', grid.sel.column) },
+  { id: 'view.markNext', label: 'К следующей метке', keywords: ['next bookmark', 'закладка', 'следующая метка'], keys: ['Ctrl+Alt+ArrowDown'],
+    run: () => jumpMark(1) },
+  { id: 'view.markPrev', label: 'К предыдущей метке', keywords: ['previous bookmark', 'закладка', 'предыдущая метка'], keys: ['Ctrl+Alt+ArrowUp'],
+    run: () => jumpMark(-1) },
   { id: 'data.ungroup', label: 'Разгруппировать', keywords: ['ungroup', 'группа', 'структура'], keys: ['Shift+Alt+ArrowLeft'],
     run: () => changeOutline(-1) },
   { id: 'format.rotate', label: 'Направление текста', keywords: ['text direction', 'поворот текста', 'вертикально', 'под углом', 'ориентация'],

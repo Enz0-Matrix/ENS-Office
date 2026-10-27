@@ -351,6 +351,40 @@ export class Grid {
     window.addEventListener('blur', () => { this.windowActive = false; this.render(); });
   }
 
+  // --- Метки строк и столбцов (закладки, как в Notepad++) ---
+
+  private marks = new Map<number, { rows: Set<number>; cols: Set<number> }>();
+  /** Метки действуют, пока открыта книга: щелчок по полоске у края заголовка ставит и снимает. */
+  private marksOf(sheet = this.sheet): { rows: Set<number>; cols: Set<number> } {
+    let m = this.marks.get(sheet);
+    if (!m) this.marks.set(sheet, m = { rows: new Set(), cols: new Set() });
+    return m;
+  }
+
+  toggleMark(kind: 'row' | 'column', index: number): void {
+    const set = kind === 'row' ? this.marksOf().rows : this.marksOf().cols;
+    if (!set.delete(index)) set.add(index);
+    this.render();
+  }
+
+  hasMark(kind: 'row' | 'column', index: number): boolean {
+    return (kind === 'row' ? this.marksOf().rows : this.marksOf().cols).has(index);
+  }
+
+  /** Следующая (dir = 1) или предыдущая метка по кругу: строки, а если их нет — столбцы. */
+  nextMark(dir: 1 | -1): { kind: 'row' | 'column'; index: number } | null {
+    const m = this.marksOf();
+    const kind = m.rows.size ? 'row' : 'column';
+    const list = [...(kind === 'row' ? m.rows : m.cols)].sort((a, b) => a - b);
+    if (!list.length) return null;
+    const at = kind === 'row' ? this.sel.row : this.sel.column;
+    const index = dir > 0 ? (list.find((i) => i > at) ?? list[0]) : ([...list].reverse().find((i) => i < at) ?? list[list.length - 1]);
+    return { kind, index };
+  }
+
+  /** Метки сброшены (новая книга). */
+  clearMarks(): void { this.marks.clear(); }
+
   // --- Геометрия ---
 
   private columnWidth(column: number): number {
@@ -818,6 +852,12 @@ export class Grid {
       const s = this.sel;
       this.extraRanges = [...this.extraRanges, { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
       this.ctrlPick = true;
+    }
+    {
+      // Полоска у края заголовка (слева у строк, сверху у столбцов) — метка-закладка.
+      const px = e.clientX - cr.left, py = e.clientY - cr.top;
+      if (h.header === 'row' && h.row >= 1 && px - this.outlineW < 11 && px >= this.outlineW) { this.toggleMark('row', h.row); e.preventDefault(); return; }
+      if (h.header === 'column' && h.column >= 1 && py - this.outlineH < 6 && py >= this.outlineH) { this.toggleMark('column', h.column); e.preventDefault(); return; }
     }
     if (h.header === 'column' || h.header === 'row') {
       // Несколько столбцов (строк): протянуть по заголовкам или Shift+щелчок.
@@ -1448,6 +1488,15 @@ export class Grid {
     ctx.restore();
   }
 
+  /** Значок метки: синий кружок. */
+  private drawMark(x: number, y: number): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = '#2f6fd1';
+    ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   private drawHeaders(rowBands: Band[], colBands: Band[], W: number, H: number): void {
     const ctx = this.ctx, s = this.sel;
     ctx.fillStyle = this.theme.headerBg;
@@ -1477,6 +1526,7 @@ export class Grid {
       ctx.fillStyle = inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${c === s.column ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(columnName(c), x + w / 2, this.outlineH + HEADER_H / 2);
+      if (this.marksOf().cols.has(c)) this.drawMark(x + 7, this.outlineH + 5);
       ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, this.outlineH); ctx.lineTo(Math.round(x + w) + 0.5, this.headerH); ctx.stroke();
       // Перед этим столбцом скрытые — метка в заголовке (двойная черта, как в Excel).
       if (c > 1 && this.width(c - 1) === 0) this.hiddenMark(Math.round(x), this.outlineH, 3, HEADER_H);
@@ -1504,6 +1554,7 @@ export class Grid {
       ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.outlineW + (this.headerW - this.outlineW) / 2, y + h / 2);
+      if (this.marksOf().rows.has(r)) this.drawMark(this.outlineW + 6, y + h / 2);
       if (r > 1 && this.height(r - 1) === 0) this.hiddenMark(this.outlineW, Math.round(y) - 1, this.headerW - this.outlineW, 3);
       ctx.beginPath(); ctx.moveTo(this.outlineW, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
     }
