@@ -244,6 +244,10 @@ fn filter_columns_xml(criteria: &str) -> String {
         let (Some(col), Some(serde_json::Value::Array(values))) = (c.get(0).and_then(|v| v.as_i64()), c.get(1)) else {
             continue;
         };
+        // Отбор по цвету («fill:…», «font:…») Excel в таком виде не знает: не пишем.
+        if values.iter().filter_map(|v| v.as_str()).any(|v| v.starts_with("fill:") || v.starts_with("font:")) {
+            continue;
+        }
         let blank = values.iter().any(|v| v.as_str() == Some("(пустые)"));
         let items: String = values
             .iter()

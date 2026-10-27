@@ -28,6 +28,8 @@ const EMPTY = '(Пустые)';
 const EXTRA = '_ENS_Filter';
 /** Как в Excel, отбор не различает регистр: «Москва» и «москва» — одно значение. */
 const key = (shown: string) => (shown || EMPTY).toLowerCase();
+/** Отбор по цвету хранится в том же наборе: «fill:#ffff00» — заливка, «font:#ff0000» — шрифт («none» — без цвета). */
+const COLOR_TOKEN = /^(fill|font):/;
 const filters = new Map<number, SheetFilter[]>();
 let host: FilterHost;
 
@@ -115,6 +117,32 @@ function persist(sheet: number): void {
   } catch { /* имена не записались — фильтры живут до закрытия книги */ }
 }
 
+/** Цвет заливки или шрифта ячейки как «fill:#rrggbb» / «font:#rrggbb»; без цвета — «…:none». */
+function colorKey(kind: 'fill' | 'font', r: number, c: number): string {
+  const m = host.model(), s = host.sheet();
+  const st = m.getCellStyle(s, r, c).style;
+  const raw = kind === 'fill' ? st.fill?.color : st.font.color;
+  let hex = '';
+  try { hex = raw ? m.resolveColor(raw) : ''; } catch { /* нет цвета */ }
+  hex = hex.toLowerCase();
+  // Белая заливка и чёрный шрифт — то же, что «без цвета».
+  if (!hex || (kind === 'fill' && hex === '#ffffff') || (kind === 'font' && hex === '#000000')) return `${kind}:none`;
+  return `${kind}:${hex}`;
+}
+
+/** Проходит ли строка r по отбору столбца c: по значению или по цвету. */
+function passes(allowed: Set<string>, r: number, c: number): boolean {
+  const m = host.model(), s = host.sheet();
+  let byColor = false;
+  for (const v of allowed) {
+    const kind = COLOR_TOKEN.exec(v)?.[1] as 'fill' | 'font' | undefined;
+    if (!kind) continue;
+    byColor = true;
+    if (colorKey(kind, r, c) === v) return true;
+  }
+  return !byColor && allowed.has(key(m.getFormattedCellValue(s, r, c)));
+}
+
 /** Строки таблицы: от заголовка до первой полностью пустой строки (ниже — другая таблица). */
 function extend(f: SheetFilter): void {
   const m = host.model(), s = host.sheet();
@@ -166,7 +194,7 @@ function apply(f: SheetFilter): void {
   for (let r = f.r1 + 1; r <= f.r2; r++) {
     let show = true;
     for (const [c, allowed] of f.criteria) {
-      if (!allowed.has(key(m.getFormattedCellValue(s, r, c)))) { show = false; break; }
+      if (!passes(allowed, r, c)) { show = false; break; }
     }
     if (!runStart) { runStart = r; runHidden = !show; continue; }
     if (runHidden !== !show) { flush(r - 1); runStart = r; runHidden = !show; }
@@ -192,13 +220,18 @@ export function openFilterPopup(row: number, column: number, x: number, y: numbe
   extend(f);
   const m = host.model(), s = host.sheet();
   const values = new Map<string, string>(); // ключ → как показать
+  const colors = new Map<string, string>(); // токен цвета → подпись
   for (let r = f.r1 + 1; r <= f.r2; r++) {
     // Учитываем отбор по другим столбцам: в списке — только видимые варианты.
     let ok = true;
     for (const [c, allowed] of f.criteria) {
-      if (c !== column && !allowed.has(key(m.getFormattedCellValue(s, r, c)))) { ok = false; break; }
+      if (c !== column && !passes(allowed, r, c)) { ok = false; break; }
     }
     if (!ok) continue;
+    for (const kind of ['fill', 'font'] as const) {
+      const token = colorKey(kind, r, column);
+      if (!colors.has(token)) colors.set(token, token.endsWith(':none') ? (kind === 'fill' ? 'без заливки' : 'авто') : token.slice(kind.length + 1));
+    }
     const shown = m.getFormattedCellValue(s, r, column) || EMPTY;
     if (!values.has(key(shown))) values.set(key(shown), shown);
   }
@@ -213,18 +246,33 @@ export function openFilterPopup(row: number, column: number, x: number, y: numbe
     <button data-act="asc">↑ Сортировка от А до Я</button>
     <button data-act="desc">↓ Сортировка от Я до А</button>
     <button data-act="clear" ${current ? '' : 'disabled'}>Снять фильтр со столбца</button>
+    ${colors.size > 2 ? '<div class="filter-colors-title">По цвету</div><div class="filter-colors"></div>' : ''}
     <hr>
     <input class="filter-search" placeholder="Поиск" autocomplete="off">
     <label class="filter-all"><input type="checkbox" data-all checked> (Выделить все)</label>
     <div class="filter-values"></div>
     <div class="filter-buttons"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>`;
+  const palette = popup.querySelector<HTMLElement>('.filter-colors');
+  for (const [token, label] of colors) {
+    if (!palette) break;
+    const none = token.endsWith(':none');
+    const sw = document.createElement('button');
+    sw.className = `filter-swatch${current?.has(token) ? ' on' : ''}${none ? ' none' : ''}`;
+    sw.dataset.token = token;
+    sw.title = `${token.startsWith('fill') ? 'Заливка' : 'Шрифт'}: ${label}`;
+    if (!none) {
+      if (token.startsWith('fill')) sw.style.background = label;
+      else { sw.style.color = label; sw.textContent = 'A'; }
+    } else sw.textContent = token.startsWith('fill') ? '∅' : 'A';
+    palette.append(sw);
+  }
   const box = popup.querySelector<HTMLElement>('.filter-values')!;
   for (const v of sorted) {
     const l = document.createElement('label');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = key(v);
-    cb.checked = !current || current.has(key(v));
+    cb.checked = !current || [...current].some((x) => COLOR_TOKEN.test(x)) || current.has(key(v));
     l.append(cb, ` ${v}`);
     box.append(l);
   }
@@ -247,6 +295,14 @@ export function openFilterPopup(row: number, column: number, x: number, y: numbe
     if (e.key === 'Enter') (popup.querySelector('[data-act="ok"]') as HTMLButtonElement).click();
   };
   popup.onclick = (e) => {
+    const token = (e.target as HTMLElement).closest<HTMLElement>('.filter-swatch')?.dataset.token;
+    if (token) {
+      // Выбранный цвет — снова щелчок снимает; по цвету отбирается одно значение за раз.
+      if (current?.has(token)) f.criteria.delete(column); else f.criteria.set(column, new Set([token]));
+      popup.hidden = true;
+      apply(f);
+      return;
+    }
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
     if (act === 'asc' || act === 'desc') { popup.hidden = true; host.sort(column, act === 'desc', f); return; }
