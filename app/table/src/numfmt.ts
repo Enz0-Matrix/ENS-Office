@@ -92,6 +92,9 @@ const zeros = (n: number) => '0'.repeat(Math.max(0, n));
 /** По умолчанию — разряды и отрицательные красным (по желанию пользователя). */
 export const withRed = (base: string) => `${base};[Red]-${base}`;
 
+/** Простой числовой формат из одной секции (без процента) получает красные отрицательные. */
+const redIfPlain = (code: string): string => (code.includes(';') || /[%@"\[]/.test(code) ? code : withRed(code));
+
 /** «Увеличить/уменьшить разрядность»: delta = +1 или −1. null — к этому формату неприменимо. */
 export function changeDecimals(code: string, delta: number, shown: string): string | null {
   if (isText(code) || isDateTime(code)) return null;
@@ -99,10 +102,10 @@ export function changeDecimals(code: string, delta: number, shown: string): stri
     const n = Math.max(0, shownDecimals(shown) + delta);
     return withRed(n ? `#,##0.${zeros(n)}` : '#,##0');
   }
-  return mapSections(code, (s) => mapNumber(s, (int, frac) => {
+  return redIfPlain(mapSections(code, (s) => mapNumber(s, (int, frac) => {
     const n = Math.max(0, (frac?.length ?? 0) + delta);
     return n ? `${int || '0'}.${(frac ?? '').replace(/[#?]/g, '0').padEnd(n, '0').slice(0, n)}` : (int || '0');
-  }));
+  })));
 }
 
 /** Есть ли разделитель групп разрядов («#,##0»). */
@@ -120,11 +123,11 @@ export function toggleGrouping(code: string, shown: string): string | null {
     return withRed(n ? `#,##0.${zeros(n)}` : '#,##0');
   }
   const on = !hasGrouping(code);
-  return mapSections(code, (s) => mapNumber(s, (int, frac) => {
+  return redIfPlain(mapSections(code, (s) => mapNumber(s, (int, frac) => {
     const digits = int.replace(/,/g, '');
     const next = on ? `#,##${digits.replace(/^[#?]*/, '').padStart(1, '0')}` : digits.replace(/^#+(?=0)/, '') || '0';
     return frac === null ? next : `${next}.${frac}`;
-  }));
+  })));
 }
 
 // --- Окно «Формат ячеек» ---
