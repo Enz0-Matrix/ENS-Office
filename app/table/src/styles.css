@@ -128,6 +128,16 @@ footer { display: flex; flex-direction: column; }
 .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
 .overlay[hidden] { display: none; }
 .modal { background: #fff; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.3); padding: 18px 20px; width: min(640px, 92vw); max-height: 86vh; overflow: auto; }
+.names-modal { width: min(680px, 94vw); }
+.names-list { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+.names-list table { width: 100%; border-collapse: collapse; }
+.names-list th, .names-list td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.names-list tbody tr { cursor: pointer; }
+.names-list tbody tr.on { background: var(--hover); }
+.names-form { display: grid; gap: 8px; margin-bottom: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.names-form label { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 8px; }
+.names-form input, .names-form select { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; background: var(--panel); color: var(--text); }
+.names-note { color: #a4262c; min-height: 1em; }
 .modal.small { width: min(440px, 92vw); }
 .modal h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
 .modal p { margin: 0 0 12px; color: var(--muted); }

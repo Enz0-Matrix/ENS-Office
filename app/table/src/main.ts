@@ -17,6 +17,7 @@ import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
 import { FUNCTION_CATEGORIES } from './funclib';
+import { defineFromSelection, initNames, nameFormula, openNameManager } from './names';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
 import { localeId, saveSettings, settings } from './settings';
@@ -586,8 +587,16 @@ function dataEdge(row: number, column: number, dRow: number, dCol: number): { ro
 nameBox.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
-  const ref = refsIn(nameBox.value.toUpperCase())[0];
-  if (ref) goTo(ref);
+  const typed = nameBox.value.trim();
+  const ref = refsIn(typed.toUpperCase())[0];
+  // Адрес («B12», «Лист2!A1:B3») — переход; иначе имя: есть — переход, нет — выделение получает это имя.
+  if (ref && ref.text === typed.toUpperCase().replace(/\$/g, '')) { goTo(ref); return; }
+  const known = typed ? nameFormula(typed) : null;
+  if (known) { const target = refsIn(known.toUpperCase())[0]; if (target) goTo(target); }
+  else if (typed && !ref) defineFromSelection(typed);
+  else if (ref) goTo(ref);
+  updateFormulaBar();
+  focusGrid();
 });
 
 // --- Строка формул и строка состояния следуют за выделением ---
@@ -1526,6 +1535,20 @@ function openConditionalMenu(): void {
 // После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
 grid.onFilterButton = (row, column, x, y) => setTimeout(() => openFilterPopup(row, column, x, y));
 
+initNames({
+  model: () => model,
+  sheet: () => grid.sheet,
+  selectionRef: () => {
+    const s = grid.sel, name = model.getWorksheetsProperties()[grid.sheet].name;
+    const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+    const cell = (r: number, c: number) => `$${columnName(c)}$${r}`;
+    return `${q}!${cell(s.r1, s.c1)}${s.r1 === s.r2 && s.c1 === s.c2 ? '' : `:${cell(s.r2, s.c2)}`}`;
+  },
+  goTo: (formula) => { const r = refsIn(formula.toUpperCase())[0]; if (r) goTo(r); },
+  changed: () => { grid.render(); updateFormulaBar(); updateStatus(); },
+  toast: showToast,
+});
+
 initFind({
   model: () => model,
   sheet: () => grid.sheet,
@@ -2221,6 +2244,8 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'formulas.names', label: 'Диспетчер имён', keywords: ['name manager', 'имена', 'именованный диапазон', 'присвоить имя'], keys: ['Ctrl+F3'],
+    run: () => openNameManager() },
   { id: 'format.strike', label: 'Зачёркнутый', keywords: ['strikethrough', 'зачеркнуть', 'зачёркивание'], keys: ['Ctrl+Digit5'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.strike,
     run: () => style('font.strike', (cur) => String(!cur), (st) => st.font.strike) },
   { id: 'format.superscript', label: 'Надстрочный', keywords: ['superscript', 'верхний индекс', 'степень'], checked: () => vertAlignOf() === 'superscript',
