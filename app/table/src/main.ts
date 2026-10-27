@@ -1269,6 +1269,15 @@ document.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, 
 
 // --- Отменить / Повторить: видно, можно ли, и что сработало ---
 
+const qaSave = $<HTMLButtonElement>('qa-save');
+const qaPrint = $<HTMLButtonElement>('qa-print');
+qaSave.innerHTML = icon('save', 20);
+qaPrint.innerHTML = icon('print', 20);
+for (const [b, id] of [[qaSave, 'file.save'], [qaPrint, 'file.print']] as const) {
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', () => run(id));
+}
+
 const qaUndo = $<HTMLButtonElement>('qa-undo');
 const qaRedo = $<HTMLButtonElement>('qa-redo');
 qaUndo.innerHTML = icon('arrow_undo', 20);
