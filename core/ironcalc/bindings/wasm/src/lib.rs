@@ -542,6 +542,12 @@ impl Model {
         self.model.set_column_collapsed(sheet, column, collapsed).map_err(to_js_error)
     }
 
+    /// ENS-Office: the default font of a new book.
+    #[wasm_bindgen(js_name = "setDefaultFont")]
+    pub fn set_default_font(&mut self, name: &str, size: i32) {
+        self.model.set_default_font(name, size);
+    }
+
     /// ENS-Office: новые книги — по центру по вертикали (формат по умолчанию).
     #[wasm_bindgen(js_name = "setDefaultVerticalCenter")]
     pub fn set_default_vertical_center(&mut self) {

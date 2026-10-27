@@ -2,7 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog } from './changelog';
@@ -27,6 +27,8 @@ const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
 await Promise.all([loadEngine(), loadFonts()]);
+newBookFont.name = settings.defaultFont;
+newBookFont.size = settings.defaultFontSize;
 let model: Model = newWorkbook(localeId());
 model.setRecognizeDates(settings.recognizeDates);
 let doc: desk.Doc = desk.newDoc();
@@ -2602,6 +2604,8 @@ initBackstage({
   applySettings: () => {
     model.setLocale(localeId());
     model.setRecognizeDates(settings.recognizeDates);
+    newBookFont.name = settings.defaultFont;
+    newBookFont.size = settings.defaultFontSize;
     grid.render(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat();
   },
   recoveryFolder: () => desk.recoveryFolder(),

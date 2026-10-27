@@ -130,6 +130,7 @@ export interface Model {
   setColumnCollapsed(sheet: number, column: number, collapsed: boolean): void;
   /** Новые книги — по центру по вертикали. */
   setDefaultVerticalCenter(): void;
+  setDefaultFont(name: string, size: number): void;
   mergeCells(range: Area): void;
   mergeCellsCenter(range: Area): void;
   mergeCellsAcross(range: Area): void;
@@ -227,11 +228,15 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 // движок тоже понимает и показывает по-русски, как русский Excel.
 const LANGUAGE = 'ru';
 
+/** Шрифт новых книг (Параметры → Шрифт по умолчанию). */
+export const newBookFont = { name: 'Times New Roman', size: 12 };
+
 export function newWorkbook(locale: string, name = 'Книга1'): Model {
   const model = new Engine(name, locale, TZ, LANGUAGE);
   model.renameSheet(0, 'Лист1');
   // По желанию пользователя: в новых книгах — по центру по вертикали.
   try { model.setDefaultVerticalCenter(); } catch { /* старый движок */ }
+  try { model.setDefaultFont(newBookFont.name, newBookFont.size); } catch { /* старый движок */ }
   model.flushSendQueue(); // переименование — не правка пользователя
   try { model.clearEnsChanges(); } catch { /* старый движок */ }
   return model;

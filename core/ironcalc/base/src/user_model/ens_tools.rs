@@ -272,6 +272,16 @@ impl UserModel<'_> {
         }
     }
 
+    /// ENS-Office: the default font of a new book (the font of the first cell style).
+    pub fn set_default_font(&mut self, name: &str, size: i32) {
+        let styles = &mut self.model.workbook.styles;
+        let Some(id) = styles.cell_xfs.first().map(|xf| xf.font_id) else { return };
+        if let Some(font) = usize::try_from(id).ok().and_then(|i| styles.fonts.get_mut(i)) {
+            font.name = name.to_string();
+            font.sz = size;
+        }
+    }
+
     /// Position in the undo history, for [`Self::merge_undo_since`].
     pub fn undo_mark(&self) -> usize {
         self.history.undo_stack.len()
@@ -815,6 +825,14 @@ mod tests {
         assert!(m.update_range_style(&area, "alignment.text_rotation", "200").is_err());
         m.update_range_style(&area, "alignment.text_rotation", "255").unwrap();
         assert_eq!(m.get_cell_style(0, 1, 1).unwrap().alignment.unwrap().text_rotation, 255);
+    }
+
+    #[test]
+    fn ens_default_font() {
+        let mut m = model();
+        m.set_default_font("Times New Roman", 12);
+        let font = m.get_cell_style(0, 1, 1).unwrap().font;
+        assert_eq!((font.name.as_str(), font.sz), ("Times New Roman", 12));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // Меню «Файл» (Backstage), как в Office 2021–2024: слева разделы, справа содержимое.
 
-import { icon } from './ribbon';
+import { FONTS, icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
 import { DONATE_URL } from './modules';
@@ -227,6 +227,9 @@ function render(section: Section): void {
       <label class="bs-row">Разделитель дробной части
         <select data-set="decimal"><option value="comma">запятая: 0,5</option><option value="point">точка: 0.5</option></select></label>
       <label class="bs-row"><input type="checkbox" data-set="recognizeDates"> Распознавать даты при вводе в ячейки «Общий»</label>
+      <label class="bs-row">Шрифт по умолчанию для новых книг
+        <select data-set="defaultFont">${FONTS.map((f) => `<option>${f.label}</option>`).join('')}</select>
+        <input type="number" min="6" max="72" data-set="defaultFontSize" style="width:64px"></label>
       <label class="bs-row"><input type="checkbox" data-set="expandEditor"> Расширять поле ввода вправо по мере набора</label>
       <h2>Журнал изменений</h2>
       <label class="bs-row">Ваше имя в журнале изменений книги
@@ -248,6 +251,17 @@ function render(section: Section): void {
     const exp = body.querySelector<HTMLInputElement>('[data-set="expandEditor"]')!;
     exp.checked = settings.expandEditor;
     exp.addEventListener('change', () => { settings.expandEditor = exp.checked; saveSettings(); host.applySettings(); });
+    const fontSel = body.querySelector<HTMLSelectElement>('[data-set="defaultFont"]')!;
+    const fontSize = body.querySelector<HTMLInputElement>('[data-set="defaultFontSize"]')!;
+    fontSel.value = settings.defaultFont;
+    fontSize.value = String(settings.defaultFontSize);
+    const saveFont = () => {
+      settings.defaultFont = fontSel.value;
+      settings.defaultFontSize = Math.min(72, Math.max(6, Number(fontSize.value) || 12));
+      saveSettings(); host.applySettings();
+    };
+    fontSel.addEventListener('change', saveFont);
+    fontSize.addEventListener('change', saveFont);
     const dates = body.querySelector<HTMLInputElement>('[data-set="recognizeDates"]')!;
     dates.checked = settings.recognizeDates;
     dates.addEventListener('change', () => { settings.recognizeDates = dates.checked; saveSettings(); host.applySettings(); });
