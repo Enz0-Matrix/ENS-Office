@@ -615,18 +615,30 @@ function parseShown(text: string): number {
 }
 
 function updateStatus(): void {
-  const s = grid.sel;
   let count = 0, numbers = 0, sum = 0;
-  const cells = (s.r2 - s.r1 + 1) * (s.c2 - s.c1 + 1);
-  if (cells > 1 && cells <= 200_000) {
-    for (let r = s.r1; r <= s.r2; r++) {
+  // Целые строки и столбцы, как в Excel: считаем только по занятой области листа.
+  const used = model.getSheetDimension(grid.sheet);
+  const ranges = [grid.sel, ...grid.extraRanges];
+  let cells = 0;
+  const clipped = ranges.map((r) => {
+    const c = { r1: r.r1, c1: r.c1, r2: Math.min(r.r2, Math.max(used[2], r.r1)), c2: Math.min(r.c2, Math.max(used[3], r.c1)) };
+    cells += (c.r2 - c.r1 + 1) * (c.c2 - c.c1 + 1);
+    return c;
+  });
+  const total = ranges.reduce((n, r) => n + (r.r2 - r.r1 + 1) * (r.c2 - r.c1 + 1), 0);
+  if (total > 1 && cells <= 2_000_000) {
+    for (const s of clipped) {
       for (let c = s.c1; c <= s.c2; c++) {
-        const text = model.getFormattedCellValue(grid.sheet, r, c);
-        if (!text) continue;
-        count++;
-        if (model.getCellType(grid.sheet, r, c) === 1) {
-          const v = parseShown(text);
-          if (Number.isFinite(v)) { numbers++; sum += v; }
+        // Заполненные строки столбца — одним вызовом: пустые ячейки не опрашиваем.
+        for (const r of model.getRowsWithData(grid.sheet, c)) {
+          if (r < s.r1 || r > s.r2 || model.getRowHeight(grid.sheet, r) === 0) continue; // скрытые и отфильтрованные не считаем
+          const text = model.getFormattedCellValue(grid.sheet, r, c);
+          if (!text) continue;
+          count++;
+          if (model.getCellType(grid.sheet, r, c) === 1) {
+            const v = parseShown(text);
+            if (Number.isFinite(v)) { numbers++; sum += v; }
+          }
         }
       }
     }
