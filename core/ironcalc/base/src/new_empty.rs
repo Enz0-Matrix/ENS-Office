@@ -78,6 +78,7 @@ impl<'a> Model<'a> {
             links: HashMap::new(),
             ens_filter_criteria: String::new(),
             ens_page_setup: String::new(),
+            ens_summary: (false, false),
         }
     }
 

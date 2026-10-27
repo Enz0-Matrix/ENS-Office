@@ -1071,10 +1071,21 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             conditional_formatting,
             links,
             ens_filter_criteria: load_filter_criteria(ws),
+            ens_summary: load_outline_summary(ws),
             ens_page_setup: load_page_setup(ws),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: `<sheetPr><outlinePr summaryBelow summaryRight>`; Excel's default is below / right.
+fn load_outline_summary(ws: &XmlNode) -> (bool, bool) {
+    let pr = ws
+        .children()
+        .find(|n| n.has_tag_name("sheetPr"))
+        .and_then(|p| p.children().find(|n| n.has_tag_name("outlinePr")));
+    let flag = |a: &str| pr.and_then(|n| n.attribute(a)).is_none_or(|v| matches!(v, "1" | "true"));
+    (flag("summaryBelow"), flag("summaryRight"))
 }
 
 /// ENS-Office: Excel's page setup (`<pageSetup>`, `<pageMargins>`, `<printOptions>`,

@@ -205,6 +205,7 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'data.group', icon: 'group', label: 'Сгруппировать' },
           { type: 'large', command: 'data.ungroup', icon: 'group_list', label: 'Разгруппировать' },
+          { type: 'large', command: 'data.summary', icon: 'group', label: 'Положение «+»' },
         ],
       },
       {

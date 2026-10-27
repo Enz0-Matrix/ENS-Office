@@ -287,6 +287,10 @@ pub struct Worksheet {
     /// bottom, left], "gridlines", "centerH", "repeatHeader"}`; saved to xlsx as Excel's
     /// `<printOptions>`, `<pageMargins>` and `<pageSetup>`. Empty — defaults.
     pub ens_page_setup: String,
+    /// ENS-Office: where the "+/−" button of an outline group stands: `.0` — below the rows
+    /// (Excel's `summaryBelow`; false — above), `.1` — right of the columns (`summaryRight`;
+    /// false — left). Saved to xlsx as `<sheetPr><outlinePr>`.
+    pub ens_summary: (bool, bool),
 }
 
 /// Internal representation of Excel's sheet_data

@@ -1731,10 +1731,45 @@ let outlineKey = '';
 function syncOutline(force = false): void {
   let rows: ArrayLike<number> = [], cols: ArrayLike<number> = [];
   try { rows = model.getRowOutline(grid.sheet); cols = model.getColumnOutline(grid.sheet); } catch { /* старый движок */ }
-  const key = `${grid.sheet}|${Array.from(rows).join()}|${Array.from(cols).join()}`;
+  const [below, right] = outlineSummary();
+  const key = `${grid.sheet}|${below}${right}|${Array.from(rows).join()}|${Array.from(cols).join()}`;
   if (!force && key === outlineKey) return;
   outlineKey = key;
-  grid.setOutline(rows, cols);
+  grid.setOutline(rows, cols, below === 1, right === 1);
+}
+
+/** Где «+/−» групп листа: [под строками, справа от столбцов], 1 — да (по умолчанию — сверху и слева). */
+function outlineSummary(): [number, number] {
+  try { const a = model.getOutlineSummary(grid.sheet); return [a[0], a[1]]; } catch { return [0, 0]; }
+}
+
+/** Итоговая строка/столбец группы a..b — та, где стоит «+/−» и метка «свёрнуто». */
+function summaryIndex(kind: 'row' | 'column', a: number, b: number): number {
+  const after = outlineSummary()[kind === 'row' ? 0 : 1] === 1;
+  return after || a <= 1 ? b + 1 : a - 1;
+}
+
+function summaryMenu(x: number, y: number): void {
+  const [below, right] = outlineSummary();
+  const set = (b: number, r: number) => {
+    const mark = model.undoMark();
+    const moved = [...grid.rowGroups, ...grid.colGroups].filter((g) => g.collapsed);
+    model.setOutlineSummary(grid.sheet, b === 1, r === 1);
+    // Метка «свёрнуто» переезжает к новой итоговой строке (столбцу).
+    for (const g of moved) {
+      const now = summaryIndex(g.kind, g.a, g.b);
+      if (now === g.s) continue;
+      setLinesCollapsed(g.kind, g.s, false);
+      setLinesCollapsed(g.kind, now, true);
+    }
+    model.mergeUndoSince(mark);
+    syncOutline(true);
+    focusGrid();
+  };
+  showMenu([
+    { label: 'Итоги строк под данными', checked: below === 1, run: () => set(below === 1 ? 0 : 1, right) },
+    { label: 'Итоги столбцов справа от данных', checked: right === 1, run: () => set(below, right === 1 ? 0 : 1) },
+  ], x, y);
 }
 
 function outlineMap(kind: 'row' | 'column'): Map<number, { level: number; collapsed: boolean }> {
@@ -1763,10 +1798,10 @@ function changeOutline(delta: 1 | -1): void {
   const levels = outlineMap(kind);
   const mark = model.undoMark();
   try {
-    if (delta < 0 && levels.get(b + 1)?.collapsed) {
+    if (delta < 0 && levels.get(summaryIndex(kind, a, b))?.collapsed) {
       // Разгруппировать свёрнутую группу — строки снова видны.
       hideLines(kind, a, b, false);
-      setLinesCollapsed(kind, b + 1, false);
+      setLinesCollapsed(kind, summaryIndex(kind, a, b), false);
     }
     for (let i = a; i <= b;) {
       const lv = levels.get(i)?.level ?? 0;
@@ -1795,10 +1830,10 @@ function toggleGroup(g: OutlineGroup, collapse: boolean): void {
   try {
     if (collapse) {
       hideLines(g.kind, g.a, g.b, true);
-      setLinesCollapsed(g.kind, g.b + 1, true);
+      setLinesCollapsed(g.kind, g.s, true);
     } else {
       hideLines(g.kind, g.a, g.b, false);
-      setLinesCollapsed(g.kind, g.b + 1, false);
+      setLinesCollapsed(g.kind, g.s, false);
       const groups = g.kind === 'row' ? grid.rowGroups : grid.colGroups;
       for (const n of groups) {
         if (n.level > g.level && n.a >= g.a && n.b <= g.b && n.collapsed) hideLines(g.kind, n.a, n.b, true);
@@ -1818,7 +1853,7 @@ function showOutlineLevel(kind: 'row' | 'column', n: number): void {
   const mark = model.undoMark();
   try {
     for (const g of groups) hideLines(kind, g.a, g.b, false);
-    for (const g of groups) setLinesCollapsed(kind, g.b + 1, g.level >= n);
+    for (const g of groups) setLinesCollapsed(kind, g.s, g.level >= n);
     for (const g of groups) if (g.level >= n) hideLines(kind, g.a, g.b, true);
   } catch (e) {
     showToast(`Не получилось: ${e}`);
@@ -2069,6 +2104,8 @@ register(
     run: () => toggleFormulaHeight() },
   { id: 'data.group', label: 'Сгруппировать', keywords: ['group', 'группа', 'свернуть', 'структура'], keys: ['Shift+Alt+ArrowRight'],
     run: () => changeOutline(1) },
+  { id: 'data.summary', label: 'Положение «+» у групп', keywords: ['итоги под данными', 'итоги над данными', 'summary below', 'структура'],
+    run: () => { const b = document.querySelector<HTMLElement>('.btn[data-command="data.summary"]')?.getBoundingClientRect(); summaryMenu(b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8); } },
   { id: 'data.ungroup', label: 'Разгруппировать', keywords: ['ungroup', 'группа', 'структура'], keys: ['Shift+Alt+ArrowLeft'],
     run: () => changeOutline(-1) },
   { id: 'format.rotate', label: 'Направление текста', keywords: ['text direction', 'поворот текста', 'вертикально', 'под углом', 'ориентация'],

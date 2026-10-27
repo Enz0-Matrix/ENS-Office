@@ -153,6 +153,21 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    /// ENS-Office: where the outline "+/−" buttons stand, `[below, right]` (see `Worksheet::ens_summary`).
+    pub fn get_outline_summary(&self, sheet: u32) -> Result<(bool, bool), String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_summary)
+    }
+
+    /// ENS-Office: moves the outline "+/−" buttons (an undoable step).
+    pub fn set_outline_summary(&mut self, sheet: u32, below: bool, right: bool) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        let old_value = std::mem::replace(&mut ws.ens_summary, (below, right));
+        if old_value != (below, right) {
+            self.push_diff_list(vec![Diff::SetOutlineSummary { sheet, new_value: (below, right), old_value }]);
+        }
+        Ok(())
+    }
+
     /// ENS-Office: what the sheet's filters show (JSON, see `Worksheet::ens_filter_criteria`).
     pub fn get_filter_criteria(&self, sheet: u32) -> Result<String, String> {
         Ok(self.model.workbook.worksheet(sheet)?.ens_filter_criteria.clone())

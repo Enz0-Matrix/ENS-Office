@@ -123,6 +123,12 @@ pub(crate) enum Diff {
         new_value: String,
         old_value: String,
     },
+    /// ENS-Office: position of the outline "+/−" buttons (see `Worksheet::ens_summary`).
+    SetOutlineSummary {
+        sheet: u32,
+        new_value: (bool, bool),
+        old_value: (bool, bool),
+    },
     /// ENS-Office: outline level and "collapsed" flag of a column.
     SetColumnOutline {
         sheet: u32,

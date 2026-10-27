@@ -473,6 +473,18 @@ impl Model {
     }
 
     /// ENS-Office: параметры страницы для печати (JSON), сохраняются в xlsx.
+    /// ENS-Office: `[below, right]` — 1 if the outline buttons stand below the rows / right of the columns.
+    #[wasm_bindgen(js_name = "getOutlineSummary")]
+    pub fn get_outline_summary(&self, sheet: u32) -> Result<Vec<u8>, JsError> {
+        let (below, right) = self.model.get_outline_summary(sheet).map_err(to_js_error)?;
+        Ok(vec![u8::from(below), u8::from(right)])
+    }
+
+    #[wasm_bindgen(js_name = "setOutlineSummary")]
+    pub fn set_outline_summary(&mut self, sheet: u32, below: bool, right: bool) -> Result<(), JsError> {
+        self.model.set_outline_summary(sheet, below, right).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "getPageSetup")]
     pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {
         self.model.get_page_setup(sheet).map_err(to_js_error)

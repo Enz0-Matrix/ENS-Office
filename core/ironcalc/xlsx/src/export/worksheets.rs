@@ -734,6 +734,20 @@ pub(crate) fn get_worksheet_xml(
     };
     let auto_filter_section = auto_filter;
     let (sheet_pr, page_setup) = page_setup_xml(&worksheet.ens_page_setup);
+    // Excel's default is below / right; anything else is written to `<outlinePr>`.
+    let sheet_pr = if worksheet.ens_summary == (true, true) {
+        sheet_pr
+    } else {
+        let outline = format!(
+            r#"<outlinePr summaryBelow="{}" summaryRight="{}"/>"#,
+            i32::from(worksheet.ens_summary.0),
+            i32::from(worksheet.ens_summary.1)
+        );
+        match sheet_pr.strip_prefix("<sheetPr>") {
+            Some(rest) => format!("<sheetPr>{outline}{rest}"),
+            None => format!("<sheetPr>{outline}</sheetPr>"),
+        }
+    };
 
     format!(
         "{XML_DECLARATION}\

@@ -75,10 +75,11 @@ const OUTLINE_STEP = 14;
 type Band = [number, number, boolean?];
 
 /** Группа строк или столбцов: a..b, уровень; итоговая строка — b + 1 (как в Excel). */
-export interface OutlineGroup { kind: 'row' | 'column'; a: number; b: number; level: number; collapsed: boolean }
+/** `s` — итоговая строка/столбец с кнопкой «+/−»: после группы (b + 1) или перед ней (a − 1). */
+export interface OutlineGroup { kind: 'row' | 'column'; a: number; b: number; level: number; collapsed: boolean; s: number }
 
 /** Группы из уровней: каждая непрерывная полоса с уровнем ≥ L — группа уровня L. */
-function groupsOf(kind: 'row' | 'column', levels: Map<number, { level: number; collapsed: boolean }>): OutlineGroup[] {
+function groupsOf(kind: 'row' | 'column', levels: Map<number, { level: number; collapsed: boolean }>, after: boolean): OutlineGroup[] {
   const out: OutlineGroup[] = [];
   const idx = [...levels.keys()].filter((i) => levels.get(i)!.level > 0).sort((x, y) => x - y);
   const max = Math.max(0, ...idx.map((i) => levels.get(i)!.level));
@@ -86,7 +87,8 @@ function groupsOf(kind: 'row' | 'column', levels: Map<number, { level: number; c
     let start = 0, prev = 0;
     const flush = () => {
       if (!start) return;
-      out.push({ kind, a: start, b: prev, level: L, collapsed: !!levels.get(prev + 1)?.collapsed });
+      const s = after || start <= 1 ? prev + 1 : start - 1;
+      out.push({ kind, a: start, b: prev, level: L, collapsed: !!levels.get(s)?.collapsed, s });
       start = 0;
     };
     for (const i of idx) {
@@ -166,14 +168,14 @@ export class Grid {
   onOutlineLevel: (kind: 'row' | 'column', level: number) => void = () => {};
 
   /** Группы листа из движка: [индекс, уровень, свёрнуто, …]. */
-  setOutline(rows: ArrayLike<number>, cols: ArrayLike<number>): void {
+  setOutline(rows: ArrayLike<number>, cols: ArrayLike<number>, below = false, right = false): void {
     const parse = (a: ArrayLike<number>) => {
       const m = new Map<number, { level: number; collapsed: boolean }>();
       for (let i = 0; i + 2 < a.length; i += 3) m.set(a[i], { level: a[i + 1], collapsed: a[i + 2] === 1 });
       return m;
     };
-    this.rowGroups = groupsOf('row', parse(rows));
-    this.colGroups = groupsOf('column', parse(cols));
+    this.rowGroups = groupsOf('row', parse(rows), below);
+    this.colGroups = groupsOf('column', parse(cols), right);
     this.rowLevels = Math.max(0, ...this.rowGroups.map((g) => g.level));
     this.colLevels = Math.max(0, ...this.colGroups.map((g) => g.level));
     const w = this.rowLevels ? (this.rowLevels + 1) * OUTLINE_STEP + 4 : 0;
@@ -203,14 +205,14 @@ export class Grid {
     if (px < this.outlineW && py >= this.headerH) {
       const level = Math.floor((px - 2) / OUTLINE_STEP) + 1;
       const row = this.rowAt(this.sheetY(py));
-      const g = this.rowGroups.find((x) => x.level === level && (x.b + 1 === row || (!x.collapsed && row >= x.a && row <= x.b)));
+      const g = this.rowGroups.find((x) => x.level === level && (x.s === row || (!x.collapsed && row >= x.a && row <= x.b)));
       if (g) { this.onOutlineToggle(g, !g.collapsed); return true; }
       return true; // щелчок по полосе — не выделение
     }
     if (py < this.outlineH && px >= this.headerW) {
       const level = Math.floor((py - 2) / OUTLINE_STEP) + 1;
       const column = this.columnAt(this.sheetX(px));
-      const g = this.colGroups.find((x) => x.level === level && (x.b + 1 === column || (!x.collapsed && column >= x.a && column <= x.b)));
+      const g = this.colGroups.find((x) => x.level === level && (x.s === column || (!x.collapsed && column >= x.a && column <= x.b)));
       if (g) { this.onOutlineToggle(g, !g.collapsed); return true; }
       return true;
     }
@@ -252,10 +254,11 @@ export class Grid {
       ctx.save(); ctx.beginPath(); ctx.rect(0, this.headerH, this.outlineW, H); ctx.clip();
       for (const g of this.rowGroups) {
         const x = 2 + (g.level - 1) * OUTLINE_STEP;
-        const top = this.cellRect(g.a, 1), bot = this.cellRect(g.b, 1), sum = this.cellRect(g.b + 1, 1);
+        const top = this.cellRect(g.a, 1), bot = this.cellRect(g.b, 1), sum = this.cellRect(g.s, 1);
         if (!g.collapsed) {
           ctx.beginPath();
-          ctx.moveTo(x + 5.5, top.y + 2); ctx.lineTo(x + 5.5, bot.y + bot.h - 1); ctx.lineTo(x + 2, bot.y + bot.h - 1);
+          if (g.s > g.b) { ctx.moveTo(x + 5.5, top.y + 2); ctx.lineTo(x + 5.5, bot.y + bot.h - 1); ctx.lineTo(x + 2, bot.y + bot.h - 1); }
+          else { ctx.moveTo(x + 5.5, bot.y + bot.h - 2); ctx.lineTo(x + 5.5, top.y + 1); ctx.lineTo(x + 2, top.y + 1); }
           ctx.stroke();
         }
         if (sum.h > 0) box(x, sum.y + sum.h / 2 - 5, g.collapsed ? '+' : '-');
@@ -268,10 +271,11 @@ export class Grid {
       ctx.save(); ctx.beginPath(); ctx.rect(this.headerW, 0, W, this.outlineH); ctx.clip();
       for (const g of this.colGroups) {
         const y = 2 + (g.level - 1) * OUTLINE_STEP;
-        const left = this.cellRect(1, g.a), right = this.cellRect(1, g.b), sum = this.cellRect(1, g.b + 1);
+        const left = this.cellRect(1, g.a), right = this.cellRect(1, g.b), sum = this.cellRect(1, g.s);
         if (!g.collapsed) {
           ctx.beginPath();
-          ctx.moveTo(left.x + 2, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 2);
+          if (g.s > g.b) { ctx.moveTo(left.x + 2, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 2); }
+          else { ctx.moveTo(right.x + right.w - 2, y + 5.5); ctx.lineTo(left.x + 1, y + 5.5); ctx.lineTo(left.x + 1, y + 2); }
           ctx.stroke();
         }
         if (sum.w > 0) box(sum.x + sum.w / 2 - 5, y, g.collapsed ? '+' : '-');

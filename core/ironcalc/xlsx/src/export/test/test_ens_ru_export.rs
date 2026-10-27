@@ -83,7 +83,7 @@ fn test_ens_page_setup_export() {
     let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
     std::fs::remove_file(name).unwrap();
     assert!(xml.contains(r#"<pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/>"#), "{xml}");
-    assert!(xml.contains(r#"<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>"#), "{xml}");
+    assert!(xml.contains(r#"<sheetPr><outlinePr summaryBelow="0" summaryRight="0"/><pageSetUpPr fitToPage="1"/></sheetPr>"#), "{xml}");
     let v: serde_json::Value = serde_json::from_str(&back.workbook.worksheets[0].ens_page_setup).unwrap();
     assert_eq!(v["landscape"], true);
     assert_eq!(v["paper"], "A3");
@@ -94,6 +94,33 @@ fn test_ens_page_setup_export() {
     assert_eq!(v["footer"], "&CСтраница &P из &N");
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_print_area(0).unwrap(), Some([1, 1, 20, 3]));
+}
+
+// ENS-Office: position of the outline buttons round trip (`<outlinePr>`); Excel's default is below / right.
+#[test]
+fn test_ens_outline_summary_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    assert_eq!(model.get_outline_summary(0).unwrap(), (false, false));
+    model.set_outline_summary(0, true, false).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_outline_summary(0).unwrap(), (false, false));
+    model.redo().unwrap();
+    let name = "temp_ens_outline_summary.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    model.set_outline_summary(0, true, true).unwrap();
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let default_back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert_eq!(back.workbook.worksheets[0].ens_summary, (true, false));
+    assert!(!xml.contains("outlinePr"), "{xml}");
+    assert_eq!(default_back.workbook.worksheets[0].ens_summary, (true, true));
 }
 
 // ENS-Office: the change log is kept in customXml and read back.

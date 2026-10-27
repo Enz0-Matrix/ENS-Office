@@ -121,6 +121,9 @@ export interface Model {
   /** Группы (структура): [индекс, уровень, свёрнуто 0/1, …]. */
   getRowOutline(sheet: number): Int32Array;
   getColumnOutline(sheet: number): Int32Array;
+  /** Где «+/−» групп: [под строками (1) или над, справа от столбцов (1) или слева]. */
+  getOutlineSummary(sheet: number): Uint8Array;
+  setOutlineSummary(sheet: number, below: boolean, right: boolean): void;
   setRowsOutline(sheet: number, r1: number, r2: number, level: number): void;
   setRowCollapsed(sheet: number, row: number, collapsed: boolean): void;
   setColumnsOutline(sheet: number, c1: number, c2: number, level: number): void;
