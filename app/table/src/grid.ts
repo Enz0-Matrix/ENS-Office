@@ -104,8 +104,31 @@ function groupsOf(kind: 'row' | 'column', levels: Map<number, { level: number; c
 const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
+export const ZOOM_MIN = 0.25, ZOOM_MAX = 4;
+
 export class Grid {
   sheet = 0;
+  /** Масштаб таблицы (1 — 100%): меняется только лист, лента и панели остаются как есть. */
+  zoom = 1;
+  onZoom: (zoom: number) => void = () => {};
+  /** Видимая область и прокрутка в координатах листа (без масштаба). */
+  private get viewW(): number { return this.scroller.clientWidth / this.zoom; }
+  private get viewH(): number { return this.scroller.clientHeight / this.zoom; }
+  private get sTop(): number { return this.scroller.scrollTop / this.zoom; }
+  private get sLeft(): number { return this.scroller.scrollLeft / this.zoom; }
+
+  setZoom(z: number): void {
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 100) / 100));
+    if (next === this.zoom) return;
+    // Верхний левый угол видимой области остаётся на месте.
+    const top = this.sTop, left = this.sLeft;
+    this.zoom = next;
+    this.resize();
+    this.scroller.scrollTop = top * next;
+    this.scroller.scrollLeft = left * next;
+    this.onZoom(next);
+    this.render();
+  }
   sel: Selection = { row: 1, column: 1, r1: 1, c1: 1, r2: 1, c2: 1 };
   /** Ещё выделенные диапазоны (Ctrl+щелчок, как в Excel); sel — последний, с активной ячейкой. */
   extraRanges: { r1: number; c1: number; r2: number; c2: number }[] = [];
@@ -127,10 +150,10 @@ export class Grid {
   /** Рамка ссылки под курсором: за угол — растянуть, за край — переместить. */
   private refFrameAt(e: MouseEvent): { id: number; mode: 'move' | 'resize'; orig: { r1: number; c1: number; r2: number; c2: number } } | null {
     const cr = this.canvas.getBoundingClientRect();
-    const px = e.clientX - cr.left, py = e.clientY - cr.top;
+    const px = (e.clientX - cr.left) / this.zoom, py = (e.clientY - cr.top) / this.zoom;
     for (const h of this.refHighlights) {
       if (h.id === undefined) continue;
-      const a = this.cellRect(h.r1, h.c1), b = this.cellRect(h.r2, h.c2);
+      const a = this.lrect(h.r1, h.c1), b = this.lrect(h.r2, h.c2);
       const x1 = a.x, y1 = a.y, x2 = b.x + b.w, y2 = b.y + b.h, t = 4;
       const inside = px >= x1 - t && px <= x2 + t && py >= y1 - t && py <= y2 + t;
       if (!inside) continue;
@@ -275,7 +298,7 @@ export class Grid {
       ctx.save(); ctx.beginPath(); ctx.rect(0, this.headerH, this.outlineW, H); ctx.clip();
       for (const g of this.rowGroups) {
         const x = 2 + (g.level - 1) * OUTLINE_STEP;
-        const top = this.cellRect(g.a, 1), bot = this.cellRect(g.b, 1), sum = this.cellRect(g.s, 1);
+        const top = this.lrect(g.a, 1), bot = this.lrect(g.b, 1), sum = this.lrect(g.s, 1);
         if (!g.collapsed) {
           ctx.beginPath();
           if (g.s > g.b) { ctx.moveTo(x + 5.5, top.y + 2); ctx.lineTo(x + 5.5, bot.y + bot.h - 1); ctx.lineTo(x + 2, bot.y + bot.h - 1); }
@@ -292,7 +315,7 @@ export class Grid {
       ctx.save(); ctx.beginPath(); ctx.rect(this.headerW, 0, W, this.outlineH); ctx.clip();
       for (const g of this.colGroups) {
         const y = 2 + (g.level - 1) * OUTLINE_STEP;
-        const left = this.cellRect(1, g.a), right = this.cellRect(1, g.b), sum = this.cellRect(1, g.s);
+        const left = this.lrect(1, g.a), right = this.lrect(1, g.b), sum = this.lrect(1, g.s);
         if (!g.collapsed) {
           ctx.beginPath();
           if (g.s > g.b) { ctx.moveTo(left.x + 2, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 5.5); ctx.lineTo(right.x + right.w - 1, y + 2); }
@@ -327,6 +350,12 @@ export class Grid {
     this.ctx = this.canvas.getContext('2d')!;
 
     this.scroller.addEventListener('scroll', () => this.render());
+    // Ctrl + колесо: масштаб листа, а не всей страницы (лента и панели остаются как есть).
+    this.scroller.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      this.setZoom(this.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+    }, { passive: false });
     new ResizeObserver(() => this.resize()).observe(this.scroller);
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
@@ -501,8 +530,8 @@ export class Grid {
     this.extentRows = Math.min(LAST_ROW, Math.max(1000, last + 200, this.extentRows));
     const lastCol = this.sel.c1 === 1 && this.sel.c2 === LAST_COLUMN ? this.sel.column : this.sel.c2;
     this.extentCols = Math.min(LAST_COLUMN, Math.max(52, lastCol + 10, this.extentCols));
-    this.spacer.style.height = `${this.headerH + this.y(this.extentRows + 1)}px`;
-    this.spacer.style.width = `${this.headerW + this.x(this.extentCols + 1)}px`;
+    this.spacer.style.height = `${(this.headerH + this.y(this.extentRows + 1)) * this.zoom}px`;
+    this.spacer.style.width = `${(this.headerW + this.x(this.extentCols + 1)) * this.zoom}px`;
   }
 
   private resize(): void {
@@ -512,7 +541,7 @@ export class Grid {
     this.canvas.height = Math.round(h * dpr);
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, 0, 0);
     this.updateExtent();
     this.render();
   }
@@ -551,65 +580,71 @@ export class Grid {
   private get bottomH(): number {
     const p = this.pinRows;
     if (!p) return 0;
-    return Math.min(this.y(p.b + 1) - this.y(p.a), Math.max(0, (this.scroller.clientHeight - this.headerH) / 2));
+    return Math.min(this.y(p.b + 1) - this.y(p.a), Math.max(0, (this.viewH - this.headerH) / 2));
   }
 
   private get rightW(): number {
     const p = this.pinCols;
     if (!p) return 0;
-    return Math.min(this.x(p.b + 1) - this.x(p.a), Math.max(0, (this.scroller.clientWidth - this.headerW) / 2));
+    return Math.min(this.x(p.b + 1) - this.x(p.a), Math.max(0, (this.viewW - this.headerW) / 2));
   }
 
   /** Верх полосы закреплённых снизу / левый край полосы справа (px на canvas). */
-  private get pinTop(): number { return this.scroller.clientHeight - this.bottomH; }
-  private get pinLeft(): number { return this.scroller.clientWidth - this.rightW; }
+  private get pinTop(): number { return this.viewH - this.bottomH; }
+  private get pinLeft(): number { return this.viewW - this.rightW; }
 
   private inPinRows(row: number): boolean { return !!this.pinRows && row >= this.pinRows.a && row <= this.pinRows.b + 1; }
   private inPinCols(column: number): boolean { return !!this.pinCols && column >= this.pinCols.a && column <= this.pinCols.b + 1; }
 
   /** Первая строка прокручиваемой области. */
   private get firstRow(): number {
-    return Math.max(this.fr + 1, this.rowAt(this.scroller.scrollTop + this.frozenH));
+    return Math.max(this.fr + 1, this.rowAt(this.sTop + this.frozenH));
   }
 
   private get firstColumn(): number {
-    return Math.max(this.fc + 1, this.columnAt(this.scroller.scrollLeft + this.frozenW));
+    return Math.max(this.fc + 1, this.columnAt(this.sLeft + this.frozenW));
   }
 
   private visibleRows(): number {
     const top = this.firstRow;
     let n = 0;
-    while (top + n < LAST_ROW && this.y(top + n + 1) - this.scroller.scrollTop < this.scroller.clientHeight - this.headerH - this.bottomH) n++;
+    while (top + n < LAST_ROW && this.y(top + n + 1) - this.sTop < this.viewH - this.headerH - this.bottomH) n++;
     return n;
   }
 
   /** Экранные координаты: закреплённые строки и столбцы не прокручиваются. */
   private sy(row: number): number {
     if (this.pinModeRow && this.inPinRows(row)) return this.pinTop + this.y(row) - this.y(this.pinRows!.a);
-    return this.headerH + this.y(row) - (row <= this.fr ? 0 : this.scroller.scrollTop);
+    return this.headerH + this.y(row) - (row <= this.fr ? 0 : this.sTop);
   }
 
   private sx(column: number): number {
     if (this.pinModeCol && this.inPinCols(column)) return this.pinLeft + this.x(column) - this.x(this.pinCols!.a);
-    return this.headerW + this.x(column) - (column <= this.fc ? 0 : this.scroller.scrollLeft);
+    return this.headerW + this.x(column) - (column <= this.fc ? 0 : this.sLeft);
   }
 
   /** Координаты листа (px) под точкой экрана в области ячеек. */
   private sheetY(py: number): number {
     if (this.pinRows && py >= this.pinTop) return this.y(this.pinRows.a) + py - this.pinTop;
     const b = py - this.headerH;
-    return b < this.frozenH ? b : b + this.scroller.scrollTop;
+    return b < this.frozenH ? b : b + this.sTop;
   }
 
   private sheetX(px: number): number {
     if (this.pinCols && px >= this.pinLeft) return this.x(this.pinCols.a) + px - this.pinLeft;
     const b = px - this.headerW;
-    return b < this.frozenW ? b : b + this.scroller.scrollLeft;
+    return b < this.frozenW ? b : b + this.sLeft;
   }
 
   /** Прямоугольник ячейки на экране (в координатах canvas). */
-  cellRect(row: number, column: number): { x: number; y: number; w: number; h: number } {
+  private lrect(row: number, column: number): { x: number; y: number; w: number; h: number } {
     return { x: this.sx(column), y: this.sy(row), w: this.width(column), h: this.height(row) };
+  }
+
+  /** Прямоугольник ячейки в пикселях окна (с учётом масштаба): для полей ввода и подсказок. */
+  cellRect(row: number, column: number): { x: number; y: number; w: number; h: number } {
+    const r = this.lrect(row, column), z = this.zoom;
+    return { x: r.x * z, y: r.y * z, w: r.w * z, h: r.h * z };
   }
 
   /** Закрепить области: строки выше и столбцы левее ячейки (0 — снять). */
@@ -712,14 +747,19 @@ export class Grid {
 
   /** Прямоугольник активной ячейки (объединённой — целиком). */
   activeRect(): { x: number; y: number; w: number; h: number } {
+    const r = this.lActiveRect(), z = this.zoom;
+    return { x: r.x * z, y: r.y * z, w: r.w * z, h: r.h * z };
+  }
+
+  private lActiveRect(): { x: number; y: number; w: number; h: number } {
     // Активная ячейка в закреплённой снизу/справа полосе — рамка там.
     const pr = this.pinModeRow, pc = this.pinModeCol;
     this.pinModeRow = this.inPinRows(this.sel.row) && this.sel.row <= this.pinRows!.b;
     this.pinModeCol = this.inPinCols(this.sel.column) && this.sel.column <= this.pinCols!.b;
     try {
       const m = this.mergeOf(this.sel.row, this.sel.column);
-      if (!m) return this.cellRect(this.sel.row, this.sel.column);
-      const a = this.cellRect(m.row, m.column), b = this.cellRect(m.row + m.height - 1, m.column + m.width - 1);
+      if (!m) return this.lrect(this.sel.row, this.sel.column);
+      const a = this.lrect(m.row, m.column), b = this.lrect(m.row + m.height - 1, m.column + m.width - 1);
       return { x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y };
     } finally {
       this.pinModeRow = pr;
@@ -732,24 +772,25 @@ export class Grid {
   }
 
   ensureVisible(row: number, column: number): void {
+    const z = this.zoom;
     // Закреплённые снизу/справа и так видны — лист не прокручиваем.
     if (row > this.fr && !(this.pinRows && row >= this.pinRows.a && row <= this.pinRows.b)) {
       const top = this.y(row) - this.frozenH, rh = this.height(row);
-      const viewH = this.scroller.clientHeight - this.headerH - this.frozenH - this.bottomH;
-      if (top < this.scroller.scrollTop) this.scroller.scrollTop = top;
-      else if (top + rh > this.scroller.scrollTop + viewH) this.scroller.scrollTop = top + rh - viewH;
+      const viewH = this.viewH - this.headerH - this.frozenH - this.bottomH;
+      if (top < this.sTop) this.scroller.scrollTop = top * z;
+      else if (top + rh > this.sTop + viewH) this.scroller.scrollTop = (top + rh - viewH) * z;
     }
     if (column > this.fc && !(this.pinCols && column >= this.pinCols.a && column <= this.pinCols.b)) {
       const left = this.x(column) - this.frozenW, cw = this.width(column);
-      const viewW = this.scroller.clientWidth - this.headerW - this.frozenW - this.rightW;
-      if (left < this.scroller.scrollLeft) this.scroller.scrollLeft = left;
-      else if (left + cw > this.scroller.scrollLeft + viewW) this.scroller.scrollLeft = left + cw - viewW;
+      const viewW = this.viewW - this.headerW - this.frozenW - this.rightW;
+      if (left < this.sLeft) this.scroller.scrollLeft = left * z;
+      else if (left + cw > this.sLeft + viewW) this.scroller.scrollLeft = (left + cw - viewW) * z;
     }
   }
 
   private hit(e: MouseEvent): { row: number; column: number; header: 'row' | 'column' | 'corner' | null } {
     const r = this.canvas.getBoundingClientRect();
-    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const px = (e.clientX - r.left) / this.zoom, py = (e.clientY - r.top) / this.zoom;
     const row = py < this.headerH ? 0 : this.rowAt(this.sheetY(py));
     const column = px < this.headerW ? 0 : this.columnAt(this.sheetX(px));
     // Полоса структуры — не заголовок (её щелчки обрабатывает outlineClick).
@@ -760,7 +801,7 @@ export class Grid {
   /** Курсор у границы заголовка: какой столбец/строку тянуть. */
   private grip(e: MouseEvent): { kind: 'column' | 'row'; index: number } | null {
     const r = this.canvas.getBoundingClientRect();
-    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const px = (e.clientX - r.left) / this.zoom, py = (e.clientY - r.top) / this.zoom;
     if (py < this.headerH && px > this.headerW) {
       const sx = this.sheetX(px);
       const c = this.columnAt(sx);
@@ -798,7 +839,7 @@ export class Grid {
     if (e.button !== 0) return;
     {
       const cr0 = this.canvas.getBoundingClientRect();
-      if (this.outlineClick(e.clientX - cr0.left, e.clientY - cr0.top)) { e.preventDefault(); return; }
+      if (this.outlineClick((e.clientX - cr0.left) / this.zoom, (e.clientY - cr0.top) / this.zoom)) { e.preventDefault(); return; }
     }
     const g = this.grip(e);
     if (g) {
@@ -813,15 +854,15 @@ export class Grid {
       const h0 = this.hit(e);
       const f = this.filters.find((t) => h0.row === t.r1 && h0.column >= t.c1 && h0.column <= t.c2);
       if (f) {
-        const rect = this.cellRect(h0.row, h0.column);
-        if (e.clientX - cr.left >= rect.x + rect.w - 18) {
+        const rect = this.lrect(h0.row, h0.column);
+        if ((e.clientX - cr.left) / this.zoom >= rect.x + rect.w - 18) {
           e.preventDefault();
-          this.onFilterButton(f.r1, h0.column, cr.left + rect.x + rect.w - 18, cr.top + rect.y + rect.h);
+          this.onFilterButton(f.r1, h0.column, cr.left + (rect.x + rect.w - 18) * this.zoom, cr.top + (rect.y + rect.h) * this.zoom);
           return;
         }
       }
     }
-    if (Math.abs(e.clientX - cr.left - this.handle.x) <= 5 && Math.abs(e.clientY - cr.top - this.handle.y) <= 5) {
+    if (Math.abs((e.clientX - cr.left) / this.zoom - this.handle.x) <= 5 && Math.abs((e.clientY - cr.top) / this.zoom - this.handle.y) <= 5) {
       // Маркер заполнения: протянуть формулу или ряд (1, 2 → 3, 4…).
       e.preventDefault();
       const s = this.sel;
@@ -855,7 +896,7 @@ export class Grid {
     }
     {
       // Полоска у края заголовка (слева у строк, сверху у столбцов) — метка-закладка.
-      const px = e.clientX - cr.left, py = e.clientY - cr.top;
+      const px = (e.clientX - cr.left) / this.zoom, py = (e.clientY - cr.top) / this.zoom;
       if (h.header === 'row' && h.row >= 1 && px - this.outlineW < 11 && px >= this.outlineW) { this.toggleMark('row', h.row); e.preventDefault(); return; }
       if (h.header === 'column' && h.column >= 1 && py - this.outlineH < 6 && py >= this.outlineH) { this.toggleMark('column', h.column); e.preventDefault(); return; }
     }
@@ -879,7 +920,7 @@ export class Grid {
     if (z) {
       const pos = z.kind === 'column' ? e.clientX : e.clientY;
       // До нуля — строка (столбец) скрывается, как в Excel.
-      z.size = Math.max(0, Math.round(z.startSize + pos - z.start));
+      z.size = Math.max(0, Math.round(z.startSize + (pos - z.start) / this.zoom));
       this.colX = [0];
       this.render();
       return;
@@ -914,7 +955,7 @@ export class Grid {
     if (e.target === this.canvas && !this.dragging && !this.pointing) {
       const g = this.grip(e);
       const cr = this.canvas.getBoundingClientRect();
-      const onHandle = Math.abs(e.clientX - cr.left - this.handle.x) <= 5 && Math.abs(e.clientY - cr.top - this.handle.y) <= 5;
+      const onHandle = Math.abs((e.clientX - cr.left) / this.zoom - this.handle.x) <= 5 && Math.abs((e.clientY - cr.top) / this.zoom - this.handle.y) <= 5;
       const frame = g || onHandle ? null : this.refFrameAt(e);
       this.canvas.style.cursor = g ? (g.kind === 'column' ? 'col-resize' : 'row-resize') : onHandle ? 'crosshair'
         : frame ? (frame.mode === 'resize' ? 'nwse-resize' : 'move') : '';
@@ -948,8 +989,8 @@ export class Grid {
   private draw(): void {
     const ctx = this.ctx;
     const model = this.model();
-    const W = this.scroller.clientWidth, H = this.scroller.clientHeight;
-    const sl = this.scroller.scrollLeft, st = this.scroller.scrollTop;
+    const W = this.viewW, H = this.viewH;
+    const sl = this.sLeft, st = this.sTop;
     this.readFrozen();
     const r0 = this.firstRow;
     let rN = r0;
@@ -1030,13 +1071,13 @@ export class Grid {
     for (let r = ra; r <= rb; r++) {
       for (let c = ca; c <= cb; c++) {
         if (mergeAt(r, c)) continue;
-        cells.push({ r, c, ...this.cellRect(r, c), merged: false });
+        cells.push({ r, c, ...this.lrect(r, c), merged: false });
       }
     }
     for (const m of merges) {
       const r2 = m.row + m.height - 1, c2 = m.column + m.width - 1;
       if (r2 < ra || m.row > rb || c2 < ca || m.column > cb) continue;
-      const a = this.cellRect(m.row, m.column), b = this.cellRect(r2, c2);
+      const a = this.lrect(m.row, m.column), b = this.lrect(r2, c2);
       cells.push({ r: m.row, c: m.column, x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y, merged: true });
     }
 
@@ -1050,15 +1091,15 @@ export class Grid {
     // Ещё выделенные диапазоны (Ctrl+щелчок) — той же заливкой.
     for (const x of this.extraRanges) {
       if (x.r2 < ra || x.r1 > rb || x.c2 < ca || x.c1 > cb) continue;
-      const a = this.cellRect(Math.max(x.r1, ra), Math.max(x.c1, ca));
-      const b = this.cellRect(Math.min(x.r2, rb), Math.min(x.c2, cb));
+      const a = this.lrect(Math.max(x.r1, ra), Math.max(x.c1, ca));
+      const b = this.lrect(Math.min(x.r2, rb), Math.min(x.c2, cb));
       ctx.fillStyle = this.theme.selectionFill;
       ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
     // Выделенный диапазон (кроме активной ячейки).
     if ((s.r1 !== s.r2 || s.c1 !== s.c2) && s.r2 >= ra && s.r1 <= rb && s.c2 >= ca && s.c1 <= cb) {
-      const a = this.cellRect(Math.max(s.r1, ra), Math.max(s.c1, ca));
-      const b = this.cellRect(Math.min(s.r2, rb), Math.min(s.c2, cb));
+      const a = this.lrect(Math.max(s.r1, ra), Math.max(s.c1, ca));
+      const b = this.lrect(Math.min(s.r2, rb), Math.min(s.c2, cb));
       ctx.fillStyle = this.theme.selectionFill;
       ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
@@ -1127,7 +1168,7 @@ export class Grid {
     for (const flt of this.filters) {
     if (flt.r1 >= ra && flt.r1 <= rb) {
       for (let c = Math.max(ca, flt.c1); c <= Math.min(cb, flt.c2); c++) {
-        const r = this.cellRect(flt.r1, c);
+        const r = this.lrect(flt.r1, c);
         const bx = r.x + r.w - 17, by = r.y + r.h - 17;
         ctx.fillStyle = flt.active.has(c) ? '#d3ebe5' : '#f3f3f3';
         ctx.strokeStyle = '#9a9a9a';
@@ -1155,7 +1196,7 @@ export class Grid {
     // Активная ячейка: толстая рамка; в неактивном окне — бледнее.
     const border = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;
     if (shown(s.row, s.column)) {
-      const { x, y, w, h } = this.activeRect();
+      const { x, y, w, h } = this.lActiveRect();
       const lw = this.theme.activeWidth;
       ctx.strokeStyle = border;
       ctx.lineWidth = lw;
@@ -1165,7 +1206,7 @@ export class Grid {
     const am = this.mergeOf(s.row, s.column);
     const onlyMerge = am && s.r1 === am.row && s.c1 === am.column && s.r2 === am.row + am.height - 1 && s.c2 === am.column + am.width - 1;
     if ((s.r1 !== s.r2 || s.c1 !== s.c2) && !onlyMerge) {
-      const a = this.cellRect(s.r1, s.c1), b = this.cellRect(Math.min(s.r2, LAST_ROW), Math.min(s.c2, LAST_COLUMN));
+      const a = this.lrect(s.r1, s.c1), b = this.lrect(Math.min(s.r2, LAST_ROW), Math.min(s.c2, LAST_COLUMN));
       ctx.strokeStyle = border;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
@@ -1173,7 +1214,7 @@ export class Grid {
     // Маркер заполнения — в правом нижнем углу выделения, как в Excel.
     this.handle = { x: -100, y: -100 };
     if (shown(s.r2, s.c2) && s.r2 < LAST_ROW && s.c2 < LAST_COLUMN) {
-      const b = this.cellRect(s.r2, s.c2);
+      const b = this.lrect(s.r2, s.c2);
       this.handle = { x: b.x + b.w, y: b.y + b.h };
       ctx.fillStyle = this.theme.sheetBg;
       ctx.fillRect(this.handle.x - 4, this.handle.y - 4, 8, 8);
@@ -1182,7 +1223,7 @@ export class Grid {
     }
     // Протягивание и скопированный диапазон — пунктир.
     const dashed = (r: { r1: number; c1: number; r2: number; c2: number }, color: string) => {
-      const a = this.cellRect(r.r1, r.c1), b = this.cellRect(r.r2, r.c2);
+      const a = this.lrect(r.r1, r.c1), b = this.lrect(r.r2, r.c2);
       ctx.save();
       ctx.setLineDash([4, 3]);
       ctx.lineWidth = 2;
@@ -1194,7 +1235,7 @@ export class Grid {
     if (this.clipRange && this.clipRange.sheet === this.sheet) dashed(this.clipRange, border);
     for (const h of this.refHighlights) {
       if ((h.r2 < r0 && h.r1 > this.fr) || h.r1 > rN || (h.c2 < c0 && h.c1 > this.fc) || h.c1 > cN) continue;
-      const a = this.cellRect(h.r1, h.c1), b = this.cellRect(h.r2, h.c2);
+      const a = this.lrect(h.r1, h.c1), b = this.lrect(h.r2, h.c2);
       ctx.save();
       ctx.globalAlpha = 0.1;
       ctx.fillStyle = h.color;
@@ -1207,7 +1248,7 @@ export class Grid {
     }
     if (this.pointRange) {
       const p = this.pointRange;
-      const a = this.cellRect(p.r1, p.c1), b = this.cellRect(p.r2, p.c2);
+      const a = this.lrect(p.r1, p.c1), b = this.lrect(p.r2, p.c2);
       ctx.save();
       ctx.setLineDash([5, 3]);
       ctx.lineWidth = 2;
@@ -1475,8 +1516,8 @@ export class Grid {
   /** §2: полосы от заголовков к активной ячейке. */
   private drawFocusCell(r0: number, rN: number, c0: number, cN: number): void {
     const ctx = this.ctx, s = this.sel, fc = this.focusCell;
-    const colRect = this.cellRect(this.fr ? 1 : r0, s.column);
-    const rowRect = this.cellRect(s.row, this.fc ? 1 : c0);
+    const colRect = this.lrect(this.fr ? 1 : r0, s.column);
+    const rowRect = this.lrect(s.row, this.fc ? 1 : c0);
     const rowEnd = fc.extent === 'full' ? rN : s.row - 1;
     const colEnd = fc.extent === 'full' ? cN : s.column - 1;
     const bandColH = rowEnd >= 1 ? this.sy(rowEnd) + this.height(rowEnd) - colRect.y : 0;
@@ -1526,7 +1567,7 @@ export class Grid {
     const right = pinC ? W : W - this.rightW;
     ctx.save(); ctx.beginPath(); ctx.rect(left, 0, right - left, this.headerH); ctx.clip();
     for (let c = c0; c <= cN; c++) {
-      const { x, w } = this.cellRect(1, c);
+      const { x, w } = this.lrect(1, c);
       if (w === 0) continue; // скрытый столбец
       const inSel = (c >= s.c1 && c <= s.c2) || this.extraRanges.some((x) => c >= x.c1 && c <= x.c2);
       if (inSel) {
@@ -1552,7 +1593,7 @@ export class Grid {
     const bottom = pinR ? H : H - this.bottomH;
     ctx.save(); ctx.beginPath(); ctx.rect(0, top, this.headerW, bottom - top); ctx.clip();
     for (let r = r0; r <= rN; r++) {
-      const { y, h } = this.cellRect(r, 1);
+      const { y, h } = this.lrect(r, 1);
       if (h === 0) continue; // скрытая (отфильтрованная) строка
       const inSel = (r >= s.r1 && r <= s.r2) || this.extraRanges.some((x) => r >= x.r1 && r <= x.r2);
       if (inSel) {
@@ -1577,7 +1618,7 @@ export class Grid {
     if (z) {
       // Размер при перетаскивании границы — подсказка, как в Excel.
       const label = z.kind === 'column' ? `Ширина: ${z.size} пикс.` : `Высота: ${z.size} пикс.`;
-      const at = z.kind === 'column' ? this.cellRect(1, z.index) : this.cellRect(z.index, 1);
+      const at = z.kind === 'column' ? this.lrect(1, z.index) : this.lrect(z.index, 1);
       ctx.font = '12px "Segoe UI", sans-serif';
       const tw = ctx.measureText(label).width + 12;
       const bx = z.kind === 'column' ? Math.min(W - tw - 2, at.x + at.w + 6) : this.headerW + 6;

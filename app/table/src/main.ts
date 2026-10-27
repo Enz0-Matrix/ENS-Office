@@ -86,7 +86,7 @@ function placeEditor(): void {
   // (файлы с мелким шрифтом) набираемый текст иначе обрезался и был не виден.
   let font = { sz: 11, b: false, i: false, name: '' };
   try { font = model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font; } catch { /* по умолчанию */ }
-  const px = Math.round((font.sz || 11) * 1.33);
+  const px = Math.round((font.sz || 11) * 1.33 * grid.zoom);
   editor.style.font = `${font.i ? 'italic ' : ''}${font.b ? 'bold ' : ''}${px}px ${fontStack(font.name)}`;
   editor.style.lineHeight = '1.2';
   editor.style.height = `${Math.max(r.h, Math.ceil(px * 1.2) + 2)}px`;
@@ -657,6 +657,24 @@ function updateStatus(): void {
       `<span class="stat sum">Сумма: ${fmt(sum)}</span>`
     : '';
 }
+
+// --- Масштаб листа: Ctrl + колесо и кнопки в строке состояния ---
+
+const zoomVal = $<HTMLButtonElement>('zoom-val');
+grid.onZoom = (z) => { zoomVal.textContent = `${Math.round(z * 100)}%`; placeEditor(); };
+$('zoom-in').addEventListener('click', () => grid.setZoom(grid.zoom * 1.1));
+$('zoom-out').addEventListener('click', () => grid.setZoom(grid.zoom / 1.1));
+zoomVal.addEventListener('click', () => grid.setZoom(1));
+// Браузер (Chrome, «Муром») масштабирует всю страницу по Ctrl + колесо и Ctrl +/−: запрещаем,
+// колесо над листом меняет только масштаб листа (grid.ts).
+document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && ['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract', 'Digit0', 'Numpad0'].includes(e.code) && !e.altKey) {
+    // Ctrl+0 и прочие браузерные сочетания масштаба страницы не нужны; остальное обрабатывает приложение.
+    if (e.code === 'Digit0' || e.code === 'Numpad0') return;
+    e.preventDefault();
+  }
+}, true);
 
 grid.onEditRequest = (initial) => startEdit(initial);
 
