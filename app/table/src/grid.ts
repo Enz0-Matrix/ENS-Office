@@ -1769,7 +1769,7 @@ export class Grid {
     const cols = c.kind === 2 ? 1 : c2 - c1;
     for (let k = 1; k <= cols; k++) {
       names.push(m.getFormattedCellValue(this.sheet, r1, c1 + k));
-      series.push(m.getRangeNumbers(this.sheet, r1 + 1, c1 + k, r2, c1 + k));
+      series.push(Array.from(m.getRangeNumbers(this.sheet, r1 + 1, c1 + k, r2, c1 + k)));
     }
     return { cats, names, series };
   }

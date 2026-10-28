@@ -1234,8 +1234,9 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
         const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels };
         if (!parseRange(c.range)) { showToast('Укажите диапазон из двух и более строк и столбцов, например A1:C5.'); return; }
         if (existing === null) {
-          const s = grid.sel;
-          model.setCharts(grid.sheet, [...list, { ...c, row: s.row, column: s.column, dx: 0, dy: 0, width: 480, height: 288 }]);
+          // Новая диаграмма — справа от данных, чтобы не закрывать их.
+          const [rr1, , , cc2] = parseRange(c.range)!;
+          model.setCharts(grid.sheet, [...list, { ...c, row: rr1, column: cc2 + 2, dx: 0, dy: 0, width: 480, height: 288 }]);
           grid.selObj = grid.images.length + list.length;
         } else {
           model.setCharts(grid.sheet, list.map((x, k) => (k === existing ? { ...x, ...c } : x)));
