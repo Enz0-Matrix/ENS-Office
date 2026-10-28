@@ -118,6 +118,7 @@ impl Styles {
             // it is not a named-style category in Excel and is normalized out.
             quote_prefix: false,
             alignment: style.alignment.clone(),
+            protection: None,
         });
         xf_id
     }
@@ -133,11 +134,12 @@ impl Styles {
             apply_number_format: false,
             apply_border: false,
             apply_alignment: false,
-            apply_protection: false,
             apply_font: false,
             apply_fill: false,
             quote_prefix: style.quote_prefix,
             alignment: style.alignment.clone(),
+            apply_protection: style.protection.is_some(),
+            protection: style.protection,
         });
         self.cell_xfs.len() as i32 - 1
     }
@@ -163,6 +165,7 @@ impl Styles {
                     font: self.fonts[font_id].clone(),
                     border: self.borders[border_id].clone(),
                     quote_prefix,
+                    protection: cell_xf.protection,
                 })
             {
                 return Some(index as i32);
@@ -267,6 +270,7 @@ impl Styles {
             apply_fill: false,
             quote_prefix: false,
             alignment: None,
+            protection: None,
         });
         Ok(self.cell_xfs.len() as i32 - 1)
     }
@@ -336,6 +340,7 @@ impl Styles {
             apply_alignment: !record.apply_alignment,
             apply_protection: !record.apply_protection,
             quote_prefix: current.quote_prefix,
+            protection: current.protection,
         };
         if let Some(index) = self.cell_xfs.iter().position(|xf| xf == &new_xf) {
             return Ok(index as i32);
@@ -381,6 +386,7 @@ impl Styles {
             font: self.fonts[style_xf.font_id as usize].clone(),
             border: self.borders[style_xf.border_id as usize].clone(),
             quote_prefix: false,
+            protection: None,
         })
     }
 
@@ -498,6 +504,7 @@ impl Styles {
             font: self.fonts[font_id].clone(),
             border: self.borders[border_id].clone(),
             quote_prefix,
+            protection: cell_xf.protection,
         })
     }
 }

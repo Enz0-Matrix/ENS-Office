@@ -81,6 +81,8 @@ impl<'a> Model<'a> {
             ens_summary: (false, false),
             ens_row_breaks: vec![],
             ens_col_breaks: vec![],
+            ens_protected: false,
+            ens_protect_attrs: String::new(),
         }
     }
 
@@ -684,6 +686,7 @@ impl<'a> Model<'a> {
             views,
             theme: Default::default(),
             ens_change_log: String::new(),
+            ens_structure_locked: false,
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;

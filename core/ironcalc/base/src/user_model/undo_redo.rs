@@ -155,6 +155,12 @@ impl<'a> UserModel<'a> {
                 Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
                 }
+                Diff::SetSheetProtected { sheet, new_value: _, old_value } => {
+                    self.write_sheet_protected(*sheet, *old_value)?;
+                }
+                Diff::SetStructureLocked { new_value: _, old_value } => {
+                    self.write_structure_locked(*old_value);
+                }
                 Diff::SetComment { sheet, row, column, new_value: _, old_value } => {
                     self.write_comment(*sheet, *row, *column, old_value.clone())?;
                 }
@@ -746,6 +752,12 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;
+                }
+                Diff::SetSheetProtected { sheet, new_value, old_value: _ } => {
+                    self.write_sheet_protected(*sheet, *new_value)?;
+                }
+                Diff::SetStructureLocked { new_value, old_value: _ } => {
+                    self.write_structure_locked(*new_value);
                 }
                 Diff::SetComment { sheet, row, column, new_value, old_value: _ } => {
                     self.write_comment(*sheet, *row, *column, new_value.clone())?;

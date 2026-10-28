@@ -336,6 +336,7 @@ impl UserModel<'_> {
     /// `move_rows_action` hidden rows are not skipped, and row heights and the
     /// hidden state travel with their rows. One undo step.
     pub fn move_rows_exact(&mut self, sheet: u32, row: i32, row_count: i32, delta: i32) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         if delta == 0 || row_count <= 0 {
             return Ok(());
         }
@@ -369,6 +370,7 @@ impl UserModel<'_> {
     /// Columns version of [`Self::move_rows_exact`]: widths and the hidden
     /// state travel with their columns.
     pub fn move_columns_exact(&mut self, sheet: u32, column: i32, column_count: i32, delta: i32) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         if delta == 0 || column_count <= 0 {
             return Ok(());
         }
@@ -417,6 +419,7 @@ impl UserModel<'_> {
     /// visible rows are reordered among themselves, as Excel does with an
     /// active filter.
     pub fn sort_range_by_rows(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks, skip_hidden: bool) -> Result<(), String> {
+        self.guard_area(area)?;
         let sheet = area.sheet;
         if keys.is_empty() {
             return Ok(());
@@ -772,6 +775,7 @@ impl UserModel<'_> {
 
     /// ENS-Office: sets (an empty text deletes) the comment of a cell; an undoable step.
     pub fn set_comment(&mut self, sheet: u32, row: i32, column: i32, text: &str, author: &str) -> Result<(), String> {
+        self.guard_cells(sheet, row, column, row, column)?;
         let old_value = self.get_comment(sheet, row, column)?;
         let new_value = if text.is_empty() {
             None
@@ -883,6 +887,7 @@ impl UserModel<'_> {
     /// "Paste values": the values (not formulas) of the source range, at the
     /// selected cell, optionally transposed. Numbers keep full precision.
     pub fn paste_values(&mut self, source_sheet: u32, source: (i32, i32, i32, i32), transpose: bool) -> Result<(), String> {
+        self.guard_selection()?;
         let view = self.get_selected_view();
         let (sheet, row0, column0) = (view.sheet, view.row, view.column);
         let (r1, c1, r2, c2) = source;

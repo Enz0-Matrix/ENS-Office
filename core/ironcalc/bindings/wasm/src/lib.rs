@@ -581,6 +581,32 @@ impl Model {
         self.model.clear_page_breaks(sheet).map_err(to_js_error)
     }
 
+    /// ENS-Office: protection of the sheet (no password) and of the book structure.
+    #[wasm_bindgen(js_name = "isSheetProtected")]
+    pub fn is_sheet_protected(&self, sheet: u32) -> Result<bool, JsError> {
+        self.model.is_sheet_protected(sheet).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "isSheetPasswordProtected")]
+    pub fn is_sheet_password_protected(&self, sheet: u32) -> Result<bool, JsError> {
+        self.model.is_sheet_password_protected(sheet).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "setSheetProtected")]
+    pub fn set_sheet_protected(&mut self, sheet: u32, on: bool) -> Result<(), JsError> {
+        self.model.set_sheet_protected(sheet, on).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "isStructureLocked")]
+    pub fn is_structure_locked(&self) -> bool {
+        self.model.is_structure_locked()
+    }
+
+    #[wasm_bindgen(js_name = "setStructureLocked")]
+    pub fn set_structure_locked(&mut self, on: bool) -> Result<(), JsError> {
+        self.model.set_structure_locked(on).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "getPageSetup")]
     pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {
         self.model.get_page_setup(sheet).map_err(to_js_error)

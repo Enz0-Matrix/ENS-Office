@@ -112,8 +112,10 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
 
     let sheets = sheets_str.join("");
     let defined_names = defined_names_str.join("");
+    let workbook_protection = if workbook.ens_structure_locked { "<workbookProtection lockStructure=\"1\"/>" } else { "" };
     format!("{XML_DECLARATION}\n\
     <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+    {workbook_protection}\
     <bookViews>
     <workbookView activeTab=\"{selected_sheet}\"/>\
     </bookViews>

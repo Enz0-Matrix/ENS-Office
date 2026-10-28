@@ -135,6 +135,8 @@ pub struct Workbook {
     /// ENS-Office: the change log ("who changed what and when"), JSON list of
     /// entries; saved to xlsx as a custom XML part (`customXml/item1.xml`).
     pub ens_change_log: String,
+    /// ENS-Office: the book structure is locked (Excel's `<workbookProtection lockStructure>`).
+    pub ens_structure_locked: bool,
 }
 
 /// A defined name. The `sheet_id` is the sheet index in case the name is local
@@ -295,6 +297,10 @@ pub struct Worksheet {
     /// Excel's `<rowBreaks>` / `<colBreaks>` with `id` = N).
     pub ens_row_breaks: Vec<i32>,
     pub ens_col_breaks: Vec<i32>,
+    /// ENS-Office: the sheet is protected (Excel's `<sheetProtection sheet="1">`).
+    pub ens_protected: bool,
+    /// ENS-Office: the other attributes of `<sheetProtection>` as XML text (the password hash), kept as is.
+    pub ens_protect_attrs: String,
 }
 
 /// Internal representation of Excel's sheet_data
@@ -589,6 +595,17 @@ pub struct Style {
     pub font: Font,
     pub border: Border,
     pub quote_prefix: bool,
+    /// ENS-Office: cell protection; `None` — locked and not hidden (Excel's default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<Protection>,
+}
+
+/// Cell protection (Excel's `<protection locked hidden>`): in effect when the sheet is protected.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Protection {
+    pub locked: bool,
+    /// The formula is not shown in the formula bar.
+    pub hidden: bool,
 }
 
 impl Default for Style {
@@ -600,6 +617,7 @@ impl Default for Style {
             font: Font::default(),
             border: Border::default(),
             quote_prefix: false,
+            protection: None,
         }
     }
 }
@@ -880,6 +898,7 @@ pub struct CellXfs {
     pub apply_fill: bool,
     pub quote_prefix: bool,
     pub alignment: Option<Alignment>,
+    pub protection: Option<Protection>,
 }
 
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]

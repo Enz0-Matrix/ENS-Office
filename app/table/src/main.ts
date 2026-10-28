@@ -141,6 +141,10 @@ function focusGrid(): void {
 }
 
 function startEdit(initial?: string): void {
+  if (model.isSheetProtected(grid.sheet) && (model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.protection?.locked ?? true)) {
+    showToast('Ячейка защищена от изменений. Снимите защиту листа (Рецензирование) или защиту ячейки.');
+    return;
+  }
   editMode = initial === undefined ? 'edit' : 'enter';
   editCell = { sheet: grid.sheet, row: grid.sel.row, column: grid.sel.column };
   placeEditor();
@@ -1029,6 +1033,55 @@ function structure(change: () => void): void {
 }
 
 /** «Ширина столбца…» / «Высота строки…» — в пикселях, для всех выделенных. */
+// --- Защита листа, ячеек и структуры книги ---
+
+// Отказы движка на защищённом листе (правка, вставка, форматирование и т. д.) — сообщением, а не ошибкой.
+window.addEventListener('unhandledrejection', (e) => { if (/защищ/.test(String(e.reason))) { e.preventDefault(); showToast(String(e.reason).replace(/^Error: /, '')); } });
+window.addEventListener('error', (e) => { if (/защищ/.test(e.message)) { e.preventDefault(); showToast(e.message.replace(/^(Uncaught )?Error: /, '')); } });
+
+
+function toggleSheetProtection(): void {
+  if (editing) commitEdit(0, 0);
+  const on = !model.isSheetProtected(grid.sheet);
+  try {
+    model.setSheetProtected(grid.sheet, on);
+    showToast(on ? 'Лист защищён: менять можно только незащищённые ячейки.' : 'Защита листа снята.');
+  } catch (e) { showToast(String(e)); }
+  grid.invalidateLayout(); updateFormulaBar(); refreshRibbon();
+}
+
+/** Окно «Защита ячеек»: защищаемая ячейка, скрыть формулы (действует после защиты листа). */
+function cellProtectionDialog(): void {
+  if (editing) commitEdit(0, 0);
+  const s = grid.sel;
+  const cur = model.getCellStyle(grid.sheet, s.row, s.column).style.protection ?? { locked: true, hidden: false };
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Защита ячеек</h2>
+    <p><label><input type="checkbox" data-f="locked"${cur.locked ? ' checked' : ''}> Защищаемая ячейка</label></p>
+    <p><label><input type="checkbox" data-f="hidden"${cur.hidden ? ' checked' : ''}> Скрыть формулы</label></p>
+    <p>Параметры начинают действовать после защиты листа (Рецензирование → Защитить лист).</p>
+    <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (act === 'ok') {
+      const flag = (f: string) => String(box.querySelector<HTMLInputElement>(`[data-f="${f}"]`)!.checked);
+      const mark = model.undoMark();
+      try {
+        model.updateRangeStyle(selectionArea(), 'protection.locked', flag('locked'));
+        model.updateRangeStyle(selectionArea(), 'protection.hidden', flag('hidden'));
+      } catch (err) { showToast(String(err)); }
+      model.mergeUndoSince(mark);
+      grid.render();
+    }
+    close();
+  });
+}
+
 // --- Примечания и разрывы страниц ---
 
 function commentOf(row: number, column: number): { ref: string; text: string; author: string } | undefined {
@@ -2433,6 +2486,15 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'protect.sheet', label: 'Защитить лист / снять защиту', keywords: ['protect sheet', 'защита листа', 'защитить', 'блокировка'],
+    checked: () => model.isSheetProtected(grid.sheet), run: () => toggleSheetProtection() },
+  { id: 'protect.book', label: 'Защитить структуру книги / снять защиту', keywords: ['protect workbook', 'защита книги', 'структура книги'],
+    checked: () => model.isStructureLocked(), run: () => {
+      try { model.setStructureLocked(!model.isStructureLocked()); showToast(model.isStructureLocked() ? 'Структура книги защищена.' : 'Защита структуры снята.'); } catch (e) { showToast(String(e)); }
+      renderSheetTabs(); refreshRibbon();
+    } },
+  { id: 'protect.cells', label: 'Защита ячеек…', keywords: ['locked', 'hidden', 'скрыть формулы', 'защищаемая ячейка'],
+    run: () => cellProtectionDialog() },
   { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
     run: () => editComment(grid.sel.row, grid.sel.column) },
   { id: 'comment.delete', label: 'Удалить примечание', keywords: ['delete comment', 'удалить комментарий'],

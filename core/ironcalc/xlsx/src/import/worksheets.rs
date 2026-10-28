@@ -1061,6 +1061,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         },
     );
 
+    let protection = load_protection(ws);
     Ok((
         Worksheet {
             dimension,
@@ -1083,11 +1084,28 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             ens_filter_criteria: load_filter_criteria(ws),
             ens_summary: load_outline_summary(ws),
             ens_page_setup: load_page_setup(ws),
+            ens_protected: protection.0,
+            ens_protect_attrs: protection.1,
             ens_row_breaks: load_breaks(ws, "rowBreaks"),
             ens_col_breaks: load_breaks(ws, "colBreaks"),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: `<sheetProtection>`: whether the sheet is protected and the remaining attributes (password hash).
+fn load_protection(ws: &XmlNode) -> (bool, String) {
+    let Some(n) = ws.children().find(|n| n.has_tag_name("sheetProtection")) else { return (false, String::new()) };
+    let on = n.attribute("sheet").is_some_and(|v| v == "1" || v == "true");
+    let attrs = [
+        "password", "algorithmName", "hashValue", "saltValue", "spinCount", "formatCells", "formatColumns", "formatRows",
+        "insertColumns", "insertRows", "insertHyperlinks", "deleteColumns", "deleteRows", "selectLockedCells", "sort",
+        "autoFilter", "pivotTables", "selectUnlockedCells",
+    ]
+    .iter()
+    .filter_map(|k| n.attribute(k).map(|v| format!(" {k}=\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;"))))
+    .collect::<String>();
+    (on, attrs)
 }
 
 /// ENS-Office: manual page breaks (`<rowBreaks>` / `<colBreaks>`): the numbers of the rows / columns

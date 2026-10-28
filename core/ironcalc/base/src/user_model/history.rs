@@ -123,6 +123,17 @@ pub(crate) enum Diff {
         new_value: [i32; 4],
         old_value: [i32; 4],
     },
+    /// ENS-Office: a sheet is protected / unprotected.
+    SetSheetProtected {
+        sheet: u32,
+        new_value: bool,
+        old_value: bool,
+    },
+    /// ENS-Office: the book structure is locked / unlocked.
+    SetStructureLocked {
+        new_value: bool,
+        old_value: bool,
+    },
     /// ENS-Office: a cell comment (note) set, changed or deleted (`None` — no comment).
     SetComment {
         sheet: u32,

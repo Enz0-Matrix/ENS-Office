@@ -142,6 +142,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         }
     };
     let ens_change_log = load_change_log(&mut archive);
+    let ens_structure_locked = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
     views.insert(
         0,
@@ -166,7 +167,24 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         views,
         theme,
         ens_change_log,
+        ens_structure_locked,
     })
+}
+
+/// ENS-Office: `<workbookProtection lockStructure>` of `xl/workbook.xml`.
+fn load_structure_locked<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> bool {
+    let mut text = String::new();
+    let read = archive.by_name("xl/workbook.xml").map(|mut f| f.read_to_string(&mut text));
+    if !matches!(read, Ok(Ok(_))) {
+        return false;
+    }
+    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return false };
+    let locked = root
+        .children()
+        .find(|n| n.has_tag_name("workbookProtection"))
+        .and_then(|n| n.attribute("lockStructure").map(|v| v == "1" || v == "true"))
+        .unwrap_or(false);
+    locked
 }
 
 /// ENS-Office: the change log from `customXml/item*.xml` (root `<ensChangeLog>`).

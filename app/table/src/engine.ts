@@ -20,6 +20,8 @@ export interface CellStyle {
   font: { b: boolean; i: boolean; u: boolean; strike: boolean; sz: number; color?: Color; name: string };
   alignment?: { horizontal?: string; vertical?: string; wrap_text?: boolean; text_rotation?: number };
   border?: CellBorder;
+  /** Защита ячейки: нет поля — защищаемая, формулы видны. */
+  protection?: { locked: boolean; hidden: boolean };
 }
 
 /** Стиль ячейки с учётом условного форматирования. */
@@ -110,6 +112,12 @@ export interface Model {
   getPageBreaks(sheet: number): [number[], number[]];
   setPageBreak(sheet: number, isRow: boolean, index: number, on: boolean): void;
   clearPageBreaks(sheet: number): void;
+  isSheetProtected(sheet: number): boolean;
+  /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
+  isSheetPasswordProtected(sheet: number): boolean;
+  setSheetProtected(sheet: number, on: boolean): void;
+  isStructureLocked(): boolean;
+  setStructureLocked(on: boolean): void;
   getPageSetup(sheet: number): string;
   getPrintArea(sheet: number): number[];
   /** Сквозные строки и столбцы печати: [строка1, строка2, столбец1, столбец2], 0 — нет. */

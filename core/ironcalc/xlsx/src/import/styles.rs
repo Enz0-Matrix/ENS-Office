@@ -2,7 +2,7 @@ use std::{collections::HashMap, io::Read};
 
 use ironcalc_base::types::{
     Alignment, Border, BorderItem, BorderStyle, CellStyleXfs, CellStyles, CellXfs, Color, Dxf,
-    DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Styles, Theme, VerticalAlignment,
+    DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Protection, Styles, Theme, VerticalAlignment,
 };
 use std::io::BufReader;
 
@@ -422,6 +422,12 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             None
         };
 
+        // ENS-Office: `<protection locked hidden>`; absent — locked, not hidden.
+        let protection = xfs.children().find(|n| n.has_tag_name("protection")).and_then(|n| {
+            let flag = |a: &str, d: bool| n.attribute(a).map_or(d, |v| v == "1" || v == "true");
+            let p = Protection { locked: flag("locked", true), hidden: flag("hidden", false) };
+            (p.locked != true || p.hidden).then_some(p)
+        });
         cell_xfs.push(CellXfs {
             xf_id,
             num_fmt_id,
@@ -436,6 +442,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             apply_fill,
             quote_prefix,
             alignment,
+            protection,
         });
     }
 

@@ -16,7 +16,7 @@ use crate::{
     model::{FmtSettings, Model},
     types::{
         Alignment, ArrayKind, BorderItem, Cell, CellType, Col, Color, HorizontalAlignment,
-        MergedCell, SheetProperties, SheetState, Style, Theme, VerticalAlignment,
+        MergedCell, Protection, SheetProperties, SheetState, Style, Theme, VerticalAlignment,
     },
 };
 
@@ -195,6 +195,15 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
                     style.alignment = Some(Alignment { text_rotation: v, ..Default::default() });
                 }
             }
+        }
+        "protection.locked" | "protection.hidden" => {
+            let mut p = style.protection.unwrap_or(Protection { locked: true, hidden: false });
+            if style_path == "protection.locked" {
+                p.locked = boolean(value)?;
+            } else {
+                p.hidden = boolean(value)?;
+            }
+            style.protection = (!p.locked || p.hidden).then_some(p);
         }
         "alignment.wrap_text" => match style.alignment {
             Some(ref mut s) => s.wrap_text = boolean(value)?,
@@ -482,6 +491,7 @@ impl<'a> UserModel<'a> {
         column: i32,
         value: &str,
     ) -> Result<(), String> {
+        self.guard_cells(sheet, row, column, row, column)?;
         if !is_valid_column_number(column) {
             return Err("Invalid column".to_string());
         }
@@ -580,6 +590,10 @@ impl<'a> UserModel<'a> {
     /// * [Model::get_localized_cell_content]
     #[inline]
     pub fn get_cell_content(&self, sheet: u32, row: i32, column: i32) -> Result<String, String> {
+        if self.is_formula_hidden(sheet, row, column) {
+            let content = self.model.get_localized_cell_content(sheet, row, column)?;
+            return Ok(if content.starts_with('=') { String::new() } else { content });
+        }
         self.model.get_localized_cell_content(sheet, row, column)
     }
 
@@ -646,6 +660,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::new_sheet]
     pub fn new_sheet(&mut self) -> Result<(), String> {
+        self.guard_structure()?;
         let (name, index) = self.model.new_sheet();
         self.set_selected_sheet(index)?;
         self.push_diff_list(vec![Diff::NewSheet { index, name }]);
@@ -658,6 +673,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::duplicate_sheet]
     pub fn duplicate_sheet(&mut self, sheet: u32) -> Result<(), String> {
+        self.guard_structure()?;
         let (_name, new_index) = self.model.duplicate_sheet(sheet)?;
         self.set_selected_sheet(new_index)?;
         self.push_diff_list(vec![Diff::DuplicateSheet {
@@ -672,6 +688,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::delete_sheet]
     pub fn delete_sheet(&mut self, sheet: u32) -> Result<(), String> {
+        self.guard_structure()?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
 
         self.push_diff_list(vec![Diff::DeleteSheet {
@@ -696,6 +713,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::rename_sheet_by_index]
     pub fn rename_sheet(&mut self, sheet: u32, new_name: &str) -> Result<(), String> {
+        self.guard_structure()?;
         let old_value = self.model.workbook.worksheet(sheet)?.name.clone();
         if old_value == new_name {
             return Ok(());
@@ -724,6 +742,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::move_sheet]
     pub fn move_sheet(&mut self, sheet_index: u32, new_index: u32) -> Result<(), String> {
+        self.guard_structure()?;
         let sheet_count = self.model.workbook.worksheets.len() as u32;
         if sheet_index >= sheet_count {
             return Err(format!("Invalid sheet index {sheet_index}"));
@@ -750,6 +769,7 @@ impl<'a> UserModel<'a> {
     /// * [Model::set_sheet_state]
     /// * [UserModel::unhide_sheet]
     pub fn hide_sheet(&mut self, sheet: u32) -> Result<(), String> {
+        self.guard_structure()?;
         let sheet_count = self.model.workbook.worksheets.len() as u32;
         for index in 1..sheet_count {
             let sheet_index = (sheet + index) % sheet_count;
@@ -776,6 +796,7 @@ impl<'a> UserModel<'a> {
     /// * [Model::set_sheet_state]
     /// * [UserModel::hide_sheet]
     pub fn unhide_sheet(&mut self, sheet: u32) -> Result<(), String> {
+        self.guard_structure()?;
         let old_value = self.model.workbook.worksheet(sheet)?.state.clone();
         self.push_diff_list(vec![Diff::SetSheetState {
             index: sheet,
@@ -809,6 +830,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::range_clear_all]
     pub fn range_clear_all(&mut self, range: &Area) -> Result<(), String> {
+        self.guard_area(range)?;
         let sheet = range.sheet;
         // TODO: full rows/columns
         let mut old_value = Vec::new();
@@ -855,6 +877,7 @@ impl<'a> UserModel<'a> {
     /// See also:
     /// * [Model::range_clear_contents]
     pub fn range_clear_contents(&mut self, range: &Area) -> Result<(), String> {
+        self.guard_area(range)?;
         let sheet = range.sheet;
         // ENS-Office: only the part of the range that holds data — clearing a
         // whole column used to walk 1 048 576 rows (28 s in the browser).
@@ -1060,6 +1083,7 @@ impl<'a> UserModel<'a> {
     /// * [UserModel::range_clear_all]
     /// * [UserModel::range_clear_contents]
     pub fn range_clear_formatting(&mut self, range: &Area) -> Result<(), String> {
+        self.guard_area(range)?;
         let sheet = range.sheet;
         let mut diff_list = Vec::new();
         if range.row == 1 && range.height == LAST_ROW {
@@ -1125,6 +1149,7 @@ impl<'a> UserModel<'a> {
     ///
     /// See also [`Model::insert_rows`].
     pub fn insert_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_rows(sheet, row, row_count)?;
 
@@ -1157,6 +1182,7 @@ impl<'a> UserModel<'a> {
         column: i32,
         column_count: i32,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_columns(sheet, column, column_count)?;
 
@@ -1179,6 +1205,7 @@ impl<'a> UserModel<'a> {
     ///
     /// See also [`Model::delete_rows`].
     pub fn delete_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all rows to be deleted
@@ -1253,6 +1280,7 @@ impl<'a> UserModel<'a> {
         column: i32,
         column_count: i32,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all columns to be deleted
@@ -1332,6 +1360,7 @@ impl<'a> UserModel<'a> {
         column_count: i32,
         delta: i32,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         if delta == 0 || column_count <= 0 {
             return Ok(());
         }
@@ -1376,6 +1405,7 @@ impl<'a> UserModel<'a> {
         row_count: i32,
         delta: i32,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         if delta == 0 || row_count <= 0 {
             return Ok(());
         }
@@ -1422,6 +1452,7 @@ impl<'a> UserModel<'a> {
         column_end: i32,
         width: f64,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let mut diff_list = Vec::new();
         for column in column_start..=column_end {
             let old_value = self.model.get_column_width(sheet, column)?;
@@ -1448,6 +1479,7 @@ impl<'a> UserModel<'a> {
         column_end: i32,
         hidden: bool,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let mut diff_list = Vec::new();
         for column in column_start..=column_end {
             let old_value = self
@@ -1516,6 +1548,7 @@ impl<'a> UserModel<'a> {
         row_end: i32,
         hidden: bool,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let mut diff_list = Vec::new();
         for row in row_start..=row_end {
             let old_value = self.model.workbook.worksheet(sheet)?.is_row_hidden(row)?;
@@ -1573,6 +1606,7 @@ impl<'a> UserModel<'a> {
         row_end: i32,
         height: f64,
     ) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
         let mut diff_list = Vec::new();
         for row in row_start..=row_end {
             let old_value = self.model.get_row_height(sheet, row)?;
@@ -1658,6 +1692,7 @@ impl<'a> UserModel<'a> {
 
     /// Paste `styles` in the selected area
     pub fn on_paste_styles(&mut self, styles: &[Vec<Style>]) -> Result<(), String> {
+        self.guard_selection()?;
         let styles_height = styles.len() as i32;
         let styles_width = styles[0].len() as i32;
         let sheet = if let Some(view) = self.model.workbook.views.get(&self.model.view_id) {
@@ -1747,6 +1782,7 @@ impl<'a> UserModel<'a> {
         style_path: &str,
         value: &str,
     ) -> Result<(), String> {
+        self.guard_area(range)?;
         let sheet = range.sheet;
         let mut diff_list = Vec::new();
         if range.row == 1 && range.height == LAST_ROW {
@@ -2182,6 +2218,7 @@ impl<'a> UserModel<'a> {
         height: i32,
         formula: &str,
     ) -> Result<(), String> {
+        self.guard_cells(sheet, row, column, row + height - 1, column + width - 1)?;
         let ws = self.model.workbook.worksheet(sheet)?;
         let mut old_values = Vec::new();
         for r in row..row + height {

@@ -222,6 +222,21 @@ export const TABS: RibbonTab[] = [
     ],
   },
   {
+    id: 'review',
+    label: 'Рецензирование',
+    groups: [
+      { name: 'Защита', items: [
+        { type: 'large', command: 'protect.sheet', icon: 'lock_closed', label: 'Защитить лист' },
+        { type: 'large', command: 'protect.book', icon: 'lock_closed', label: 'Защитить структуру книги' },
+        { type: 'large', command: 'protect.cells', icon: 'lock_closed', label: 'Защита ячеек' },
+      ] },
+      { name: 'Примечания', items: [
+        { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
+        { type: 'large', command: 'comment.delete', icon: 'comment_dismiss', label: 'Удалить примечание' },
+      ] },
+    ],
+  },
+  {
     id: 'data',
     label: 'Данные',
     groups: [

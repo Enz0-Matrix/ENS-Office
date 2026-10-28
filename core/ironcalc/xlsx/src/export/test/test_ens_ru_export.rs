@@ -219,3 +219,48 @@ fn test_ens_comments_and_breaks_export() {
     assert_eq!(back.get_comment(0, 1, 1).unwrap().unwrap().author_name, "Пётр");
     assert_eq!(back.get_page_breaks(0).unwrap(), (vec![5, 10], vec![2]));
 }
+
+// ENS-Office: protection of the sheet, cells (locked / hidden) and book structure, round trip with undo.
+#[test]
+fn test_ens_protection_export() {
+    use ironcalc_base::expressions::types::Area;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_user_input(0, 2, 1, "=1+1").unwrap();
+    let a2 = Area { sheet: 0, row: 2, column: 1, width: 1, height: 1 };
+    model.update_range_style(&a2, "protection.hidden", "true").unwrap();
+    let b1 = Area { sheet: 0, row: 1, column: 2, width: 1, height: 1 };
+    model.update_range_style(&b1, "protection.locked", "false").unwrap();
+    assert!(model.get_cell_style(0, 1, 2).unwrap().protection.is_some());
+    model.set_sheet_protected(0, true).unwrap();
+    assert!(model.set_user_input(0, 1, 1, "y").is_err());
+    assert!(model.set_user_input(0, 1, 2, "ok").is_ok());
+    assert!(model.insert_rows(0, 1, 1).is_err());
+    assert!(model.update_range_style(&a2, "font.b", "true").is_err());
+    assert_eq!(model.get_cell_content(0, 2, 1).unwrap(), "");
+    model.undo().unwrap(); // the input of B1
+    model.undo().unwrap(); // protection
+    assert!(!model.is_sheet_protected(0).unwrap());
+    assert_eq!(model.get_cell_content(0, 2, 1).unwrap(), "=1+1");
+    model.redo().unwrap();
+    model.set_structure_locked(true).unwrap();
+    assert!(model.new_sheet().is_err());
+    let name = "temp_ens_protection.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(xml.contains(r#"<sheetProtection sheet="1" objects="1" scenarios="1"/>"#), "{xml}");
+    let mut back = ironcalc_base::UserModel::from_model(back);
+    assert!(back.is_sheet_protected(0).unwrap() && back.is_structure_locked());
+    assert_eq!(back.get_cell_content(0, 2, 1).unwrap(), "");
+    let p = back.get_cell_style(0, 1, 2).unwrap().protection.unwrap();
+    assert!(!p.locked && !p.hidden);
+    assert!(back.get_cell_style(0, 2, 1).unwrap().protection.unwrap().hidden);
+    assert!(back.set_user_input(0, 1, 1, "z").is_err());
+    back.set_sheet_protected(0, false).unwrap();
+    back.set_user_input(0, 1, 1, "z").unwrap();
+}

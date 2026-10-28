@@ -817,6 +817,11 @@ pub(crate) fn get_worksheet_xml(
     } else {
         String::new()
     };
+    let sheet_protection = if worksheet.ens_protected {
+        format!("<sheetProtection sheet=\"1\" objects=\"1\" scenarios=\"1\"{}/>", worksheet.ens_protect_attrs)
+    } else {
+        String::new()
+    };
     let page_breaks = page_breaks_xml(worksheet);
     let legacy_drawing = if worksheet.comments.is_empty() {
         String::new()
@@ -855,6 +860,7 @@ pub(crate) fn get_worksheet_xml(
   <sheetData>\
   {sheet_data}\
   </sheetData>\
+  {sheet_protection}\
   {auto_filter_section}\
   {merge_cells_section}\
   {cf_sections}\
