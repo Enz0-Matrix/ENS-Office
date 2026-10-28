@@ -107,6 +107,23 @@ const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
 export const ZOOM_MIN = 0.25, ZOOM_MAX = 4;
+
+/** Цвет «#rgb», «#rrggbb» или «rgb(…)» → [r, g, b] (0–255); null — не разобрать. */
+function parseRgb(c: string): [number, number, number] | null {
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim());
+  if (hex) {
+    const h = hex[1].length === 3 ? [...hex[1]].map((x) => x + x).join('') : hex[1];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  const rgb = /^rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/i.exec(c.trim());
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
+}
+
+/** Яркость цвета 0 (чёрный) … 1 (белый); неизвестный цвет считаем светлым. */
+function luminance(c: string): number {
+  const rgb = parseRgb(c);
+  return rgb ? (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 : 1;
+}
 export const MARK_COLORS = { blue: '#2f6fd1', red: '#d93025', green: '#1e9e4a' };
 
 export class Grid {
@@ -1305,7 +1322,13 @@ export class Grid {
     const drawPx = vert === 'superscript' || vert === 'subscript' ? Math.round(px * 0.7) : px;
     const shift = vert === 'superscript' ? -Math.round(px * 0.3) : vert === 'subscript' ? Math.round(px * 0.2) : 0;
     ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${drawPx}px ${fontStack(f?.name)}`;
-    ctx.fillStyle = f?.color ? model.resolveColor(f.color) : this.theme.textColor ?? '#000';
+    let textFill = f?.color ? model.resolveColor(f.color) || '#000' : this.theme.textColor ?? '#000';
+    if (this.theme.textColor) {
+      // Тёмная тема листа: «чёрный» из файла нечитаем — берём светлый; на светлой заливке ячейки — тёмный.
+      const bg = style?.fill?.color ? model.resolveColor(style.fill.color) || this.theme.sheetBg : this.theme.sheetBg;
+      if (Math.abs(luminance(bg) - luminance(textFill)) < 0.35) textFill = luminance(bg) < 0.5 ? this.theme.textColor : '#000';
+    }
+    ctx.fillStyle = textFill;
     // Направление текста (Excel textRotation): 1..90 — против часовой стрелки,
     // 91..180 — по часовой (90 + угол), 255 — буквы столбиком.
     const rot = style?.alignment?.text_rotation ?? 0;
@@ -1494,13 +1517,13 @@ export class Grid {
       const width = st === 'thick' ? 3 : st.startsWith('medium') ? 2 : 1;
       ctx.save();
       const auto = this.theme.textColor ?? '#000';
-      const color = item.color ? model.resolveColor(item.color) || auto : auto;
-      ctx.strokeStyle = color;
+      let color = item.color ? model.resolveColor(item.color) || auto : auto;
       ctx.lineWidth = width;
-      // Тонкие чёрные линии (их ставят другие программы по всей таблице) — мягче, серыми: не давят на данные.
-      if (width === 1 && /^#[0-9a-f]{6}$/i.test(color) && [1, 3, 5].every((i) => parseInt(color.slice(i, i + 2), 16) < 64) && !this.theme.textColor) {
-        ctx.globalAlpha = st === 'hair' ? 0.35 : 0.5;
-      }
+      // Тонкие тёмные линии (другие программы ставят их по всей таблице) — мягче: не давят на данные.
+      const dark = !item.color || (parseRgb(color) !== null && luminance(color) < 0.3);
+      if (dark && this.theme.textColor) color = this.theme.textColor; // тёмная тема листа: «чёрные» границы светлые
+      ctx.strokeStyle = color;
+      if (dark && width === 1) ctx.globalAlpha = st === 'hair' ? 0.2 : 0.3; // грань соседних ячеек рисуется дважды
       ctx.setLineDash(st === 'dotted' ? [1, 2] : st === 'mediumdashed' ? [5, 2] : st.includes('dashdotdot') ? [5, 2, 1, 2, 1, 2]
         : st.includes('dashdot') ? [5, 2, 1, 2] : []);
       const off = width % 2 ? 0.5 : 0;

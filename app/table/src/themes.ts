@@ -132,11 +132,11 @@ export const THEMES: Theme[] = [
     },
   },
   {
-    id: 'finance', name: 'Финансовая', note: 'строгая, для бухгалтерии', tone: 'light',
+    id: 'finance', name: 'Финансовая', note: 'строгая, синяя с золотой линией', tone: 'light',
     grid: {
-      sheetBg: '#ffffff', gridLine: '#dfe3e0', headerBg: '#eef1ee', headerLine: '#cdd4cf', headerText: '#3d4a42',
-      cornerBg: '#e1e6e2', cornerLine: '#cdd4cf', headerActiveFill: '#d6e7dc', headerActiveText: '#1f4d33',
-      activeBorder: '#1f6b43', activeBorderInactive: '#86b59b', selectionFill: 'rgba(31,107,67,0.12)',
+      sheetBg: '#ffffff', gridLine: '#d9dee6', headerBg: '#e8edf3', headerLine: '#c3ccd8', headerText: '#2d3e56',
+      cornerBg: '#d8dfe9', cornerLine: '#c3ccd8', headerActiveFill: '#c9d8ee', headerActiveText: '#14305c',
+      activeBorder: '#1f3a68', activeBorderInactive: '#8da2c4', selectionFill: 'rgba(31,58,104,0.12)',
     },
   },
   {

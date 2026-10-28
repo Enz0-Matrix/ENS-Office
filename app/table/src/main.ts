@@ -168,6 +168,11 @@ function commitEdit(dRow: number, dCol: number): void {
       model.setUserInput(s.sheet, s.row, s.column, settings.decimal === 'comma' ? text.replace('.', ',') : text);
       const den = frac[4].length;
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'num_fmt', den > 2 ? '# ???/???' : den > 1 ? '# ??/??' : '# ?/?');
+    } else if (/^-?\d+\/\d+$/.test(value.trim()) && /\?\/[?\d]/.test(before) && Number(value.trim().split('/')[1]) > 0) {
+      // В ячейке с дробным форматом «1/2» — число 0,5 (в «Общем» это была бы дата или текст, как в Excel).
+      const [n, d] = value.trim().split('/').map(Number);
+      const text = String(Math.round((n / d) * 1e12) / 1e12);
+      model.setUserInput(s.sheet, s.row, s.column, settings.decimal === 'comma' ? text.replace('.', ',') : text);
     } else {
     model.setUserInput(s.sheet, s.row, s.column, value);
     }

@@ -923,6 +923,15 @@ mod tests {
     }
 
     #[test]
+    fn ens_cyrillic_defined_name() {
+        let mut m = model();
+        m.set_user_input(0, 1, 1, "10").unwrap();
+        m.new_defined_name("Цена", None, "Sheet1!$A$1").unwrap();
+        m.set_user_input(0, 1, 2, "=Цена*2").unwrap();
+        assert_eq!(m.get_formatted_cell_value(0, 1, 2).unwrap(), "20");
+    }
+
+    #[test]
     fn ens_print_titles() {
         let mut m = model();
         assert_eq!(m.get_print_titles(0).unwrap(), [0; 4]);

@@ -221,12 +221,17 @@
   --brand-bg: linear-gradient(100deg, #2b2e34, #343841);
 }
 
-/* --- «Финансовая»: строгая, зелёно-серая --- */
+/* --- «Финансовая»: строгая, тёмно-синяя с золотой линией --- */
 :root[data-theme="finance"] {
-  --accent: #1f6b43; --accent-dark: #174f32; --bg: #f1f3f1; --panel: #ffffff; --border: #cdd4cf; --text: #1f2a24; --muted: #5a665f;
-  --hover: #e4ebe6; --on-bg: #d6e7dc; --status-bg: #e6ebe7; --scroll: #9db8a8;
-  --brand-bg: linear-gradient(100deg, #174f32 0%, #1f6b43 60%, #2c7d54 100%);
+  --accent: #1f3a68; --accent-dark: #14274a; --bg: #eef1f5; --panel: #ffffff; --border: #c3ccd8; --text: #1b2638; --muted: #586478;
+  --hover: #dfe6f0; --on-bg: #cfdcf0; --status-bg: #e2e8f1; --scroll: #9fb2d0;
+  --brand-bg: linear-gradient(100deg, #14274a 0%, #1f3a68 60%, #2f4f86 100%);
 }
+[data-theme="finance"] .titlebar { position: relative; }
+[data-theme="finance"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; pointer-events: none; z-index: 2; background: #c9a227;
+}
+[data-theme="finance"] .tab.active { border-bottom-color: #c9a227; }
 
 /* --- «Инженерная»: чертёжная синька --- */
 :root[data-theme="blueprint"] {

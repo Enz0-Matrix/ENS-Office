@@ -426,3 +426,4 @@ footer { display: flex; flex-direction: column; }
 .print-titles label { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 8px; }
 .print-titles input { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; background: var(--panel); color: var(--text); }
 .pt-note { color: #a4262c; }
+.names-form[hidden] { display: none; }
