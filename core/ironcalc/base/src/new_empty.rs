@@ -76,6 +76,15 @@ impl<'a> Model<'a> {
             views,
             conditional_formatting: vec![],
             links: HashMap::new(),
+            ens_filter_criteria: String::new(),
+            ens_page_setup: String::new(),
+            ens_summary: (false, false),
+            ens_row_breaks: vec![],
+            ens_col_breaks: vec![],
+            ens_protected: false,
+            ens_protect_attrs: String::new(),
+            ens_images: vec![],
+            ens_charts: vec![],
         }
     }
 
@@ -678,6 +687,9 @@ impl<'a> Model<'a> {
             tables: HashMap::new(),
             views,
             theme: Default::default(),
+            ens_change_log: String::new(),
+            ens_structure_locked: false,
+            ens_rich: HashMap::new(),
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;
@@ -701,6 +713,7 @@ impl<'a> Model<'a> {
             last_lambda_id: 0,
             evaluation: crate::evaluation::Evaluation::default(),
             deps: Default::default(),
+            ens_recognize_dates: true,
             cf_cache: HashMap::new(),
             links: HashMap::new(),
         };

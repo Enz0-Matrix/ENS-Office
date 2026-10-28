@@ -57,6 +57,9 @@ impl UserModel<'_> {
     // Merges every range of `ranges` (all on the same sheet), centering each
     // horizontally when `center` is set, as a single undo step.
     fn merge_ranges(&mut self, ranges: &[Area], center: bool) -> Result<(), String> {
+        for r in ranges {
+            self.guard_area(r)?;
+        }
         let Some(first) = ranges.first() else {
             return Ok(());
         };

@@ -59,7 +59,253 @@ fn use_group_separator(use_thousands: bool, digit_index: i32, group_sizes: &str)
     false
 }
 
+/// ENS-Office: the genitive month name ("марта") for locales that need it
+/// after a day number; `None` for the others.
+fn genitive_month(locale: &Locale, month: usize) -> Option<&'static str> {
+    const RU: [&str; 12] = [
+        "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    ];
+    if locale.dates.months.first().map(|m| m.to_lowercase()) == Some("январь".to_string()) {
+        RU.get(month.checked_sub(1)?).copied()
+    } else {
+        None
+    }
+}
+
+/// ENS-Office: round to `digits` decimals, halves away from zero, working on
+/// the shortest decimal representation (so 2.345 is "2.345", not 2.34499…).
+pub(crate) fn round_half_away(value: f64, digits: i32) -> f64 {
+    if !value.is_finite() || !(0..=15).contains(&digits) {
+        return value;
+    }
+    let clean = to_precision(value, 15);
+    let s = format!("{}", clean.abs());
+    let (int_part, frac_part) = match s.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => return clean,
+    };
+    let d = digits as usize;
+    if frac_part.len() <= d {
+        return clean;
+    }
+    let mut kept: Vec<u8> = int_part.bytes().chain(frac_part.bytes().take(d)).map(|b| b - b'0').collect();
+    if frac_part.as_bytes()[d] >= b'5' {
+        let mut i = kept.len();
+        loop {
+            if i == 0 {
+                kept.insert(0, 1);
+                break;
+            }
+            i -= 1;
+            if kept[i] == 9 {
+                kept[i] = 0;
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    let digits_str: String = kept.iter().map(|d| (b'0' + d) as char).collect();
+    let split = digits_str.len() - d;
+    let text = if d == 0 { digits_str } else { format!("{}.{}", &digits_str[..split], &digits_str[split..]) };
+    let rounded = text.parse::<f64>().unwrap_or(clean);
+    if clean < 0.0 { -rounded } else { rounded }
+}
+
+/// ENS-Office: a format code typed in a formula (TEXT) in the locale's notation —
+/// "# ##0,00" in Russian Excel — to the stored notation "#,##0.00". Text in
+/// quotes and escaped characters are left alone.
+pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
+    if locale.numbers.symbols.decimal != "," {
+        return code.to_string();
+    }
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    let mut in_quotes = false;
+    let is_digit = |c: Option<&char>| matches!(c, Some('0' | '#' | '?'));
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            in_quotes = !in_quotes;
+            out.push(c);
+        } else if in_quotes {
+            out.push(c);
+        } else if c == '\\' && i + 1 < chars.len() {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 1;
+        } else if c == ',' {
+            out.push('.');
+        } else if c == '.' {
+            out.push(',');
+        } else if (c == ' ' || c == '\u{a0}') && is_digit(chars.get(i.wrapping_sub(1)).filter(|_| i > 0)) && is_digit(chars.get(i + 1)) {
+            // a space between digit placeholders is the thousands separator
+            out.push(',');
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// ENS-Office: the sections of a format code (split at `;` outside quotes).
+fn format_sections(format: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (i, c) in format.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if c == ';' && !quoted {
+            out.push(&format[start..i]);
+            start = i + 1;
+        }
+    }
+    out.push(&format[start..]);
+    out
+}
+
+/// ENS-Office: digits of a fraction part padded as Excel does: `?` → space, `0` → zero.
+fn pad_fraction(digits: String, pattern: &str, left: bool) -> String {
+    let n = pattern.chars().count();
+    let len = digits.chars().count();
+    if len >= n {
+        return digits;
+    }
+    let mut pad = String::new();
+    for c in pattern.chars().take(n - len) {
+        match c {
+            '?' => pad.push(' '),
+            '0' if left => pad.push('0'),
+            '0' => pad.push(' '),
+            _ => {}
+        }
+    }
+    if left {
+        format!("{pad}{digits}")
+    } else {
+        format!("{digits}{pad}")
+    }
+}
+
+/// ENS-Office: fraction formats as in Excel — `# ?/?`, `# ??/??`, `?/?`, `# ?/8`, `# ??/100`.
+/// None when the code is not a fraction format (then the usual formatter runs).
+fn format_fraction(value_original: f64, format: &str) -> Option<Formatted> {
+    if !format.contains('/') {
+        return None;
+    }
+    let sections = format_sections(format);
+    let v = value_original;
+    let (section, value, signed) = match sections.len() {
+        1 => (sections[0], v, true),
+        2 => if v >= 0.0 { (sections[0], v, false) } else { (sections[1], -v, false) },
+        _ => {
+            if v > 0.0 {
+                (sections[0], v, false)
+            } else if v < 0.0 {
+                (sections[1], -v, false)
+            } else {
+                (sections[2], 0.0, false)
+            }
+        }
+    };
+    // [Цвет] / [условие] в начале раздела
+    let mut body = section;
+    let mut prefix = String::new();
+    while body.starts_with('[') {
+        let end = body.find(']')?;
+        prefix.push_str(&body[..=end]);
+        body = &body[end + 1..];
+    }
+    let (left, den) = body.split_once('/')?;
+    let is_digit_pattern = |s: &str| !s.is_empty() && s.chars().all(|c| matches!(c, '?' | '#' | '0'));
+    let fixed_den: Option<u64> = if den.chars().all(|c| c.is_ascii_digit()) && !den.starts_with('0') && !den.is_empty() {
+        den.parse().ok()
+    } else if is_digit_pattern(den) && den.len() <= 4 {
+        None
+    } else {
+        return None;
+    };
+    let left_trim = left.trim_end_matches(['?', '#', '0']);
+    let num_pattern = &left[left_trim.len()..];
+    if num_pattern.is_empty() {
+        return None;
+    }
+    let int_end = left_trim.trim_end();
+    let int_pattern = &int_end[int_end.trim_end_matches(['?', '#', '0', ',']).len()..];
+    let has_int = !int_pattern.is_empty();
+    if has_int && int_end.len() == left_trim.len() {
+        return None; // «#?/?» без пробела — не дробь
+    }
+    // текст перед числом («-», "ок. »)
+    let lead_src = if has_int { &int_end[..int_end.len() - int_pattern.len()] } else { left_trim };
+    let lead: String = lead_src.chars().filter(|c| !matches!(c, '"' | '\\')).collect();
+    if lead.chars().any(|c| matches!(c, '?' | '#' | '0')) {
+        return None;
+    }
+    let left_trim = &left_trim[lead_src.len()..];
+    let int_pattern = if has_int { int_pattern } else { "" };
+
+    let x = value.abs();
+    let (mut int, frac) = if has_int { (x.floor(), x - x.floor()) } else { (0.0, x) };
+    let (mut n, d) = match fixed_den {
+        Some(d) => ((frac * d as f64).round() as u64, d),
+        None => {
+            let max_d = 10u64.pow(den.len() as u32) - 1;
+            let (mut best_n, mut best_d, mut best_err) = (frac.round() as u64, 1u64, f64::MAX);
+            for d in 1..=max_d {
+                let n = (frac * d as f64).round();
+                let err = (frac - n / d as f64).abs();
+                if err < best_err - 1e-12 {
+                    (best_n, best_d, best_err) = (n as u64, d, err);
+                }
+            }
+            (best_n, best_d)
+        }
+    };
+    if has_int && n >= d {
+        int += (n / d) as f64;
+        n %= d;
+    }
+    let minus = if signed && value < 0.0 && (int > 0.0 || n > 0) { "-" } else { "" };
+    let gap = " ".repeat(left_trim.len() - int_pattern.len());
+    let int_text = if int > 0.0 || int_pattern.contains('0') { format!("{int}") } else { String::new() };
+    let text = if has_int && n == 0 {
+        // целое: на месте дроби — пробелы (числа в столбце выравниваются)
+        let width = num_pattern.chars().count() + 1 + den.chars().count();
+        let int_text = if int_text.is_empty() { "0".to_string() } else { int_text };
+        format!("{minus}{int_text}{gap}{}", " ".repeat(width))
+    } else {
+        let num = pad_fraction(n.to_string(), num_pattern, true);
+        let den_text = match fixed_den {
+            Some(d) => d.to_string(),
+            None => pad_fraction(d.to_string(), den, false),
+        };
+        if int_text.is_empty() {
+            format!("{minus}{num}/{den_text}")
+        } else {
+            format!("{minus}{int_text}{gap}{num}/{den_text}")
+        }
+    };
+    let text = format!("{lead}{text}");
+    let mut parser = Parser::new(&format!("{prefix}0"));
+    parser.parse();
+    let color = match parser.parts.first() {
+        Some(ParsePart::Number(p)) => p.color,
+        _ => None,
+    };
+    Some(Formatted { text, color, error: None })
+}
+
 pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Formatted {
+    if let Some(f) = format_fraction(value_original, format) {
+        return f;
+    }
     let mut parser = Parser::new(format);
     parser.parse();
     let parts = parser.parts;
@@ -178,8 +424,22 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let minutes = ((time_fract * 24.0 - hours) * 60.0).floor();
             let seconds = ((((time_fract * 24.0 - hours) * 60.0) - minutes) * 60.0).round();
             let date = from_excel_date(value as i64).ok();
+            // ENS-Office: in Russian a month after the day number is in the
+            // genitive ("15 марта 2023"), alone it is the nominative ("Март 2023").
+            let with_day = tokens.iter().any(|t| matches!(t, TextToken::Day | TextToken::DayPadded));
             for token in tokens {
                 match token {
+                    TextToken::MonthName if with_day && genitive_month(locale, 1).is_some() => {
+                        let Some(d) = date else {
+                            return Formatted {
+                                text: "#VALUE!".to_owned(),
+                                color: None,
+                                error: Some(format!("Invalid date value: '{value}'")),
+                            };
+                        };
+                        let name = genitive_month(locale, d.month() as usize).unwrap_or_default();
+                        text = format!("{text}{name}");
+                    }
                     TextToken::Literal(c) => {
                         text = format!("{text}{c}");
                     }
@@ -441,10 +701,15 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let tokens = &p.tokens;
             value = value * 100.0_f64.powi(p.percent) / (1000.0_f64.powi(p.comma));
             // p.precision is the number of significant digits _after_ the decimal point
-            value = to_precision(
-                value,
-                (p.precision as usize) + format!("{}", value.abs().floor()).len(),
-            );
+            // ENS-Office: Excel rounds halves away from zero on the decimal
+            // digits (1234,5 → "1235"; 2,345 → "2,35"); Rust's formatting
+            // rounds exact binary ties to even.
+            value = if p.is_scientific {
+                // in scientific notation the precision is that of the mantissa
+                to_precision(value, (p.precision as usize) + format!("{}", value.abs().floor()).len())
+            } else {
+                round_half_away(value, p.precision)
+            };
             let mut value_abs = value.abs();
             let mut exponent_part: Vec<char> = vec![];
             let mut exponent_is_negative = value_abs < 10.0;
@@ -922,6 +1187,10 @@ fn parse_number(
     }
     let mut chars = String::from("");
     let mut group_separator_index = Vec::new();
+    // ENS-Office: where the group separator is a (non-breaking) space, as in
+    // Russian, people type and paste ordinary spaces: "1 234 567,89".
+    let spaced = group_separator.is_whitespace();
+    let is_group = |x: char| x == group_separator || (spaced && (x == ' ' || x == '\u{a0}' || x == '\u{202f}'));
     // get the sign
     let sign = if characters[0] == '-' {
         position += 1;
@@ -937,7 +1206,7 @@ fn parse_number(
         return Err("Cannot parse number".to_string());
     }
 
-    if characters[position] == group_separator {
+    if is_group(characters[position]) {
         return Err("Cannot parse number".to_string());
     }
 
@@ -946,7 +1215,7 @@ fn parse_number(
         let x = characters[position];
         if x.is_ascii_digit() {
             chars.push(x);
-        } else if x == group_separator {
+        } else if is_group(x) {
             group_separator_index.push(chars.len());
         } else {
             break;

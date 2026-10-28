@@ -170,54 +170,61 @@ fn displace_cf_col(col: i32, data: &DisplaceData, sheet: u32) -> Option<i32> {
     }
 }
 
-/// Displaces a single A1-style sqref part (e.g. "A1" or "A1:B5").
-/// Returns the original string unchanged if any corner would become #REF!.
-fn displace_cf_sqref_part(part: &str, data: &DisplaceData, sheet: u32) -> String {
-    let upper = part.to_uppercase();
-    let segs: Vec<&str> = upper.splitn(2, ':').collect();
-    match segs.len() {
-        1 => {
-            if let Some(r) = utils::parse_reference_a1(segs[0]) {
-                if let (Some(nr), Some(nc)) = (
-                    displace_cf_row(r.row, data, sheet),
-                    displace_cf_col(r.column, data, sheet),
-                ) {
-                    if let Some(c) = utils::number_to_column(nc) {
-                        return format!("{c}{nr}");
-                    }
-                }
-            }
-            part.to_string()
-        }
-        2 => {
-            if let (Some(r1), Some(r2)) = (
-                utils::parse_reference_a1(segs[0]),
-                utils::parse_reference_a1(segs[1]),
-            ) {
-                if let (Some(nr1), Some(nc1), Some(nr2), Some(nc2)) = (
-                    displace_cf_row(r1.row, data, sheet),
-                    displace_cf_col(r1.column, data, sheet),
-                    displace_cf_row(r2.row, data, sheet),
-                    displace_cf_col(r2.column, data, sheet),
-                ) {
-                    if let (Some(c1), Some(c2)) =
-                        (utils::number_to_column(nc1), utils::number_to_column(nc2))
-                    {
-                        return format!("{c1}{nr1}:{c2}{nr2}");
-                    }
-                }
-            }
-            part.to_string()
-        }
-        _ => part.to_string(),
+/// New `(lo, hi)` of a span of rows (or columns) when `delta` lines are inserted (delta > 0) or
+/// `-delta` lines are deleted (delta < 0) at `at`. A deleted edge shrinks the span, as in Excel;
+/// `None` — the whole span was deleted.
+fn displace_cf_span(lo: i32, hi: i32, at: i32, delta: i32) -> Option<(i32, i32)> {
+    if delta >= 0 {
+        return Some((if lo >= at { lo + delta } else { lo }, if hi >= at { hi + delta } else { hi }));
+    }
+    let n = -delta;
+    let end = at + n - 1;
+    if hi < at {
+        Some((lo, hi))
+    } else if lo > end {
+        Some((lo - n, hi - n))
+    } else if lo >= at {
+        // The start is inside the deleted block: what is left begins at the block's place.
+        if hi > end { Some((at, hi - n)) } else { None }
+    } else {
+        Some((lo, if hi > end { hi - n } else { at - 1 }))
     }
 }
 
-/// Displaces every part of a space-separated sqref string.
+/// Displaces a single A1-style sqref part (e.g. "A1" or "A1:B5"). `None` — the part
+/// was deleted with its rows or columns.
+fn displace_cf_sqref_part(part: &str, data: &DisplaceData, sheet: u32) -> Option<String> {
+    let upper = part.to_uppercase();
+    let segs: Vec<&str> = upper.splitn(2, ':').collect();
+    let (a, b) = match segs.len() {
+        1 => (utils::parse_reference_a1(segs[0])?, utils::parse_reference_a1(segs[0])?),
+        2 => (utils::parse_reference_a1(segs[0])?, utils::parse_reference_a1(segs[1])?),
+        _ => return Some(part.to_string()),
+    };
+    let (mut r1, mut c1, mut r2, mut c2) = (a.row, a.column, b.row, b.column);
+    match data {
+        DisplaceData::Row { sheet: s, row, delta } if *s == sheet => {
+            (r1, r2) = displace_cf_span(r1.min(r2), r1.max(r2), *row, *delta)?;
+        }
+        DisplaceData::Column { sheet: s, column, delta } if *s == sheet => {
+            (c1, c2) = displace_cf_span(c1.min(c2), c1.max(c2), *column, *delta)?;
+        }
+        _ => {
+            r1 = displace_cf_row(r1, data, sheet)?;
+            r2 = displace_cf_row(r2, data, sheet)?;
+            c1 = displace_cf_col(c1, data, sheet)?;
+            c2 = displace_cf_col(c2, data, sheet)?;
+        }
+    }
+    let (n1, n2) = (utils::number_to_column(c1)?, utils::number_to_column(c2)?);
+    Some(if segs.len() == 1 && r1 == r2 && c1 == c2 { format!("{n1}{r1}") } else { format!("{n1}{r1}:{n2}{r2}") })
+}
+
+/// Displaces every part of a space-separated sqref string; parts that were deleted are dropped.
 fn displace_cf_sqref(sqref: &str, data: &DisplaceData, sheet: u32) -> String {
     sqref
         .split_whitespace()
-        .map(|p| displace_cf_sqref_part(p, data, sheet))
+        .filter_map(|p| displace_cf_sqref_part(p, data, sheet))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -442,6 +449,10 @@ impl<'a> Model<'a> {
             self.workbook.worksheets[sheet as usize].conditional_formatting[idx].range = new_range;
             self.workbook.worksheets[sheet as usize].conditional_formatting[idx].cf_rule = new_rule;
         }
+        // A rule whose whole range was deleted goes away, as in Excel (undo restores the list).
+        self.workbook.worksheets[sheet as usize]
+            .conditional_formatting
+            .retain(|cf| !cf.range.trim().is_empty());
         self.parser.set_locale(locale);
         self.parser.set_language(language);
     }

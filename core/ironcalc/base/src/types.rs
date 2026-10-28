@@ -132,6 +132,39 @@ pub struct Workbook {
     pub tables: HashMap<String, Table>,
     pub views: HashMap<u32, WorkbookView>,
     pub theme: Theme,
+    /// ENS-Office: the change log ("who changed what and when"), JSON list of
+    /// entries; saved to xlsx as a custom XML part (`customXml/item1.xml`).
+    pub ens_change_log: String,
+    /// ENS-Office: the book structure is locked (Excel's `<workbookProtection lockStructure>`).
+    pub ens_structure_locked: bool,
+    /// ENS-Office: formatted parts of the text of shared strings (Excel's `<r>` runs), by index in
+    /// `shared_strings`. Such a string is used by one cell only and is not found by text.
+    pub ens_rich: HashMap<i32, Vec<RichRun>>,
+}
+
+/// A run of a rich text (a part of a cell's text with its own font).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone, Default)]
+pub struct RichRun {
+    pub text: String,
+    #[serde(default)]
+    pub b: bool,
+    #[serde(default)]
+    pub i: bool,
+    #[serde(default)]
+    pub u: bool,
+    #[serde(default)]
+    pub strike: bool,
+    /// Size in points; `None` — as the cell's.
+    #[serde(default)]
+    pub sz: Option<f64>,
+    /// "#RRGGBB"; `None` — as the cell's.
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 0 — normal, 1 — superscript, 2 — subscript.
+    #[serde(default)]
+    pub vert: u8,
 }
 
 /// A defined name. The `sheet_id` is the sheet index in case the name is local
@@ -276,6 +309,71 @@ pub struct Worksheet {
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Hyperlinks in the worksheet, keyed by (row, column) of the cell they are attached to
     pub links: HashMap<(i32, i32), Link>,
+    /// ENS-Office: what the sheet's filters show, JSON `[[[column offset, [values…]], …], …]`
+    /// (one entry per filter; values as shown, lower case; "(пустые)" — blanks).
+    /// The first filter is saved to xlsx as Excel's `<filterColumn>`.
+    pub ens_filter_criteria: String,
+    /// ENS-Office: page setup for printing, JSON `{"landscape", "paper", "fit", "marginMm": [top, right,
+    /// bottom, left], "gridlines", "centerH", "repeatHeader"}`; saved to xlsx as Excel's
+    /// `<printOptions>`, `<pageMargins>` and `<pageSetup>`. Empty — defaults.
+    pub ens_page_setup: String,
+    /// ENS-Office: where the "+/−" button of an outline group stands: `.0` — below the rows
+    /// (Excel's `summaryBelow`; false — above), `.1` — right of the columns (`summaryRight`;
+    /// false — left). Saved to xlsx as `<sheetPr><outlinePr>`.
+    pub ens_summary: (bool, bool),
+    /// ENS-Office: manual page breaks: a break after row N / after column N (1-based, ascending;
+    /// Excel's `<rowBreaks>` / `<colBreaks>` with `id` = N).
+    pub ens_row_breaks: Vec<i32>,
+    pub ens_col_breaks: Vec<i32>,
+    /// ENS-Office: the sheet is protected (Excel's `<sheetProtection sheet="1">`).
+    pub ens_protected: bool,
+    /// ENS-Office: the other attributes of `<sheetProtection>` as XML text (the password hash), kept as is.
+    pub ens_protect_attrs: String,
+    /// ENS-Office: pictures placed over the sheet.
+    pub ens_images: Vec<Image>,
+    /// ENS-Office: charts over the sheet.
+    pub ens_charts: Vec<Chart>,
+}
+
+/// A chart over a sheet: drawn from the cells of `range` ("A1:C5" on the same sheet; the first row —
+/// names of the series, the first column — categories, the other columns — series).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct Chart {
+    /// 0 — columns, 1 — lines, 2 — pie.
+    pub kind: u8,
+    pub title: String,
+    pub range: String,
+    pub row: i32,
+    pub column: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub width: i32,
+    pub height: i32,
+    /// "#RRGGBB" per series (per slice for a pie); empty — the default palette.
+    #[serde(default)]
+    pub colors: Vec<String>,
+    /// 0 — legend below, 1 — right, 2 — none.
+    #[serde(default)]
+    pub legend: u8,
+    /// Values (percents for a pie) written on the chart.
+    #[serde(default)]
+    pub labels: bool,
+}
+
+/// A picture over a sheet: its top left corner is at the top left of the cell (`row`, `column`).
+#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct Image {
+    pub name: String,
+    pub row: i32,
+    pub column: i32,
+    /// Shift of the picture from the cell's corner, px.
+    pub dx: i32,
+    pub dy: i32,
+    pub width: i32,
+    pub height: i32,
+    /// "png", "jpeg" or "gif".
+    pub ext: String,
+    pub data: Vec<u8>,
 }
 
 /// Internal representation of Excel's sheet_data
@@ -292,6 +390,10 @@ pub struct Row {
     pub custom_height: bool,
     pub s: i32,
     pub hidden: bool,
+    /// ENS-Office: outline (grouping) level, 0..7, as Excel's `outlineLevel`.
+    pub outline_level: u8,
+    /// ENS-Office: the group that ends next to this row is collapsed (Excel's `collapsed`).
+    pub collapsed: bool,
 }
 
 // ECMA-376-1:2016 section 18.3.1.13
@@ -306,6 +408,10 @@ pub struct Col {
     pub custom_width: bool,
     pub hidden: bool,
     pub style: Option<i32>,
+    /// ENS-Office: outline (grouping) level, 0..7, as Excel's `outlineLevel`.
+    pub outline_level: u8,
+    /// ENS-Office: the group that ends next to this column is collapsed.
+    pub collapsed: bool,
 }
 
 /// Cell type enum matching Excel TYPE() function values.
@@ -562,6 +668,17 @@ pub struct Style {
     pub font: Font,
     pub border: Border,
     pub quote_prefix: bool,
+    /// ENS-Office: cell protection; `None` — locked and not hidden (Excel's default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<Protection>,
+}
+
+/// Cell protection (Excel's `<protection locked hidden>`): in effect when the sheet is protected.
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Protection {
+    pub locked: bool,
+    /// The formula is not shown in the formula bar.
+    pub hidden: bool,
 }
 
 impl Default for Style {
@@ -573,6 +690,7 @@ impl Default for Style {
             font: Font::default(),
             border: Border::default(),
             quote_prefix: false,
+            protection: None,
         }
     }
 }
@@ -615,6 +733,22 @@ impl Display for FontScheme {
     }
 }
 
+/// ENS-Office: superscript / subscript text (`<vertAlign>`).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VertAlign {
+    #[default]
+    Baseline,
+    Superscript,
+    Subscript,
+}
+
+impl VertAlign {
+    pub fn is_baseline(&self) -> bool {
+        *self == VertAlign::Baseline
+    }
+}
+
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone)]
 pub struct Font {
     #[serde(default = "default_as_false")]
@@ -641,6 +775,9 @@ pub struct Font {
     // ...
     pub family: i32,
     pub scheme: FontScheme,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "VertAlign::is_baseline")]
+    pub vert_align: VertAlign,
 }
 
 impl Default for Font {
@@ -655,6 +792,7 @@ impl Default for Font {
             name: "Inter".to_string(),
             family: 2,
             scheme: FontScheme::Minor,
+            vert_align: VertAlign::Baseline,
         }
     }
 }
@@ -735,9 +873,18 @@ impl Display for VerticalAlignment {
     }
 }
 
+fn is_zero_rotation(v: &i32) -> bool {
+    *v == 0
+}
+
 // 1762
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Default)]
 pub struct Alignment {
+    /// ENS-Office: text direction, as Excel's `textRotation`: 0..90 counter-clockwise,
+    /// 91..180 clockwise (90 + angle), 255 — letters stacked vertically.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero_rotation")]
+    pub text_rotation: i32,
     #[serde(default)]
     #[serde(skip_serializing_if = "HorizontalAlignment::is_default")]
     pub horizontal: HorizontalAlignment,
@@ -824,6 +971,7 @@ pub struct CellXfs {
     pub apply_fill: bool,
     pub quote_prefix: bool,
     pub alignment: Option<Alignment>,
+    pub protection: Option<Protection>,
 }
 
 #[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]

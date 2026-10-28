@@ -32,7 +32,7 @@ use ironcalc_base::{
             Node,
         },
         types::CellReferenceRC,
-        utils::number_to_column,
+        utils::{number_to_column, parse_reference_a1},
     },
     types::{ArrayKind, Cell, FormulaValue, Link, SpillValue, Worksheet},
 };
@@ -125,9 +125,86 @@ fn get_tooltip_attribute(tooltip: &Option<String>) -> String {
     }
 }
 
+/// Number of relationships taken by external hyperlinks (they use `rId1`..).
+fn external_link_count(worksheet: &Worksheet) -> usize {
+    get_sorted_links(worksheet)
+        .iter()
+        .filter(|(_, l)| matches!(l, Link::External { .. }))
+        .count()
+}
+
+/// ENS-Office: `<rowBreaks>` / `<colBreaks>` of the sheet's manual page breaks.
+fn page_breaks_xml(worksheet: &Worksheet) -> String {
+    let section = |tag: &str, list: &[i32], max: i32| {
+        if list.is_empty() {
+            return String::new();
+        }
+        let brks: String = list
+            .iter()
+            .map(|id| format!("<brk id=\"{id}\" max=\"{max}\" man=\"1\"/>"))
+            .collect();
+        format!("<{tag} count=\"{}\" manualBreakCount=\"{}\">{brks}</{tag}>", list.len(), list.len())
+    };
+    format!(
+        "{}{}",
+        section("rowBreaks", &worksheet.ens_row_breaks, 16383),
+        section("colBreaks", &worksheet.ens_col_breaks, 1048575)
+    )
+}
+
+/// ENS-Office: `xl/commentsN.xml` of the sheet's comments (notes).
+pub(crate) fn get_comments_xml(worksheet: &Worksheet) -> String {
+    let mut authors: Vec<&str> = vec![];
+    let mut list = String::new();
+    for c in &worksheet.comments {
+        let a = match authors.iter().position(|x| *x == c.author_name) {
+            Some(i) => i,
+            None => {
+                authors.push(&c.author_name);
+                authors.len() - 1
+            }
+        };
+        list.push_str(&format!(
+            "<comment ref=\"{}\" authorId=\"{a}\"><text><t xml:space=\"preserve\">{}</t></text></comment>",
+            escape_xml(&c.cell_ref),
+            escape_xml(&c.text)
+        ));
+    }
+    let authors: String = authors.iter().map(|a| format!("<author>{}</author>", escape_xml(a))).collect();
+    format!(
+        "{XML_DECLARATION}\n<comments xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><authors>{authors}</authors><commentList>{list}</commentList></comments>"
+    )
+}
+
+/// ENS-Office: `xl/drawings/vmlDrawingN.vml`, the hidden note boxes Excel needs to show comments.
+pub(crate) fn get_comments_vml(worksheet: &Worksheet) -> String {
+    let mut shapes = String::new();
+    for (i, c) in worksheet.comments.iter().enumerate() {
+        let Some(r) = parse_reference_a1(&c.cell_ref) else { continue };
+        let (row, col) = (r.row - 1, r.column - 1);
+        shapes.push_str(&format!(
+            "<v:shape id=\"_x0000_s{}\" type=\"#_x0000_t202\" style=\"position:absolute;margin-left:80pt;margin-top:5pt;width:140pt;height:60pt;z-index:{};visibility:hidden\" fillcolor=\"#ffffe1\" o:insetmode=\"auto\">\
+<v:fill color2=\"#ffffe1\"/><v:shadow on=\"t\" color=\"black\" obscured=\"t\"/><v:path o:connecttype=\"none\"/>\
+<v:textbox style=\"mso-direction-alt:auto\"><div style=\"text-align:left\"></div></v:textbox>\
+<x:ClientData ObjectType=\"Note\"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>{}, 15, {}, 2, {}, 15, {}, 16</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column></x:ClientData></v:shape>",
+            1025 + i,
+            i + 1,
+            col + 1,
+            row.max(1) - 1,
+            col + 3,
+            row + 3
+        ));
+    }
+    format!(
+        "<xml xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\">\
+<o:shapelayout v:ext=\"edit\"><o:idmap v:ext=\"edit\" data=\"1\"/></o:shapelayout>\
+<v:shapetype id=\"_x0000_t202\" coordsize=\"21600,21600\" o:spt=\"202\" path=\"m,l,21600r21600,l21600,xe\"><v:stroke joinstyle=\"miter\"/><v:path gradientshapeok=\"t\" o:connecttype=\"rect\"/></v:shapetype>{shapes}</xml>"
+    )
+}
+
 /// The rels part of the worksheet (`xl/worksheets/_rels/sheetN.xml.rels`) holding one
 /// relationship per external link, or `None` if the worksheet has no external links.
-pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet) -> Option<String> {
+pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>, drawing_id: Option<usize>) -> Option<String> {
     let mut relationships_str: Vec<String> = vec![];
     let mut rel_id = 0;
     for (_, link) in get_sorted_links(worksheet) {
@@ -138,6 +215,20 @@ pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet) -> Option<String> {
                 "<Relationship Id=\"rId{rel_id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{target}\" TargetMode=\"External\"/>"
             ));
         }
+    }
+    if let Some(id) = comments_id {
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"../comments{id}.xml\"/>\
+<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing\" Target=\"../drawings/vmlDrawing{id}.vml\"/>",
+            rel_id + 1,
+            rel_id + 2
+        ));
+    }
+    if let Some(id) = drawing_id {
+        let n = rel_id + if comments_id.is_some() { 2 } else { 0 } + 1;
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{id}.xml\"/>"
+        ));
     }
     if relationships_str.is_empty() {
         return None;
@@ -180,7 +271,18 @@ fn get_array_formula_attribute(
     escape_xml(formula).to_string()
 }
 
+/// ENS-Office: an error value Excel understands.
+fn excel_error_name(name: &str) -> &str {
+    match name {
+        "#NULL!" | "#DIV/0!" | "#VALUE!" | "#REF!" | "#NAME?" | "#NUM!" | "#N/A" | "#SPILL!"
+        | "#CALC!" => name,
+        "#N/IMPL" | "#N/IMPL!" => "#NAME?",
+        _ => "#VALUE!",
+    }
+}
+
 pub(crate) fn get_worksheet_xml(
+    auto_filter: &str,
     worksheet: &Worksheet,
     parsed_formulas: &[(std::sync::Arc<Node>, StaticResult)],
     dimension: &str,
@@ -201,8 +303,11 @@ pub(crate) fn get_worksheet_xml(
             None => "".to_string(),
         };
         let hidden = if col.hidden { " hidden=\"1\"" } else { "" };
+        // ENS-Office: grouping (outline) of columns.
+        let outline = if col.outline_level > 0 { format!(" outlineLevel=\"{}\"", col.outline_level) } else { String::new() };
+        let collapsed = if col.collapsed { " collapsed=\"1\"" } else { "" };
         cols_str.push(format!(
-            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}/>"
+            "<col min=\"{min}\" max=\"{max}\" width=\"{width}\" customWidth=\"{custom_width}\"{column_style}{hidden}{outline}{collapsed}/>"
         ));
     }
 
@@ -370,13 +475,28 @@ pub(crate) fn get_worksheet_xml(
                     //   <f>A1/A3<f/>
                     //   <v>#DIV/0!</v>
                     // </c>
+                    let node = &parsed_formulas[*f as usize].0;
+                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: a formula that does not parse (say "=B5+") is not
+                    // valid in Excel, which "repairs" the whole file and drops it.
+                    // Keep the text the user typed as an inline string instead.
+                    if let Node::ParseErrorKind { formula, .. } = node.as_ref() {
+                        let text = escape_xml(&format!("={formula}")).to_string();
+                        row_data_str.push(format!(
+                            "<c r=\"{cell_name}\" t=\"inlineStr\"{style}><is><t>{text}</t></is></c>"
+                        ));
+                        continue;
+                    }
                     let formula = get_formula_attribute(
                         worksheet.get_name(),
                         row_index,
                         column_index,
-                        &parsed_formulas[*f as usize].0,
+                        node,
                     );
-                    let style = get_cell_style_attribute(*s);
+                    // ENS-Office: #ERROR!, #N/IMPL and #CIRC! are IronCalc's own
+                    // errors; Excel only accepts its standard ones.
+                    let ei_name = ei.to_string();
+                    let ei = excel_error_name(&ei_name);
                     row_data_str.push(format!(
                         "<c r=\"{cell_name}\" t=\"e\"{style}><f>{formula}</f><v>{ei}</v></c>"
                     ));
@@ -564,13 +684,22 @@ pub(crate) fn get_worksheet_xml(
                 } else {
                     ""
                 };
+                // ENS-Office: grouping (outline) of rows.
+                let outline_str = if row_style.outline_level > 0 {
+                    format!(r#" outlineLevel="{}""#, row_style.outline_level)
+                } else {
+                    String::new()
+                };
+                let collapsed_str = if row_style.collapsed { r#" collapsed="1""# } else { "" };
                 format!(
-                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}"#,
+                    r#" s="{}" ht="{}" customHeight="{}" customFormat="{}"{}{}{}"#,
                     row_style.s,
                     row_style.height,
                     i32::from(row_style.custom_height),
                     i32::from(row_style.custom_format),
                     hidden_str,
+                    outline_str,
+                    collapsed_str,
                 )
             }
             None => "".to_string(),
@@ -686,24 +815,140 @@ pub(crate) fn get_worksheet_xml(
         get_conditional_formatting_xml(&worksheet.conditional_formatting);
 
     let hyperlinks_section = get_hyperlinks_section(worksheet);
+    // ENS-Office: the deepest outline levels, so Excel draws the group bar.
+    let level_row = worksheet.rows.iter().map(|r| r.outline_level).max().unwrap_or(0);
+    let level_col = worksheet.cols.iter().map(|c| c.outline_level).max().unwrap_or(0);
+    let sheet_format = if level_row > 0 || level_col > 0 {
+        format!(r#"<sheetFormatPr defaultRowHeight="15" outlineLevelRow="{level_row}" outlineLevelCol="{level_col}"/>"#)
+    } else {
+        String::new()
+    };
+    let sheet_protection = if worksheet.ens_protected {
+        format!("<sheetProtection sheet=\"1\" objects=\"1\" scenarios=\"1\"{}/>", worksheet.ens_protect_attrs)
+    } else {
+        String::new()
+    };
+    let page_breaks = page_breaks_xml(worksheet);
+    let drawing = if worksheet.ens_images.is_empty() && worksheet.ens_charts.is_empty() {
+        String::new()
+    } else {
+        let n = external_link_count(worksheet) + if worksheet.comments.is_empty() { 0 } else { 2 } + 1;
+        format!("<drawing r:id=\"rId{n}\"/>")
+    };
+    let legacy_drawing = if worksheet.comments.is_empty() {
+        String::new()
+    } else {
+        format!("<legacyDrawing r:id=\"rId{}\"/>", external_link_count(worksheet) + 2)
+    };
+    let auto_filter_section = auto_filter;
+    let (sheet_pr, page_setup) = page_setup_xml(&worksheet.ens_page_setup);
+    // Excel's default is below / right; anything else is written to `<outlinePr>`.
+    let sheet_pr = if worksheet.ens_summary == (true, true) {
+        sheet_pr
+    } else {
+        let outline = format!(
+            r#"<outlinePr summaryBelow="{}" summaryRight="{}"/>"#,
+            i32::from(worksheet.ens_summary.0),
+            i32::from(worksheet.ens_summary.1)
+        );
+        match sheet_pr.strip_prefix("<sheetPr>") {
+            Some(rest) => format!("<sheetPr>{outline}{rest}"),
+            None => format!("<sheetPr>{outline}</sheetPr>"),
+        }
+    };
 
     format!(
         "{XML_DECLARATION}\
 <worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+  {sheet_pr}\
   <dimension ref=\"{dimension}\"/>\
   <sheetViews>\
     <sheetView workbookViewId=\"0\"{show_grid_lines}{tab_selected}>\
         {pane}\
     </sheetView>\
   </sheetViews>\
+  {sheet_format}\
   {cols}\
   <sheetData>\
   {sheet_data}\
   </sheetData>\
+  {sheet_protection}\
+  {auto_filter_section}\
   {merge_cells_section}\
   {cf_sections}\
   {hyperlinks_section}\
+  {page_setup}\
+  {page_breaks}\
+  {drawing}\
+  {legacy_drawing}\
   {cf_ext_lst}\
 </worksheet>"
     )
+}
+
+
+/// ENS-Office: the sheet's page setup (JSON, see `Worksheet::ens_page_setup`) as Excel's
+/// `<sheetPr>` (fit to page) and `<printOptions>`, `<pageMargins>`, `<pageSetup>`.
+fn page_setup_xml(json: &str) -> (String, String) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return (String::new(), String::new());
+    };
+    let flag = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+    let fit = v.get("fit").and_then(|x| x.as_str()).unwrap_or("none");
+    let sheet_pr = if fit == "none" {
+        String::new()
+    } else {
+        r#"<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>"#.to_string()
+    };
+    let mut out = String::new();
+    if flag("gridlines") || flag("centerH") {
+        out.push_str("<printOptions");
+        if flag("centerH") {
+            out.push_str(r#" horizontalCentered="1""#);
+        }
+        if flag("gridlines") {
+            out.push_str(r#" gridLines="1""#);
+        }
+        out.push_str("/>");
+    }
+    let m: Vec<f64> = v
+        .get("marginMm")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+        .unwrap_or_default();
+    let (top, right, bottom, left) = if m.len() == 4 { (m[0], m[1], m[2], m[3]) } else { (19.05, 17.78, 19.05, 17.78) };
+    let inch = |mm: f64| (mm / 25.4 * 1000.0).round() / 1000.0;
+    out.push_str(&format!(
+        r#"<pageMargins left="{}" right="{}" top="{}" bottom="{}" header="0.3" footer="0.3"/>"#,
+        inch(left),
+        inch(right),
+        inch(top),
+        inch(bottom)
+    ));
+    let paper = match v.get("paper").and_then(|x| x.as_str()) {
+        Some("Letter") => 1,
+        Some("A3") => 8,
+        Some("A5") => 11,
+        _ => 9,
+    };
+    let orientation = if flag("landscape") { "landscape" } else { "portrait" };
+    let fit_attrs = match fit {
+        "width" => r#" fitToWidth="1" fitToHeight="0""#,
+        "page" => r#" fitToWidth="1" fitToHeight="1""#,
+        _ => "",
+    };
+    out.push_str(&format!(r#"<pageSetup paperSize="{paper}" orientation="{orientation}"{fit_attrs}/>"#));
+    let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let (header, footer) = (text("header"), text("footer"));
+    if !header.is_empty() || !footer.is_empty() {
+        out.push_str("<headerFooter>");
+        if !header.is_empty() {
+            out.push_str(&format!("<oddHeader>{}</oddHeader>", super::escape::escape_xml(&header)));
+        }
+        if !footer.is_empty() {
+            out.push_str(&format!("<oddFooter>{}</oddFooter>", super::escape::escape_xml(&footer)));
+        }
+        out.push_str("</headerFooter>");
+    }
+    (sheet_pr, out)
 }

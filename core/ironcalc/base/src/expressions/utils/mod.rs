@@ -225,7 +225,7 @@ pub fn is_valid_a1_identifier(name: &str) -> bool {
     };
 
     // The first character of a name must be a letter, an underscore character (_), or a backslash (\).
-    if !(first.is_ascii_alphabetic() || first == '_' || first == '\\') {
+    if !(first.is_alphabetic() || first == '_' || first == '\\') {
         return false;
     }
     if upper == *"TRUE" || upper == *"FALSE" {

@@ -1,0 +1,244 @@
+/* ===================================================================
+   Темы оформления, часть 2. Общие правила для светлых и тёмных тем —
+   на переменных; у каждой темы свои цвета и украшения.
+   Темы «по мотивам» — свои рисунки и названия, без чужих персонажей и знаков.
+   =================================================================== */
+
+/* --- Общее для светлых тем --- */
+[data-theme-light] body { background: var(--bg); }
+[data-theme-light] .tabs { background: var(--bg); }
+[data-theme-light] .tab:hover { background: var(--hover); }
+[data-theme-light] .tab.active { color: var(--accent-dark); }
+[data-theme-light] .btn:hover { background: var(--hover); border-color: var(--border); }
+[data-theme-light] .btn.on, [data-theme-light] .btn.active { background: var(--on-bg); border-color: var(--accent); }
+[data-theme-light] .group-name { color: var(--muted); }
+[data-theme-light] .statusbar { background: var(--status-bg); color: var(--status-text, var(--muted)); }
+[data-theme-light] .context-menu > button.checked, [data-theme-light] .fmt-cats button.active,
+[data-theme-light] .fmt-list button.active, [data-theme-light] .cf-row.active { background: var(--on-bg) !important; }
+[data-theme-light] .context-menu > button:hover, [data-theme-light] .cf-menu button:hover { background: var(--hover); }
+[data-theme-light] .modal button.primary { background: var(--accent); border-color: var(--accent); }
+[data-theme-light] .modal { border-top: 4px solid var(--accent); }
+[data-theme-light] ::-webkit-scrollbar { width: 12px; height: 12px; background: var(--bg); }
+[data-theme-light] ::-webkit-scrollbar-thumb { background: var(--scroll, var(--accent)); border-radius: 6px; border: 3px solid var(--bg); }
+
+/* --- Общее для тёмных тем --- */
+[data-theme-dark] body { background: var(--bg); }
+[data-theme-dark] .tabs { background: var(--bg); }
+[data-theme-dark] .tab { color: var(--muted); }
+[data-theme-dark] .tab:hover { background: var(--hover); color: var(--text); }
+[data-theme-dark] .tab.active { color: var(--hi); border-bottom-color: var(--accent2, var(--accent)); }
+[data-theme-dark] .ribbon { background: var(--panel); border-color: var(--border); }
+[data-theme-dark] .group { border-right-color: var(--border); }
+[data-theme-dark] .group-name { color: var(--muted); }
+[data-theme-dark] .btn { color: var(--text); }
+[data-theme-dark] .btn svg { fill: currentColor; }
+[data-theme-dark] .btn:hover { background: var(--hover); border-color: var(--accent2, var(--accent)); }
+[data-theme-dark] .btn.on, [data-theme-dark] .btn.active { background: var(--on-bg); border-color: var(--accent); color: var(--hi); }
+[data-theme-dark] select,
+[data-theme-dark] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { background: var(--input-bg); color: var(--text); border-color: var(--border); }
+[data-theme-dark] .search { background: var(--input-bg); border: 1px solid var(--border); }
+[data-theme-dark] .search input { color: var(--text); }
+[data-theme-dark] .formula-bar { background: var(--bg); }
+[data-theme-dark] .name-box, [data-theme-dark] .formula-wrap { background: var(--input-bg); color: var(--hi); border-color: var(--border); }
+[data-theme-dark] .formula, [data-theme-dark] .fx { color: var(--hi); }
+[data-theme-dark] .sheet-tabs { background: var(--bg); }
+[data-theme-dark] .sheet-tab { color: var(--muted); }
+[data-theme-dark] .sheet-tab.active { background: var(--sheet); color: var(--accent-dark); border-color: var(--border); border-top-color: var(--sheet); box-shadow: inset 0 -3px var(--accent2, var(--accent)); }
+[data-theme-dark] .statusbar { background: var(--input-bg); color: var(--hi); }
+[data-theme-dark] .stat { background: var(--hover); color: var(--text); }
+[data-theme-dark] .modal, [data-theme-dark] .context-menu, [data-theme-dark] .cf-menu,
+[data-theme-dark] .palette, [data-theme-dark] .backstage { background: var(--panel); color: var(--text); border-color: var(--border); }
+[data-theme-dark] .modal { border: 1px solid var(--border); border-top: 4px solid var(--accent2, var(--accent)); }
+[data-theme-dark] .modal h2 { color: var(--hi); }
+[data-theme-dark] .modal p { color: var(--muted); }
+[data-theme-dark] .modal button, [data-theme-dark] .cf-menu button { color: var(--text); background-color: var(--hover); border-color: var(--border); }
+[data-theme-dark] .context-menu > button { color: var(--text); background-color: transparent; }
+[data-theme-dark] .modal button:hover, [data-theme-dark] .context-menu > button:hover, [data-theme-dark] .cf-menu button:hover { background-color: var(--on-bg); }
+[data-theme-dark] .modal button.primary { background: var(--accent); border-color: var(--accent2, var(--accent)); color: #fff; }
+[data-theme-dark] .context-menu > button.checked { background: var(--on-bg); }
+[data-theme-dark] .context-menu > button .menu-icon { color: var(--hi); }
+[data-theme-dark] .overlay { background: rgba(0,0,0,.55); }
+[data-theme-dark] .toast { background: var(--panel); color: var(--hi); border: 1px solid var(--border); }
+[data-theme-dark] .fmt-cats button.active, [data-theme-dark] .fmt-list button.active, [data-theme-dark] .cf-row.active { background: var(--on-bg) !important; color: var(--hi); }
+[data-theme-dark] .fmt-cats button:hover, [data-theme-dark] .fmt-list button:hover, [data-theme-dark] .cf-row:hover { background: var(--hover); }
+[data-theme-dark] .fmt-sample b { color: var(--hi); }
+[data-theme-dark] .format-chip { background: var(--panel); color: var(--text); border-color: var(--border); }
+[data-theme-dark] ::-webkit-scrollbar { width: 12px; height: 12px; background: var(--bg); }
+[data-theme-dark] ::-webkit-scrollbar-thumb { background: var(--scroll, var(--accent)); border-radius: 6px; border: 2px solid var(--bg); }
+
+/* --- «Детская больница»: мятный и небесный, крестики, пластыри --- */
+:root[data-theme="clinic"] {
+  --accent: #2a9d97; --accent-dark: #1d6f6b; --bg: #eef8f7; --panel: #ffffff; --border: #c8e6e3; --text: #20403e; --muted: #5d7f7c;
+  --hover: #e0f3f1; --on-bg: #cdeeea; --status-bg: #dff2ef; --scroll: #8fd3cd;
+  --brand-bg:
+    radial-gradient(circle at 12px 12px, rgba(255,255,255,.35) 0 2px, transparent 2.5px) 0 0 / 28px 28px,
+    linear-gradient(100deg, #46b8b0 0%, #5cc3e0 60%, #8ad0f0 100%);
+}
+[data-theme="clinic"] .titlebar { position: relative; }
+/* Полоска «пластыря»: пастельные цвета детского отделения. */
+[data-theme="clinic"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 3px; pointer-events: none; z-index: 2;
+  background: repeating-linear-gradient(90deg, #ffb3c7 0 40px, #ffe08a 40px 80px, #a8e6cf 80px 120px, #a7c7ff 120px 160px);
+}
+[data-theme="clinic"] .app-mark::before { content: "\271A"; color: #ff6b8b; margin-right: 6px; text-shadow: 0 0 2px #fff; }
+[data-theme="clinic"] .btn { border-radius: 10px; }
+[data-theme="clinic"] .ribbon { border-radius: 14px; border-color: var(--border); box-shadow: 0 2px 6px rgba(42,157,151,.08); }
+[data-theme="clinic"] .statusbar::before { content: "\2764"; color: #ff6b8b; }
+
+/* --- «Транспорт»: асфальт с разметкой, дорожные знаки, светофор --- */
+:root[data-theme="transport"] {
+  --accent: #0b5cad; --accent-dark: #083f78; --bg: #eceff2; --panel: #ffffff; --border: #c9d1d9; --text: #1d2733; --muted: #556270;
+  --hover: #e1e8ef; --on-bg: #d3e3f5; --status-bg: #2b2f33; --status-text: #f5f5f5; --scroll: #8aa2bb;
+  --brand-bg:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #3a3f44, #2b2f33);
+}
+[data-theme="transport"] .titlebar { position: relative; }
+/* Прерывистая разметка посередине дороги. */
+[data-theme="transport"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none; z-index: 2;
+  background: #2b2f33 repeating-linear-gradient(90deg, #f5f5f5 0 26px, transparent 26px 46px) 0 50% / 100% 2px no-repeat;
+}
+[data-theme="transport"] .app-mark { background: #0b5cad; color: #fff; border: 2px solid #fff; border-radius: 4px; padding: 0 5px; }
+/* Подписи групп — как указатели. */
+[data-theme="transport"] .group-name { color: #fff; background: #0b5cad; border-radius: 3px; margin: 0 6px; padding: 1px 4px; }
+[data-theme="transport"] .tab.active { border-bottom-color: #f2b705; }
+/* Светофор в строке состояния. */
+[data-theme="transport"] .statusbar::before {
+  content: ""; width: 24px; height: 8px; border-radius: 4px; left: 6px;
+  background: radial-gradient(circle at 4px 4px, #e53935 0 3px, transparent 3.5px), radial-gradient(circle at 12px 4px, #f2b705 0 3px, transparent 3.5px),
+    radial-gradient(circle at 20px 4px, #43a047 0 3px, transparent 3.5px), #111;
+}
+
+/* --- «Панцири»: зелёные панцири-шестиугольники, цветные повязки, канализация --- */
+:root[data-theme="shell"] {
+  --accent: #3f8f2f; --accent-dark: #25591b; --accent2: #f28c28; --bg: #1c2620; --panel: #24302a; --hover: #35493c; --panel-alt: #2c3a31; --border: #3a4a3e; --text: #e3f0dd; --muted: #a3bb9c;
+  --hi: #b6f07a; --hover: #2f3e33; --on-bg: #34501f; --input-bg: #151d18; --sheet: #f4f8ee; --scroll: #4f9b3a;
+  --brand-bg:
+    radial-gradient(circle at 50% 50%, rgba(0,0,0,.18) 0 9px, transparent 10px) 0 0 / 26px 22px,
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,.08) 0 9px, transparent 10px) 13px 11px / 26px 22px,
+    linear-gradient(180deg, #4e9a3a, #356f27);
+}
+[data-theme="shell"] .titlebar { position: relative; }
+/* Четыре повязки: синяя, красная, оранжевая, фиолетовая. */
+[data-theme="shell"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none; z-index: 2;
+  background: linear-gradient(90deg, #1e6fd9 0 25%, #d7263d 25% 50%, #f28c28 50% 75%, #8e44ad 75% 100%);
+}
+[data-theme="shell"] .app-mark { color: #fff; text-shadow: 0 2px 0 #25591b; letter-spacing: 1px; }
+[data-theme="shell"] .ribbon { background: repeating-linear-gradient(0deg, rgba(255,255,255,.03) 0 2px, transparent 2px 18px), var(--panel); }
+[data-theme="shell"] .statusbar::before { content: "\1F355"; }
+
+/* --- «Учительская»: доска мелом, тетрадь в клетку, красная ручка --- */
+:root[data-theme="teacher"] {
+  --accent: #c62828; --accent-dark: #8e1c1c; --bg: #f4f1e8; --panel: #fffdf6; --border: #d9d2bd; --text: #2b2b2b; --muted: #6d6a5e;
+  --hover: #efe9d6; --on-bg: #f6d7d2; --status-bg: #2f4a3a; --status-text: #f1efe3; --scroll: #b9a98a;
+  --hand: "Segoe Print", "Comic Sans MS", "Comic Neue", cursive;
+  --brand-bg:
+    radial-gradient(ellipse 200px 20px at 30% 40%, rgba(255,255,255,.07), transparent 70%),
+    radial-gradient(ellipse 160px 14px at 70% 70%, rgba(255,255,255,.05), transparent 70%),
+    linear-gradient(180deg, #355b45, #2a4a37);
+}
+[data-theme="teacher"] .titlebar { color: #f1efe3; border-bottom: 4px solid #8b5a2b; }
+[data-theme="teacher"] .app-mark, [data-theme="teacher"] .doc-name { font-family: var(--hand); color: #f7f5ea; text-shadow: 0 0 1px rgba(255,255,255,.6); }
+/* Лента — тетрадный лист в клетку с полями. */
+[data-theme="teacher"] .ribbon {
+  border-color: #d9d2bd;
+  background:
+    linear-gradient(90deg, transparent 22px, rgba(198,40,40,.45) 22px 23px, transparent 23px),
+    repeating-linear-gradient(0deg, rgba(74,124,191,.16) 0 1px, transparent 1px 12px),
+    repeating-linear-gradient(90deg, rgba(74,124,191,.16) 0 1px, transparent 1px 12px),
+    #fffdf6;
+}
+[data-theme="teacher"] .group-name { font-family: var(--hand); color: #8e1c1c; font-size: 11px; }
+[data-theme="teacher"] .tab { font-family: var(--hand); }
+[data-theme="teacher"] .statusbar { font-family: var(--hand); }
+[data-theme="teacher"] .statusbar::before { content: "\270E"; color: #ffd54f; }
+[data-theme="teacher"] .modal h2 { font-family: var(--hand); color: #8e1c1c; }
+
+/* --- «Броня»: красный металл, золотая кромка, голубое свечение реактора, HUD --- */
+:root[data-theme="armor"] {
+  --accent: #b3121f; --accent-dark: #7a0b14; --accent2: #e0b23a; --bg: #12090b; --panel: #1d1012; --hover: #3a1c1f; --panel-alt: #2a1517; --border: #4a2a23; --text: #f3e6d0; --muted: #c9a982;
+  --hi: #6fe8ff; --hover: #2b1517; --on-bg: #4a1018; --input-bg: #0c0607; --sheet: #fbf6ee; --scroll: #b3121f;
+  --brand-bg:
+    linear-gradient(90deg, transparent 0 18%, rgba(224,178,58,.9) 18% 18.4%, transparent 18.4% 81.6%, rgba(224,178,58,.9) 81.6% 82%, transparent 82%),
+    repeating-linear-gradient(115deg, rgba(255,255,255,.06) 0 2px, transparent 2px 9px),
+    linear-gradient(180deg, #c4141f 0%, #8a0d16 100%);
+}
+@keyframes ens-reactor { 0%, 100% { box-shadow: 0 0 6px 2px rgba(111,232,255,.7); } 50% { box-shadow: 0 0 12px 4px rgba(111,232,255,1); } }
+[data-theme="armor"] .titlebar { position: relative; color: #fff2d6; border-bottom: 2px solid var(--accent2); }
+[data-theme="armor"] .app-mark { color: var(--accent2); text-shadow: 0 0 4px rgba(224,178,58,.8); letter-spacing: 2px; }
+/* HUD: тонкие голубые линии на ленте. */
+[data-theme="armor"] .ribbon {
+  border-color: var(--accent2);
+  background:
+    linear-gradient(90deg, rgba(111,232,255,.18) 0 1px, transparent 1px) 0 0 / 60px 100%,
+    linear-gradient(0deg, rgba(111,232,255,.10) 0 1px, transparent 1px) 0 0 / 100% 30px,
+    #1d1012;
+  box-shadow: inset 0 0 22px rgba(111,232,255,.08);
+}
+[data-theme="armor"] .group-name { color: var(--hi); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; }
+[data-theme="armor"] .btn:hover { box-shadow: 0 0 8px rgba(111,232,255,.45); }
+/* Реактор в строке состояния. */
+[data-theme="armor"] .statusbar::before {
+  content: ""; width: 10px; height: 10px; border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 25%, #6fe8ff 45%, #1a6f86 100%); box-shadow: 0 0 6px 2px rgba(111,232,255,.7);
+}
+[data-theme="armor"]:not([data-theme-still]) .statusbar::before { animation: ens-reactor 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { :root:not([data-theme-forced])[data-theme="armor"] .statusbar::before { animation: none; } }
+
+/* --- «Круглые друзья»: пастельные шарики, всё круглое и мягкое --- */
+:root[data-theme="bubbles"] {
+  --accent: #ff7aa8; --accent-dark: #c2457a; --bg: #fff6fb; --panel: #ffffff; --border: #f3d6e6; --text: #3b2f4a; --muted: #8a6f9e;
+  --hover: #ffe9f3; --on-bg: #ffd6e8; --status-bg: #fdeaf4; --scroll: #f7a8cc;
+  --round: "Comic Sans MS", "Comic Neue", "Segoe UI", sans-serif;
+  --brand-bg:
+    radial-gradient(circle at 6% 50%, #ffd36e 0 10px, transparent 11px),
+    radial-gradient(circle at 22% 30%, #8fd3ff 0 7px, transparent 8px),
+    radial-gradient(circle at 41% 70%, #b9f2a1 0 9px, transparent 10px),
+    radial-gradient(circle at 63% 35%, #d9b8ff 0 8px, transparent 9px),
+    radial-gradient(circle at 84% 60%, #ffb38a 0 10px, transparent 11px),
+    linear-gradient(100deg, #ff8fb8, #ffa9c9 50%, #c7a6ff);
+}
+@keyframes ens-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+[data-theme="bubbles"] .app-mark, [data-theme="bubbles"] .tab, [data-theme="bubbles"] .group-name, [data-theme="bubbles"] .modal h2 { font-family: var(--round); }
+[data-theme="bubbles"] .app-mark { background: #fff; color: #ff5c95; border-radius: 999px; padding: 0 8px; }
+[data-theme="bubbles"] .btn { border-radius: 999px; }
+[data-theme="bubbles"] .btn.large { border-radius: 18px; }
+[data-theme="bubbles"]:not([data-theme-still]) .btn:hover svg { animation: ens-bounce .5s ease-in-out infinite; }
+[data-theme="bubbles"] .ribbon { border-radius: 22px; border: 2px solid #f3d6e6; }
+[data-theme="bubbles"] .tab { border-radius: 999px 999px 0 0; }
+[data-theme="bubbles"] .sheet-tab { border-radius: 0 0 12px 12px; }
+[data-theme="bubbles"] .modal { border-radius: 22px; }
+[data-theme="bubbles"] .statusbar::before { content: "\25CF\25CF\25CF"; letter-spacing: 1px;
+  background: linear-gradient(90deg, #ffd36e, #8fd3ff, #b9f2a1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (prefers-reduced-motion: reduce) { :root:not([data-theme-forced])[data-theme="bubbles"] .btn:hover svg { animation: none; } }
+
+/* --- «Тёмная»: простая, для работы --- */
+:root[data-theme="dark"] {
+  --accent: #4d8fd6; --accent-dark: #3a78bb; --bg: #1a1b1e; --panel: #25272b; --hover: #34363c; --panel-alt: #2c2e33; --border: #3a3d43; --text: #dfe2e7; --muted: #959aa3;
+  --hi: #ffffff; --on-bg: #2e4a6e; --input-bg: #17181a; --sheet: #1f2023; --scroll: #4a4e56;
+  --brand-bg: linear-gradient(100deg, #2b2e34, #343841);
+}
+
+/* --- «Финансовая»: строгая, тёмно-синяя с золотой линией --- */
+:root[data-theme="finance"] {
+  --accent: #1f3a68; --accent-dark: #14274a; --bg: #eef1f5; --panel: #ffffff; --border: #c3ccd8; --text: #1b2638; --muted: #586478;
+  --hover: #dfe6f0; --on-bg: #cfdcf0; --status-bg: #e2e8f1; --scroll: #9fb2d0;
+  --brand-bg: linear-gradient(100deg, #14274a 0%, #1f3a68 60%, #2f4f86 100%);
+}
+[data-theme="finance"] .titlebar { position: relative; }
+[data-theme="finance"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; pointer-events: none; z-index: 2; background: #c9a227;
+}
+[data-theme="finance"] .tab.active { border-bottom-color: #c9a227; }
+
+/* --- «Инженерная»: чертёжная синька --- */
+:root[data-theme="blueprint"] {
+  --accent: #5fa8ff; --accent-dark: #3d87e0; --bg: #0b2a52; --panel: #0f3566; --hover: #1a4a86; --panel-alt: #14407a; --border: #2c5b97; --text: #e2eeff; --muted: #9bb9e0;
+  --hi: #ffffff; --on-bg: #245a9e; --input-bg: #0a2447; --sheet: #14407a; --scroll: #3d6fb0;
+  --brand-bg:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.10) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 1px, transparent 1px 14px),
+    linear-gradient(100deg, #0c2f5e, #164a8a);
+}

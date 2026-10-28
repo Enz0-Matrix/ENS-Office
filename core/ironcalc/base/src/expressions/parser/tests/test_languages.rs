@@ -45,8 +45,9 @@ fn simple_language() {
     assert!(matches!(t, Node::BooleanKind(true)));
     assert_eq!(to_rc_format(&t), "TRUE");
 
+    // ENS-Office: English names are understood in every language.
     let t = parser.parse("TRUE()", &cell_reference);
-    assert!(matches!(t, Node::NamedFunctionKind { ref name, args: _, id: _ } if name == "TRUE"));
+    assert!(matches!(t, Node::FunctionKind { kind: Function::True, args: _ }));
 
     let t = parser.parse("VERDADERO()", &cell_reference);
     assert!(matches!(

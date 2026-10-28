@@ -3,6 +3,7 @@
 mod _rels;
 mod conditional_formatting;
 mod doc_props;
+mod drawings;
 mod dxfs_styles;
 mod escape;
 mod shared_strings;
@@ -46,6 +47,37 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         );
         content.push(sheet);
     }
+    if workbook.worksheets.iter().any(|w| !w.comments.is_empty()) {
+        content.push(r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#.to_string());
+    }
+    let mut chart_no = 1;
+    for w in &workbook.worksheets {
+        for _ in &w.ens_charts {
+            content.push(format!(
+                r#"<Override PartName="/xl/charts/chart{chart_no}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>"#
+            ));
+            chart_no += 1;
+        }
+    }
+    for ext in ["png", "jpeg", "gif"] {
+        if workbook.worksheets.iter().any(|w| w.ens_images.iter().any(|i| i.ext == ext)) {
+            content.push(format!(r#"<Default Extension="{ext}" ContentType="image/{ext}"/>"#));
+        }
+    }
+    for (i, w) in workbook.worksheets.iter().enumerate() {
+        if !w.ens_images.is_empty() || !w.ens_charts.is_empty() {
+            content.push(format!(
+                r#"<Override PartName="/xl/drawings/drawing{}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#,
+                i + 1
+            ));
+        }
+        if !w.comments.is_empty() {
+            content.push(format!(
+                r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
+                i + 1
+            ));
+        }
+    }
     content.push(
         r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#.to_string(),
     );
@@ -55,8 +87,13 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         r#"<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>"#.to_string(),
         r#"<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>"#.to_string(),
         r#"<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>"#.to_string(),
-        r#"</Types>"#.to_string(),
     ]);
+    if !workbook.ens_change_log.is_empty() {
+        content.push(
+            r#"<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>"#.to_string(),
+        );
+    }
+    content.push(r#"</Types>"#.to_string());
     format!("{XML_DECLARATION}\n{}", content.join(""))
 }
 
@@ -110,6 +147,34 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     let metadata_xml = include_str!("metadata.xml");
     zip.write_all(metadata_xml.as_bytes())?;
 
+    // ENS-Office: the change log as a custom XML part (Excel keeps it when it saves the file).
+    if !workbook.ens_change_log.is_empty() {
+        zip.add_directory("customXml", options)?;
+        zip.start_file("customXml/item1.xml", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<ensChangeLog xmlns=\"urn:ens-office:change-log\">{}</ensChangeLog>",
+                escape::escape_xml(&workbook.ens_change_log)
+            )
+            .as_bytes(),
+        )?;
+        zip.start_file("customXml/itemProps1.xml", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<ds:datastoreItem ds:itemID=\"{{6E1F3C2A-5B7D-4E8A-9C0B-1D2E3F4A5B6C}}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs/></ds:datastoreItem>"
+            )
+            .as_bytes(),
+        )?;
+        zip.add_directory("customXml/_rels", options)?;
+        zip.start_file("customXml/_rels/item1.xml.rels", options)?;
+        zip.write_all(
+            format!(
+                "{XML_DECLARATION}\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps\" Target=\"itemProps1.xml\"/></Relationships>"
+            )
+            .as_bytes(),
+        )?;
+    }
+
     zip.add_directory("xl/theme", options)?;
     zip.start_file("xl/theme/theme1.xml", options)?;
     zip.write_all(theme::get_theme_xml(&workbook.theme).as_bytes())?;
@@ -122,7 +187,9 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     // sheet rels parts (one per sheet with external hyperlinks)
     let mut has_worksheet_rels = false;
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
-        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet) {
+        let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
+        let drawing_id = (!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty()).then_some(sheet_index + 1);
+        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id, drawing_id) {
             if !has_worksheet_rels {
                 zip.add_directory("xl/worksheets/_rels", options)?;
                 has_worksheet_rels = true;
@@ -133,6 +200,64 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             )?;
             zip.write_all(rels_xml.as_bytes())?;
         }
+    }
+    // ENS-Office: comments (notes) and the VML boxes Excel shows them in.
+    let mut has_drawings_dir = false;
+    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+        if worksheet.comments.is_empty() {
+            continue;
+        }
+        let id = sheet_index + 1;
+        zip.start_file(format!("xl/comments{id}.xml"), options)?;
+        zip.write_all(worksheets::get_comments_xml(worksheet).as_bytes())?;
+        if !has_drawings_dir {
+            zip.add_directory("xl/drawings", options)?;
+            has_drawings_dir = true;
+        }
+        zip.start_file(format!("xl/drawings/vmlDrawing{id}.vml"), options)?;
+        zip.write_all(worksheets::get_comments_vml(worksheet).as_bytes())?;
+    }
+    // ENS-Office: pictures.
+    let mut media_count = 1;
+    let mut chart_count = 1;
+    let mut has_charts_dir = false;
+    let mut has_media_dir = false;
+    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+        let images = &worksheet.ens_images;
+        let charts = &worksheet.ens_charts;
+        if images.is_empty() && charts.is_empty() {
+            continue;
+        }
+        let id = sheet_index + 1;
+        if !has_drawings_dir {
+            zip.add_directory("xl/drawings", options)?;
+            has_drawings_dir = true;
+        }
+        if !has_media_dir {
+            zip.add_directory("xl/media", options)?;
+            zip.add_directory("xl/drawings/_rels", options)?;
+            has_media_dir = true;
+        }
+        zip.start_file(format!("xl/drawings/drawing{id}.xml"), options)?;
+        zip.write_all(drawings::get_drawing_xml(images, charts).as_bytes())?;
+        zip.start_file(format!("xl/drawings/_rels/drawing{id}.xml.rels"), options)?;
+        zip.write_all(drawings::get_drawing_rels(images, media_count, charts, chart_count).as_bytes())?;
+        for (i, img) in images.iter().enumerate() {
+            zip.start_file(format!("xl/media/{}", drawings::media_name(media_count, i, img)), options)?;
+            zip.write_all(&img.data)?;
+        }
+        if !charts.is_empty() {
+            if !has_charts_dir {
+                zip.add_directory("xl/charts", options)?;
+                has_charts_dir = true;
+            }
+            for (j, ch) in charts.iter().enumerate() {
+                zip.start_file(format!("xl/charts/chart{}.xml", chart_count + j), options)?;
+                zip.write_all(drawings::get_chart_xml(model, sheet_index as u32, ch).as_bytes())?;
+            }
+            chart_count += charts.len();
+        }
+        media_count += images.len();
     }
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let id = sheet_index + 1;
@@ -148,8 +273,29 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         let max_row = dimension.max_row;
         let sheet_dimension_str = &format!("{column_min_str}{min_row}:{column_max_str}{max_row}");
         let is_sheet_selected = selected_sheet as usize == sheet_index;
+        // ENS-Office: the autofilter range lives in the sheet's _xlnm._FilterDatabase name.
+        let auto_filter = workbook
+            .defined_names
+            .iter()
+            .find(|d| d.sheet_id == Some(worksheet.sheet_id) && d.name.eq_ignore_ascii_case(ironcalc_base::FILTER_DATABASE))
+            .and_then(|d| ironcalc_base::parse_filter_range(&d.formula))
+            .map(|(r1, c1, r2, c2)| {
+                let range = format!(
+                    "{}{r1}:{}{r2}",
+                    number_to_column(c1).unwrap_or_default(),
+                    number_to_column(c2).unwrap_or_default()
+                );
+                let columns = filter_columns_xml(&worksheet.ens_filter_criteria);
+                if columns.is_empty() {
+                    format!("<autoFilter ref=\"{range}\"/>")
+                } else {
+                    format!("<autoFilter ref=\"{range}\">{columns}</autoFilter>")
+                }
+            })
+            .unwrap_or_default();
         zip.write_all(
             worksheets::get_worksheet_xml(
+                &auto_filter,
                 worksheet,
                 &model.parsed_formulas[sheet_index],
                 sheet_dimension_str,
@@ -174,4 +320,35 @@ pub fn save_to_icalc(model: &Model, file_name: &str) -> Result<(), XlsxError> {
     file.write_all(&s)?;
 
     Ok(())
+}
+
+
+/// ENS-Office: the first filter's choices as Excel's `<filterColumn>` elements.
+fn filter_columns_xml(criteria: &str) -> String {
+    let Ok(serde_json::Value::Array(filters)) = serde_json::from_str::<serde_json::Value>(criteria) else {
+        return String::new();
+    };
+    let Some(serde_json::Value::Array(columns)) = filters.first() else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for c in columns {
+        let (Some(col), Some(serde_json::Value::Array(values))) = (c.get(0).and_then(|v| v.as_i64()), c.get(1)) else {
+            continue;
+        };
+        // Отбор по цвету («fill:…», «font:…») Excel в таком виде не знает: не пишем.
+        if values.iter().filter_map(|v| v.as_str()).any(|v| v.starts_with("fill:") || v.starts_with("font:")) {
+            continue;
+        }
+        let blank = values.iter().any(|v| v.as_str() == Some("(пустые)"));
+        let items: String = values
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|v| *v != "(пустые)")
+            .map(|v| format!("<filter val=\"{}\"/>", escape::escape_xml(v)))
+            .collect();
+        let blank_attr = if blank { " blank=\"1\"" } else { "" };
+        out.push_str(&format!("<filterColumn colId=\"{col}\"><filters{blank_attr}>{items}</filters></filterColumn>"));
+    }
+    out
 }

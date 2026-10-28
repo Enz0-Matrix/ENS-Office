@@ -235,6 +235,12 @@ fn load_columns(ws: &XmlNode, default_width: f64) -> Result<Vec<Col>, XlsxError>
             };
             let custom_width = get_bool_false(col, "customWidth");
             let hidden = get_bool_false(col, "hidden");
+            let outline_level = col
+                .attribute("outlineLevel")
+                .and_then(|v| v.parse::<u8>().ok())
+                .unwrap_or(0)
+                .min(7);
+            let collapsed = get_bool_false(col, "collapsed");
             let style = col
                 .attribute("style")
                 .map(|s| s.parse::<i32>().unwrap_or(0));
@@ -245,6 +251,8 @@ fn load_columns(ws: &XmlNode, default_width: f64) -> Result<Vec<Col>, XlsxError>
                 custom_width,
                 style,
                 hidden,
+                outline_level,
+                collapsed,
             })
         }
     }
@@ -347,17 +355,27 @@ fn load_comments<R: Read + std::io::Seek>(
         .children()
         .filter(|n| n.has_tag_name("commentList"))
         .collect::<Vec<&XmlNode>>();
+    let authors: Vec<String> = ws
+        .children()
+        .filter(|n| n.has_tag_name("authors"))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("author"))
+        .map(|n| n.text().unwrap_or("").to_string())
+        .collect();
     if comment_list.len() == 1 {
         for comment in comment_list[0].children() {
             let text = comment
                 .descendants()
                 .filter(|n| n.has_tag_name("t"))
-                .map(|n| n.text().unwrap().to_string())
+                .map(|n| n.text().unwrap_or("").to_string())
                 .collect::<Vec<String>>()
                 .join("");
             let cell_ref = get_attribute(comment, "ref")?.to_string();
-            // TODO: Read author_name from the list of authors
-            let author_name = "".to_string();
+            let author_name = comment
+                .attribute("authorId")
+                .and_then(|id| id.parse::<usize>().ok())
+                .and_then(|id| authors.get(id).cloned())
+                .unwrap_or_default();
             comments.push(Comment {
                 text,
                 author_name,
@@ -1043,6 +1061,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         },
     );
 
+    let protection = load_protection(ws);
     Ok((
         Worksheet {
             dimension,
@@ -1062,9 +1081,142 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             views,
             conditional_formatting,
             links,
+            ens_filter_criteria: load_filter_criteria(ws),
+            ens_summary: load_outline_summary(ws),
+            ens_page_setup: load_page_setup(ws),
+            ens_images: Vec::new(),
+            ens_charts: Vec::new(),
+            ens_protected: protection.0,
+            ens_protect_attrs: protection.1,
+            ens_row_breaks: load_breaks(ws, "rowBreaks"),
+            ens_col_breaks: load_breaks(ws, "colBreaks"),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: `<sheetProtection>`: whether the sheet is protected and the remaining attributes (password hash).
+fn load_protection(ws: &XmlNode) -> (bool, String) {
+    let Some(n) = ws.children().find(|n| n.has_tag_name("sheetProtection")) else { return (false, String::new()) };
+    let on = n.attribute("sheet").is_some_and(|v| v == "1" || v == "true");
+    let attrs = [
+        "password", "algorithmName", "hashValue", "saltValue", "spinCount", "formatCells", "formatColumns", "formatRows",
+        "insertColumns", "insertRows", "insertHyperlinks", "deleteColumns", "deleteRows", "selectLockedCells", "sort",
+        "autoFilter", "pivotTables", "selectUnlockedCells",
+    ]
+    .iter()
+    .filter_map(|k| n.attribute(k).map(|v| format!(" {k}=\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;"))))
+    .collect::<String>();
+    (on, attrs)
+}
+
+/// ENS-Office: manual page breaks (`<rowBreaks>` / `<colBreaks>`): the numbers of the rows / columns
+/// after which a page ends.
+fn load_breaks(ws: &XmlNode, tag: &str) -> Vec<i32> {
+    let mut breaks: Vec<i32> = ws
+        .children()
+        .filter(|n| n.has_tag_name(tag))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("brk"))
+        .filter_map(|n| n.attribute("id").and_then(|v| v.parse::<i32>().ok()))
+        .filter(|id| *id > 0)
+        .collect();
+    breaks.sort_unstable();
+    breaks.dedup();
+    breaks
+}
+
+/// ENS-Office: `<sheetPr><outlinePr summaryBelow summaryRight>`; Excel's default is below / right.
+fn load_outline_summary(ws: &XmlNode) -> (bool, bool) {
+    let pr = ws
+        .children()
+        .find(|n| n.has_tag_name("sheetPr"))
+        .and_then(|p| p.children().find(|n| n.has_tag_name("outlinePr")));
+    let flag = |a: &str| pr.and_then(|n| n.attribute(a)).is_none_or(|v| matches!(v, "1" | "true"));
+    (flag("summaryBelow"), flag("summaryRight"))
+}
+
+/// ENS-Office: Excel's page setup (`<pageSetup>`, `<pageMargins>`, `<printOptions>`,
+/// `<sheetPr><pageSetUpPr fitToPage>`) as the JSON kept in `Worksheet::ens_page_setup`.
+fn load_page_setup(ws: &XmlNode) -> String {
+    let child = |name: &str| ws.children().find(|n| n.has_tag_name(name));
+    let setup = child("pageSetup");
+    let margins = child("pageMargins");
+    if setup.is_none() && margins.is_none() && child("headerFooter").is_none() {
+        return String::new();
+    }
+    let attr = |n: Option<&XmlNode>, a: &str| n.and_then(|n| n.attribute(a).map(|v| v.to_string()));
+    let flag = |n: Option<&XmlNode>, a: &str| matches!(attr(n, a).as_deref(), Some("1" | "true"));
+    let fit_to_page = child("sheetPr")
+        .and_then(|p| p.children().find(|n| n.has_tag_name("pageSetUpPr")))
+        .is_some_and(|n| matches!(n.attribute("fitToPage"), Some("1" | "true")));
+    let fit = if !fit_to_page {
+        "none"
+    } else if attr(setup, "fitToHeight").as_deref() == Some("0") {
+        "width"
+    } else {
+        "page"
+    };
+    let paper = match attr(setup, "paperSize").as_deref() {
+        Some("1") => "Letter",
+        Some("8") => "A3",
+        Some("11") => "A5",
+        _ => "A4",
+    };
+    let mm = |a: &str, default: f64| {
+        let inches = attr(margins, a).and_then(|v| v.parse::<f64>().ok()).unwrap_or(default);
+        (inches * 25.4 * 10.0).round() / 10.0
+    };
+    let options = child("printOptions");
+    let hf = child("headerFooter");
+    let hf_text = |name: &str| {
+        hf.and_then(|h| h.children().find(|n| n.has_tag_name(name)))
+            .and_then(|n| n.text())
+            .unwrap_or_default()
+            .to_string()
+    };
+    serde_json::json!({
+        "landscape": attr(setup, "orientation").as_deref() == Some("landscape"),
+        "paper": paper,
+        "fit": fit,
+        "marginMm": [mm("top", 0.75), mm("right", 0.7), mm("bottom", 0.75), mm("left", 0.7)],
+        "gridlines": flag(options, "gridLines"),
+        "centerH": flag(options, "horizontalCentered"),
+        "header": hf_text("oddHeader"),
+        "footer": hf_text("oddFooter"),
+    })
+    .to_string()
+}
+
+/// ENS-Office: Excel's autofilter choices (`<filterColumn><filters><filter val=…/>`)
+/// as the JSON kept in `Worksheet::ens_filter_criteria` (first filter of the sheet).
+fn load_filter_criteria(ws: &XmlNode) -> String {
+    let Some(af) = ws.children().find(|n| n.has_tag_name("autoFilter")) else {
+        return String::new();
+    };
+    let mut columns = Vec::new();
+    for fc in af.children().filter(|n| n.has_tag_name("filterColumn")) {
+        let Some(col) = fc.attribute("colId").and_then(|v| v.parse::<i64>().ok()) else {
+            continue;
+        };
+        let Some(filters) = fc.children().find(|n| n.has_tag_name("filters")) else {
+            continue; // custom/top10/dynamic filters are not supported yet
+        };
+        let mut values: Vec<serde_json::Value> = filters
+            .children()
+            .filter(|n| n.has_tag_name("filter"))
+            .filter_map(|n| n.attribute("val"))
+            .map(|v| serde_json::Value::String(v.to_lowercase()))
+            .collect();
+        if filters.attribute("blank") == Some("1") || filters.attribute("blank") == Some("true") {
+            values.push(serde_json::Value::String("(пустые)".to_string()));
+        }
+        columns.push(serde_json::json!([col, values]));
+    }
+    if columns.is_empty() {
+        return String::new();
+    }
+    serde_json::json!([columns]).to_string()
 }
 
 pub(super) fn load_sheets<R: Read + std::io::Seek>(
@@ -1135,6 +1287,8 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
                 theme,
                 dxfs,
             )?;
+            let mut s = s;
+            (s.ens_images, s.ens_charts) = super::drawings::load_images(archive, &path, sheet_name);
             if is_selected {
                 selected_sheet = sheet_index;
             }

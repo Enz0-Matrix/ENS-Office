@@ -241,7 +241,8 @@ fn basic_alignment() {
         Some(Alignment {
             horizontal: HorizontalAlignment::Center,
             vertical: VerticalAlignment::Bottom,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         })
     );
 
@@ -254,7 +255,8 @@ fn basic_alignment() {
         Some(Alignment {
             horizontal: HorizontalAlignment::CenterContinuous,
             vertical: VerticalAlignment::Bottom,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         })
     );
 
@@ -275,7 +277,8 @@ fn basic_alignment() {
         Some(Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Distributed,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         })
     );
 
@@ -288,7 +291,8 @@ fn basic_alignment() {
         Some(Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Justify,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         })
     );
 
@@ -304,7 +308,8 @@ fn basic_alignment() {
         Some(Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Justify,
-            wrap_text: false
+            wrap_text: false,
+            text_rotation: 0
         })
     );
 }
@@ -380,7 +385,8 @@ fn basic_wrap_text() {
         Some(Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Bottom,
-            wrap_text: true
+            wrap_text: true,
+            text_rotation: 0
         })
     );
     model.undo().unwrap();
@@ -395,7 +401,8 @@ fn basic_wrap_text() {
         Some(Alignment {
             horizontal: HorizontalAlignment::General,
             vertical: VerticalAlignment::Bottom,
-            wrap_text: true
+            wrap_text: true,
+            text_rotation: 0
         })
     );
 

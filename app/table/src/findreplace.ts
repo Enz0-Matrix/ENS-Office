@@ -1,0 +1,292 @@
+// «Найти и заменить» (Ctrl+F / Ctrl+H), как в Excel: окно не мешает работать
+// с листом, «Найти все» показывает список, по щелчку — переход к ячейке.
+
+import { columnName, type Model } from './engine';
+
+export interface FindHost {
+  model(): Model;
+  sheet(): number;
+  active(): { row: number; column: number };
+  goTo(sheet: number, row: number, column: number): void;
+  changed(): void;
+  toast(text: string): void;
+}
+
+interface Found { sheet: number; row: number; column: number }
+
+const panel = document.createElement('div');
+panel.className = 'find-panel';
+panel.hidden = true;
+panel.innerHTML = `
+  <div class="find-head" data-drag>
+    <button class="find-tab" data-tab="find">Найти</button>
+    <button class="find-tab" data-tab="replace">Заменить</button>
+    <button class="find-close" title="Закрыть (Esc)">✕</button>
+  </div>
+  <label class="find-row">Найти: <input data-f="text" autocomplete="off" spellcheck="false"></label>
+  <label class="find-row find-repl">Заменить на: <input data-f="with" autocomplete="off" spellcheck="false"></label>
+  <div class="find-opts find-more">
+    <label><input type="checkbox" data-f="case"> Учитывать регистр</label>
+    <label><input type="checkbox" data-f="whole"> Ячейка целиком</label>
+    <label>Искать: <select data-f="where"><option value="sheet">на листе</option><option value="book">в книге</option></select></label>
+    <label class="find-only">Область: <select data-f="look"><option value="values">значения</option><option value="formulas">формулы</option></select></label>
+    <div class="find-fmt"><span class="fmt-label">Формат поиска:</span><span class="fmt-sample" data-sample="find"></span>
+      <span class="fmt-btns"><button data-act="editFind">Формат…</button><button data-act="pickFind" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearFind">Сброс</button></span></div>
+    <div class="find-fmt find-repl"><span class="fmt-label">Формат замены:</span><span class="fmt-sample" data-sample="repl"></span>
+      <span class="fmt-btns"><button data-act="editRepl">Формат…</button><button data-act="pickRepl" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearRepl">Сброс</button></span></div>
+    <div class="fmt-editor" hidden>
+      <label><input type="checkbox" data-e="b"> <b>Ж</b></label><label><input type="checkbox" data-e="i"> <i>К</i></label>
+      <label><input type="checkbox" data-e="u"> <u>Ч</u></label><label><input type="checkbox" data-e="strike"> <s>З</s></label>
+      <label>Шрифт <input type="color" data-e="color"> <input type="checkbox" data-e="noColor" title="Цвет шрифта не задан"> авто</label>
+      <label>Заливка <input type="color" data-e="fill"> <input type="checkbox" data-e="noFill" title="Без заливки"> нет</label>
+      <label>Число <select data-e="numFmt"><option value="General">Общий</option><option value="0.00">Числовой 0,00</option>
+        <option value="#,##0.00">С разделителем</option><option value="0%">Процентный</option><option value="dd.mm.yyyy">Дата</option><option value="@">Текстовый</option></select></label>
+      <button data-act="applyFmt" class="primary">ОК</button>
+    </div>
+  </div>
+  <div class="find-buttons">
+    <button data-act="options" class="find-options">Параметры &gt;&gt;</button>
+    <button data-act="replaceAll" class="find-repl">Заменить все</button>
+    <button data-act="replace" class="find-repl">Заменить</button>
+    <button data-act="findAll">Найти все</button>
+    <button data-act="next" class="primary">Найти далее</button>
+  </div>
+  <div class="find-status"></div>
+  <div class="find-list"></div>`;
+document.body.append(panel);
+
+const $ = <T extends HTMLElement>(sel: string) => panel.querySelector<T>(sel)!;
+const text = $<HTMLInputElement>('[data-f="text"]');
+const withInput = $<HTMLInputElement>('[data-f="with"]');
+const matchCase = $<HTMLInputElement>('[data-f="case"]');
+const whole = $<HTMLInputElement>('[data-f="whole"]');
+const where = $<HTMLSelectElement>('[data-f="where"]');
+const look = $<HTMLSelectElement>('[data-f="look"]');
+const status = $('.find-status');
+const list = $('.find-list');
+
+/** Оформление для поиска и замены: берётся из ячейки, учитывается только заданное. */
+interface Fmt { b: boolean; i: boolean; u: boolean; strike: boolean; color?: string; fill?: string; numFmt: string }
+let findFmt: Fmt | null = null;
+let replFmt: Fmt | null = null;
+
+const colorOf = (c: unknown): string | undefined => (typeof c === 'string' && c ? c.toUpperCase() : undefined);
+
+function fmtOf(sheet: number, row: number, column: number): Fmt {
+  const st = host.model().getCellStyle(sheet, row, column).style;
+  return {
+    b: !!st.font.b, i: !!st.font.i, u: !!st.font.u, strike: !!st.font.strike,
+    color: colorOf(st.font.color), fill: colorOf(st.fill?.color), numFmt: st.num_fmt,
+  };
+}
+
+function describe(f: Fmt | null): string {
+  if (!f) return 'не задан';
+  const parts = [f.b && 'полужирный', f.i && 'курсив', f.u && 'подчёркнутый', f.strike && 'зачёркнутый',
+    f.color && `шрифт ${f.color}`, f.fill && `заливка ${f.fill}`, f.numFmt !== 'General' && `формат ${f.numFmt}`].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'обычный';
+}
+
+const sameFmt = (a: Fmt, b: Fmt) => a.b === b.b && a.i === b.i && a.u === b.u && a.strike === b.strike
+  && a.color === b.color && a.fill === b.fill && a.numFmt === b.numFmt;
+
+/** Образец оформления — маленькая ячейка, как на листе. */
+function sampleHtml(f: Fmt | null): string {
+  if (!f) return '<span class="fmt-none">не задан</span>';
+  const css = [
+    f.b && 'font-weight:700', f.i && 'font-style:italic',
+    (f.u || f.strike) && `text-decoration:${[f.u && 'underline', f.strike && 'line-through'].filter(Boolean).join(' ')}`,
+    f.color && `color:${f.color}`, f.fill && `background:${f.fill}`,
+  ].filter(Boolean).join(';');
+  const num = f.numFmt.toLowerCase() === 'general' ? '' : `<small>${esc(f.numFmt)}</small>`;
+  return `<span class="fmt-cell" style="${css}">АаБб 123</span>${num}`;
+}
+
+function showFormats(): void {
+  panel.querySelector('[data-sample="find"]')!.innerHTML = sampleHtml(findFmt);
+  panel.querySelector('[data-sample="repl"]')!.innerHTML = sampleHtml(replFmt);
+}
+
+/** Придать найденной ячейке оформление замены. */
+function applyFmt(f: Fmt, sheet: number, row: number, column: number): void {
+  const m = host.model();
+  const area = { sheet, row, column, width: 1, height: 1 };
+  m.updateRangeStyle(area, 'font.b', String(f.b));
+  m.updateRangeStyle(area, 'font.i', String(f.i));
+  m.updateRangeStyle(area, 'font.u', String(f.u));
+  m.updateRangeStyle(area, 'font.strike', String(f.strike));
+  m.updateRangeStyle(area, 'font.color', f.color ?? '');
+  m.updateRangeStyle(area, 'fill.fg_color', f.fill ?? '');
+  m.updateRangeStyle(area, 'num_fmt', f.numFmt);
+}
+
+let host: FindHost;
+let mode: 'find' | 'replace' = 'find';
+
+export function initFind(h: FindHost): void {
+  host = h;
+}
+
+export function showFind(m: 'find' | 'replace', initial = ''): void {
+  mode = m;
+  panel.classList.toggle('replace', m === 'replace');
+  panel.querySelectorAll<HTMLButtonElement>('.find-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === m));
+  panel.hidden = false;
+  if (initial) text.value = initial;
+  text.focus();
+  text.select();
+}
+
+export function hideFind(): void {
+  panel.hidden = true;
+}
+
+function search(): Found[] {
+  const inFormulas = mode === 'replace' || look.value === 'formulas';
+  try {
+    const all: Found[] = host.model().findAll(text.value, matchCase.checked, whole.checked, inFormulas, where.value === 'sheet' ? host.sheet() : -1);
+    return findFmt ? all.filter((f) => sameFmt(fmtOf(f.sheet, f.row, f.column), findFmt!)) : all;
+  } catch (e) {
+    host.toast(String(e));
+    return [];
+  }
+}
+
+/** Следующая найденная ячейка после активной (по строкам, затем по листам). */
+function findNext(): Found | undefined {
+  const all = search();
+  if (!all.length) {
+    status.textContent = `Не удалось найти «${text.value}».`;
+    return undefined;
+  }
+  const s = host.sheet(), a = host.active();
+  const after = (f: Found) => f.sheet > s || (f.sheet === s && (f.row > a.row || (f.row === a.row && f.column > a.column)));
+  const next = all.find(after) ?? all[0];
+  status.textContent = `Найдено ячеек: ${all.length}`;
+  host.goTo(next.sheet, next.row, next.column);
+  return next;
+}
+
+function sheetName(i: number): string {
+  return host.model().getWorksheetsProperties()[i]?.name ?? '';
+}
+
+function showAll(): void {
+  const all = search();
+  status.textContent = all.length ? `Найдено ячеек: ${all.length}` : `Не удалось найти «${text.value}».`;
+  list.replaceChildren();
+  for (const f of all.slice(0, 2000)) {
+    const b = document.createElement('button');
+    const value = host.model().getFormattedCellValue(f.sheet, f.row, f.column);
+    b.innerHTML = `<span>${esc(sheetName(f.sheet))}</span><span>${columnName(f.column)}${f.row}</span><span>${esc(value)}</span>`;
+    b.addEventListener('click', () => host.goTo(f.sheet, f.row, f.column));
+    list.append(b);
+  }
+}
+
+function replaceOne(): void {
+  const s = host.sheet(), a = host.active();
+  const m = host.model();
+  // Если активная ячейка подходит — заменяем в ней, затем ищем следующую.
+  const hit = search().find((f) => f.sheet === s && f.row === a.row && f.column === a.column);
+  if (hit) {
+    m.replaceAll(text.value, withInput.value, matchCase.checked, whole.checked, s, a.row, a.column);
+    if (replFmt) applyFmt(replFmt, s, a.row, a.column);
+    host.changed();
+  }
+  findNext();
+}
+
+function replaceAll(): void {
+  // С форматом поиска заменяем только подходящие ячейки; формат замены применяется к ним.
+  if (findFmt || replFmt) {
+    const hits = search();
+    for (const h of hits) {
+      host.model().replaceAll(text.value, withInput.value, matchCase.checked, whole.checked, h.sheet, h.row, h.column);
+      if (replFmt) applyFmt(replFmt, h.sheet, h.row, h.column);
+    }
+    host.changed();
+    status.textContent = hits.length ? `Замен: ${hits.length}. Отменить — Ctrl+Z.` : `Не удалось найти «${text.value}».`;
+    list.replaceChildren();
+    return;
+  }
+  const n = host.model().replaceAll(text.value, withInput.value, matchCase.checked, whole.checked,
+    where.value === 'sheet' ? host.sheet() : -1, 0, 0);
+  host.changed();
+  status.textContent = n ? `Замен: ${n}. Отменить — Ctrl+Z.` : `Не удалось найти «${text.value}».`;
+  list.replaceChildren();
+}
+
+const fmtEditor = $('.fmt-editor');
+let editing: 'find' | 'repl' = 'find';
+const field = (k: string) => fmtEditor.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-e="${k}"]`)!;
+
+/** Выбрать оформление прямо в окне, как «Формат…» в Excel. */
+function openFmtEditor(which: 'find' | 'repl'): void {
+  editing = which;
+  const f = (which === 'find' ? findFmt : replFmt) ?? { b: false, i: false, u: false, strike: false, numFmt: 'General' } as Fmt;
+  field('b').checked = f.b; field('i').checked = f.i; field('u').checked = f.u; field('strike').checked = f.strike;
+  field('color').value = f.color?.toLowerCase() ?? '#000000'; field('noColor').checked = !f.color;
+  field('fill').value = f.fill?.toLowerCase() ?? '#ffff00'; field('noFill').checked = !f.fill;
+  field('numFmt').value = [...field('numFmt').options].some((o) => o.value === f.numFmt) ? f.numFmt : 'General';
+  fmtEditor.hidden = false;
+}
+
+function applyFmtEditor(): void {
+  const f: Fmt = {
+    b: field('b').checked, i: field('i').checked, u: field('u').checked, strike: field('strike').checked,
+    color: field('noColor').checked ? undefined : field('color').value.toUpperCase(),
+    fill: field('noFill').checked ? undefined : field('fill').value.toUpperCase(),
+    numFmt: field('numFmt').value,
+  };
+  if (editing === 'find') findFmt = f; else replFmt = f;
+  fmtEditor.hidden = true;
+  showFormats();
+}
+
+panel.addEventListener('click', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest('.find-close')) { hideFind(); return; }
+  const tab = t.closest<HTMLElement>('.find-tab')?.dataset.tab;
+  if (tab) { showFind(tab as 'find' | 'replace'); return; }
+  const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
+  if (act === 'options') { panel.classList.toggle('more'); return; }
+  const a = host.active(), s = host.sheet();
+  if (act === 'pickFind') { findFmt = fmtOf(s, a.row, a.column); showFormats(); return; }
+  if (act === 'pickRepl') { replFmt = fmtOf(s, a.row, a.column); showFormats(); return; }
+  if (act === 'editFind' || act === 'editRepl') { openFmtEditor(act === 'editFind' ? 'find' : 'repl'); return; }
+  if (act === 'applyFmt') { applyFmtEditor(); return; }
+  if (act === 'clearFind') { findFmt = null; showFormats(); return; }
+  if (act === 'clearRepl') { replFmt = null; showFormats(); return; }
+  if (!act || !text.value) return;
+  if (act === 'next') findNext();
+  else if (act === 'findAll') showAll();
+  else if (act === 'replace') replaceOne();
+  else if (act === 'replaceAll') replaceAll();
+});
+
+panel.addEventListener('keydown', (e) => {
+  e.stopPropagation(); // клавиши окна не уходят в таблицу
+  if (e.key === 'Escape') { e.preventDefault(); hideFind(); }
+  if (e.key === 'Enter' && text.value) { e.preventDefault(); findNext(); }
+});
+
+// Окно можно перетаскивать за заголовок.
+const head = $('.find-head');
+head.addEventListener('pointerdown', (e) => {
+  if ((e.target as HTMLElement).closest('button')) return;
+  const r = panel.getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  const move = (ev: PointerEvent) => {
+    panel.style.left = `${Math.max(0, ev.clientX - dx)}px`;
+    panel.style.top = `${Math.max(0, ev.clientY - dy)}px`;
+    panel.style.right = 'auto';
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+showFormats();

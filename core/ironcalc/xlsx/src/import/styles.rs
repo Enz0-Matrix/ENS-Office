@@ -2,7 +2,7 @@ use std::{collections::HashMap, io::Read};
 
 use ironcalc_base::types::{
     Alignment, Border, BorderItem, BorderStyle, CellStyleXfs, CellStyles, CellXfs, Color, Dxf,
-    DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Styles, Theme, VerticalAlignment,
+    DxfFont, Fill, Font, FontScheme, HorizontalAlignment, NumFmt, Protection, Styles, Theme, VerticalAlignment,
 };
 use std::io::BufReader;
 
@@ -16,6 +16,20 @@ use super::util::{get_attribute, get_bool, get_bool_false, get_color_indexed, ge
 /// styleSheet root as `#RRGGBB` strings positioned by index. Returns `None` when the file
 /// supplies no override (the common case), so callers keep the legacy default indexed palette.
 /// A malformed entry becomes an empty string, which the colour resolver treats as "fall back".
+
+/// ENS-Office: a boolean font property (`<b/>`, `<b val="1"/>`, `<b val="0"/>`,
+/// `<u val="none"/>`). ECMA-376: no `val` means on.
+fn flag_on(val: Option<&str>) -> bool {
+    !matches!(val, Some("0" | "false" | "none"))
+}
+
+/// ENS-Office: font size, also written as "8.000000" or "10.5".
+fn font_size(val: Option<&str>) -> i32 {
+    val.and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map_or(11, |v| v.round() as i32)
+}
+
 fn parse_indexed_colors(style_sheet: &XmlNode) -> Option<Vec<String>> {
     let colors = style_sheet.children().find(|n| n.has_tag_name("colors"))?;
     let indexed = colors
@@ -138,29 +152,36 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
         let mut color: Color = Color::None;
         let mut family = 2;
         let mut scheme = FontScheme::default();
+        let mut vert_align = ironcalc_base::types::VertAlign::default();
         for feature in font.children() {
             match feature.tag_name() {
                 "sz" => {
-                    sz = feature
-                        .attribute("val")
-                        .unwrap_or("11")
-                        .parse::<i32>()
-                        .unwrap_or(11);
+                    // ENS-Office: Р7/LibreOffice write "8.000000"
+                    sz = font_size(feature.attribute("val"));
                 }
                 "color" => {
                     color = get_color_indexed(feature, theme, indexed)?;
                 }
+                // ENS-Office: <b val="0"/>, <strike val="0"/>, <u val="none"/> mean OFF
+                // (Р7 and LibreOffice write them for every font).
                 "u" => {
-                    u = true;
+                    u = flag_on(feature.attribute("val"));
                 }
                 "b" => {
-                    b = true;
+                    b = flag_on(feature.attribute("val"));
                 }
                 "i" => {
-                    i = true;
+                    i = flag_on(feature.attribute("val"));
                 }
                 "strike" => {
-                    strike = true;
+                    strike = flag_on(feature.attribute("val"));
+                }
+                "vertAlign" => {
+                    vert_align = match feature.attribute("val") {
+                        Some("superscript") => ironcalc_base::types::VertAlign::Superscript,
+                        Some("subscript") => ironcalc_base::types::VertAlign::Subscript,
+                        _ => ironcalc_base::types::VertAlign::Baseline,
+                    };
                 }
                 // ECMA-376 §18.8.29 (`name`): the `val` attribute is the font's typeface.
                 "name" => {
@@ -199,6 +220,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             name,
             family,
             scheme,
+            vert_align,
         });
     }
 
@@ -360,6 +382,10 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
         let alignment = if alignment_nodes.len() == 1 {
             let alignment_node = alignment_nodes[0];
             let wrap_text = get_bool_false(alignment_node, "wrapText");
+            let text_rotation = alignment_node
+                .attribute("textRotation")
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0);
 
             let horizontal = match alignment_node.attribute("horizontal") {
                 Some("center") => HorizontalAlignment::Center,
@@ -390,11 +416,18 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
                 horizontal,
                 vertical,
                 wrap_text,
+                text_rotation,
             })
         } else {
             None
         };
 
+        // ENS-Office: `<protection locked hidden>`; absent — locked, not hidden.
+        let protection = xfs.children().find(|n| n.has_tag_name("protection")).and_then(|n| {
+            let flag = |a: &str, d: bool| n.attribute(a).map_or(d, |v| v == "1" || v == "true");
+            let p = Protection { locked: flag("locked", true), hidden: flag("hidden", false) };
+            (p.locked != true || p.hidden).then_some(p)
+        });
         cell_xfs.push(CellXfs {
             xf_id,
             num_fmt_id,
@@ -409,6 +442,7 @@ pub(super) fn load_styles<R: Read + std::io::Seek>(
             apply_fill,
             quote_prefix,
             alignment,
+            protection,
         });
     }
 
@@ -469,24 +503,19 @@ pub(super) fn parse_dxf(
                             f.color = get_color_indexed(feat, theme, indexed)?;
                         }
                         "b" => {
-                            f.b = Some(true);
+                            f.b = Some(flag_on(feat.attribute("val")));
                         }
                         "i" => {
-                            f.i = Some(true);
+                            f.i = Some(flag_on(feat.attribute("val")));
                         }
                         "u" => {
-                            f.u = Some(true);
+                            f.u = Some(flag_on(feat.attribute("val")));
                         }
                         "strike" => {
-                            f.strike = Some(true);
+                            f.strike = Some(flag_on(feat.attribute("val")));
                         }
                         "sz" => {
-                            f.sz = Some(
-                                feat.attribute("val")
-                                    .unwrap_or("11")
-                                    .parse::<i32>()
-                                    .unwrap_or(11),
-                            );
+                            f.sz = Some(font_size(feat.attribute("val")));
                         }
                         _ => {}
                     }
@@ -562,6 +591,7 @@ pub(super) fn parse_dxf(
                     horizontal,
                     vertical,
                     wrap_text,
+                    text_rotation: 0,
                 });
             }
             _ => {}
@@ -701,5 +731,41 @@ mod indexed_color_tests {
             resolve(r#"<c theme="3" tint="0.0"/>"#),
             Color::Theme(3, 0.0)
         );
+    }
+}
+
+#[cfg(test)]
+mod ens_tests {
+    use super::{flag_on, font_size};
+
+    #[test]
+    fn ens_font_flags_and_sizes_from_r7() {
+        assert!(flag_on(None));
+        assert!(flag_on(Some("1")));
+        assert!(flag_on(Some("true")));
+        assert!(!flag_on(Some("0")));
+        assert!(!flag_on(Some("false")));
+        assert!(!flag_on(Some("none")));
+        assert!(flag_on(Some("double")));
+        assert_eq!(font_size(Some("8.000000")), 8);
+        assert_eq!(font_size(Some("9")), 9);
+        assert_eq!(font_size(Some("10.5")), 11);
+        assert_eq!(font_size(None), 11);
+    }
+
+    /// Проверка на настоящем файле: ENS_CHECK_XLSX=путь cargo test -- --ignored
+    #[test]
+    #[ignore]
+    fn ens_check_real_file_has_no_strike() {
+        let Ok(path) = std::env::var("ENS_CHECK_XLSX") else { return };
+        let model = crate::import::load_from_xlsx(&path, "ru", "UTC", "ru").unwrap();
+        for (i, ws) in model.workbook.worksheets.iter().enumerate() {
+            for (row, column, _) in ws.sheet_data.cells() {
+                let style = model.get_style_for_cell(i as u32, row, column).unwrap();
+                assert!(!style.font.strike, "зачёркнуто: лист {i}, {row}:{column}");
+            }
+        }
+        let st = model.get_style_for_cell(0, 1, 1).unwrap();
+        println!("A1: шрифт {} {}", st.font.name, st.font.sz);
     }
 }

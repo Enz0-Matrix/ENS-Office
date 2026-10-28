@@ -224,6 +224,9 @@ pub struct Model<'a> {
     pub(crate) evaluation: Evaluation,
     /// ENS-Office: dependency graph for incremental recalculation. See `incremental.rs`.
     pub(crate) deps: crate::incremental::DepGraph,
+    /// ENS-Office: recognize dates typed into cells with the General format
+    /// ("22.08" → a date). See `set_user_input`.
+    pub(crate) ens_recognize_dates: bool,
     /// Evaluated CF results per cell, keyed by (sheet_index, row, column).
     /// Rebuilt from scratch on every call to evaluate_conditional_formatting().
     pub(crate) cf_cache: HashMap<(u32, i32, i32), Vec<CfCellResult>>,
@@ -1850,7 +1853,10 @@ impl<'a> Model<'a> {
         );
         let mut shared_strings = HashMap::new();
         for (index, s) in workbook.shared_strings.iter().enumerate() {
-            shared_strings.insert(s.to_string(), index);
+            // ENS-Office: a rich string belongs to its cell only, plain input must not reuse it.
+            if !workbook.ens_rich.contains_key(&(index as i32)) {
+                shared_strings.insert(s.to_string(), index);
+            }
         }
 
         let mut model = Model {
@@ -1870,6 +1876,7 @@ impl<'a> Model<'a> {
             last_lambda_id: 0,
             evaluation: Evaluation::default(),
             deps: Default::default(),
+            ens_recognize_dates: true,
             cf_cache: HashMap::new(),
             links: HashMap::new(),
         };
@@ -2552,6 +2559,24 @@ impl<'a> Model<'a> {
                     .styles
                     .get_style_without_quote_prefix(style_index)?;
             }
+            let current_format = self.workbook.styles.get_style(new_style_index)?.num_fmt;
+            // ENS-Office: in a cell formatted as Text whatever is typed is
+            // kept as text, formulas included (as in Excel).
+            if current_format == "@" {
+                self.set_cell_with_string(sheet, row, column, &value, new_style_index)?;
+                return Ok(());
+            }
+            let explicit_format = current_format != "general";
+            let number_cell = explicit_format && !is_likely_date_number_format(&current_format);
+            // A plain decimal in a number cell is that number, even with a
+            // leading sign ("-3,5" is not the formula =-3,5).
+            if number_cell {
+                if let Some(v) = parse_plain_decimal(&value) {
+                    let worksheet = self.workbook.worksheet_mut(sheet)?;
+                    worksheet.set_cell_with_number(row, column, v, new_style_index)?;
+                    return Ok(());
+                }
+            }
             if let Some(formula) = self.formula_without_prefix(&value) {
                 let formula_index =
                     self.set_cell_with_formula(sheet, row, column, formula, new_style_index)?;
@@ -2575,11 +2600,35 @@ impl<'a> Model<'a> {
                     currencies.push(currency);
                 }
 
+                // ENS-Office: a format chosen for the cell is kept. Typed into a
+                // number (not date) format, "22.08" or "22,08" is the number
+                // 22.08, never a date; a recognized percent or currency gives its
+                // value and leaves the format alone. Only General cells take
+                // the format of what was typed, and dates only while
+                // `ens_recognize_dates` is on.
                 //  We try to parse as number
-                if let Ok((v, number_format)) =
-                    parse_formatted_number(&value, &currencies, self.locale)
-                {
-                    if let Some(num_fmt) = number_format {
+                let parsed = parse_formatted_number(&value, &currencies, self.locale);
+                let parsed = match parsed {
+                    Ok((_, Some(ref num_fmt)))
+                        if is_likely_date_number_format(num_fmt)
+                            && !explicit_format
+                            && !self.ens_recognize_dates =>
+                    {
+                        match parse_plain_decimal(&value) {
+                            Some(v) => Ok((v, None)),
+                            None => Err(()),
+                        }
+                    }
+                    Ok((_, Some(ref num_fmt)))
+                        if number_cell && is_likely_date_number_format(num_fmt) =>
+                    {
+                        Err(())
+                    }
+                    Ok(result) => Ok(result),
+                    Err(_) => Err(()),
+                };
+                if let Ok((v, number_format)) = parsed {
+                    if let Some(num_fmt) = number_format.filter(|_| !explicit_format) {
                         // Should not apply the format in the following cases:
                         // - we assign a date to already date-formatted cell
                         let should_apply_format = !(is_likely_date_number_format(
@@ -2872,6 +2921,22 @@ impl<'a> Model<'a> {
         let worksheet = self.workbook.worksheet_mut(sheet)?;
         worksheet.set_cell_with_array_formula(row, column, formula_index, style, width, height)?;
         Ok(formula_index)
+    }
+
+    /// ENS-Office: a cell with a rich text (a new shared string that is not looked up by its text).
+    pub(crate) fn set_cell_with_rich_text(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        runs: Vec<crate::types::RichRun>,
+        style: i32,
+    ) -> Result<(), String> {
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let index = self.workbook.shared_strings.len();
+        self.workbook.shared_strings.push(text);
+        self.workbook.ens_rich.insert(index as i32, runs);
+        self.workbook.worksheet_mut(sheet)?.set_cell_with_string(row, column, index as i32, style)
     }
 
     pub(crate) fn set_cell_with_string(
@@ -4075,3 +4140,19 @@ mod tests {
         assert_eq!(model._get_formula("A1"), *"=-A2*2");
     }
 }
+
+/// ENS-Office: a plain decimal number with either '.' or ',' as the decimal
+/// separator and no grouping ("22.08", "-3,5", "1e3"). `None` for anything
+/// else, which is then parsed as usual.
+fn parse_plain_decimal(value: &str) -> Option<f64> {
+    let trimmed = value.trim();
+    let body = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+    if body.is_empty() || body.matches(['.', ',']).count() > 1 {
+        return None;
+    }
+    if !body.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | 'e' | 'E' | '+' | '-')) {
+        return None;
+    }
+    trimmed.replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite())
+}
+

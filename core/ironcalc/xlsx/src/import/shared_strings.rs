@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io::{BufReader, Read};
 
+use ironcalc_base::types::RichRun;
+
 use super::xml::XmlNode;
 
 use crate::error::XlsxError;
@@ -16,8 +18,16 @@ pub(crate) struct SharedStringTable {
 
 impl SharedStringTable {
     pub(crate) fn new(strings: Vec<String>) -> SharedStringTable {
+        Self::new_excluding(strings, &HashMap::new())
+    }
+
+    /// As [`Self::new`], but the rich strings are not found by their text (they belong to one cell).
+    pub(crate) fn new_excluding(strings: Vec<String>, rich: &HashMap<i32, Vec<RichRun>>) -> SharedStringTable {
         let mut index = HashMap::with_capacity(strings.len());
         for (i, s) in strings.iter().enumerate() {
+            if rich.contains_key(&(i as i32)) {
+                continue;
+            }
             // The first occurrence wins, as a search of the list would find it.
             index.entry(s.clone()).or_insert(i as i32);
         }
@@ -50,6 +60,49 @@ pub(crate) fn read_shared_strings<R: Read + std::io::Seek>(
         Ok(file) => read_shared_strings_from_xml(XmlNode::parse(BufReader::new(file))?),
         Err(_e) => Ok(Vec::new()),
     }
+}
+
+/// ENS-Office: the formatted runs (`<r>`) of the shared strings, by the index of the string.
+pub(crate) fn read_rich_runs<R: Read + std::io::Seek>(
+    archive: &mut zip::read::ZipArchive<R>,
+) -> HashMap<i32, Vec<RichRun>> {
+    let mut out = HashMap::new();
+    let Ok(file) = archive.by_name("xl/sharedStrings.xml") else { return out };
+    let Ok(doc) = XmlNode::parse(BufReader::new(file)) else { return out };
+    for (i, si) in doc.descendants().filter(|n| n.has_tag_name("si")).enumerate() {
+        let mut runs = Vec::new();
+        for r in si.children().filter(|n| n.has_tag_name("r")) {
+            let text = r
+                .children()
+                .filter(|n| n.has_tag_name("t"))
+                .map(|n| decode_xlsx_escapes(n.text().unwrap_or("")))
+                .collect::<String>();
+            let mut run = RichRun { text, ..Default::default() };
+            if let Some(pr) = r.children().find(|n| n.has_tag_name("rPr")) {
+                let on = |n: &XmlNode| n.attribute("val").is_none_or(|v| v != "0" && v != "false");
+                for p in pr.children() {
+                    match p.tag_name() {
+                        "b" => run.b = on(p),
+                        "i" => run.i = on(p),
+                        "strike" => run.strike = on(p),
+                        "u" => run.u = p.attribute("val").is_none_or(|v| v != "none"),
+                        "sz" => run.sz = p.attribute("val").and_then(|v| v.parse().ok()),
+                        "rFont" => run.name = p.attribute("val").map(|v| v.to_string()),
+                        "color" => {
+                            run.color = p.attribute("rgb").filter(|v| v.len() == 8).map(|v| format!("#{}", &v[2..]));
+                        }
+                        "vertAlign" => run.vert = match p.attribute("val") { Some("superscript") => 1, Some("subscript") => 2, _ => 0 },
+                        _ => {}
+                    }
+                }
+            }
+            runs.push(run);
+        }
+        if !runs.is_empty() {
+            out.insert(i as i32, runs);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -1,0 +1,266 @@
+/* ===================================================================
+   Темы оформления. Меняют только вид программы: книга и печать — как есть.
+   Анимация — по флажку (data-theme-still) и не при «уменьшить движение».
+   =================================================================== */
+
+/* Значки тем в строке состояния не сдвигают её содержимое. */
+[data-theme] .statusbar { position: relative; padding-left: 30px; }
+[data-theme] .statusbar::before { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); }
+[data-theme] .statusbar::after { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+
+/* --- «Пустошь» (постапокалипсис): ржавый металл, пыль, предупредительные
+       полосы; лист — пожелтевшая бумага из бункера. --- */
+:root[data-theme="wasteland"] {
+  --accent: #c2571a;
+  --accent-dark: #7a3410;
+  --bg: #24211c;
+  --panel: #2f2b24; --hover: #463f31; --panel-alt: #3a352c;
+  --border: #514938;
+  --text: #e6dcc3;
+  --muted: #b3a585;
+  --hazard: #e0a800;
+  --toxic: #9bc53d;
+  --stencil: Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --brand-bg:
+    radial-gradient(ellipse 120px 26px at 18% 60%, rgba(139,58,26,.55), transparent 70%),
+    radial-gradient(ellipse 90px 20px at 72% 30%, rgba(160,82,30,.45), transparent 70%),
+    repeating-linear-gradient(100deg, rgba(255,255,255,.035) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(10deg, rgba(0,0,0,.18) 0 2px, transparent 2px 11px),
+    linear-gradient(180deg, #3d3226 0%, #2a231c 100%);
+}
+[data-theme="wasteland"] body { background: var(--bg); }
+[data-theme="wasteland"] .titlebar { position: relative; color: #efe2c4; text-shadow: 0 1px 0 rgba(0,0,0,.6); }
+/* Предупредительная полоса под заголовком. */
+[data-theme="wasteland"] .titlebar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; z-index: 2; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, var(--hazard) 0 9px, #1b1915 9px 18px);
+}
+[data-theme="wasteland"] .app-mark {
+  font-family: var(--stencil); letter-spacing: 2px; color: #ffcf70;
+  text-shadow: 0 0 6px rgba(255,170,60,.7), 0 0 1px #000;
+}
+/* Мерцает, как вывеска на последнем генераторе. */
+@keyframes ens-flicker { 0%, 91%, 95%, 100% { opacity: 1; } 92% { opacity: .35; } 93% { opacity: .9; } 94% { opacity: .2; } }
+[data-theme="wasteland"]:not([data-theme-still]) .app-mark { animation: ens-flicker 6s infinite steps(1); }
+[data-theme="wasteland"] .search { background: #1d1b17; border: 1px solid #514938; color: var(--muted); }
+[data-theme="wasteland"] .search input { color: var(--text); }
+[data-theme="wasteland"] .tabs { padding-top: 8px; background: repeating-linear-gradient(90deg, rgba(255,255,255,.02) 0 1px, transparent 1px 5px), var(--bg); }
+[data-theme="wasteland"] .tab { color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-family: var(--stencil); }
+[data-theme="wasteland"] .tab:hover { background: #352f27; color: var(--text); }
+[data-theme="wasteland"] .tab.active { color: #ffcf70; border-bottom-color: var(--hazard); }
+[data-theme="wasteland"] .tab.file { color: var(--toxic); }
+/* Лента — лист железа с заклёпками и ржавым подтёком. */
+[data-theme="wasteland"] .ribbon {
+  border-color: #4a4334; box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 2px 0 rgba(0,0,0,.35);
+  background:
+    radial-gradient(circle at 8px 8px, #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 8px) 8px, #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at 8px calc(100% - 8px), #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 8px) calc(100% - 8px), #6b5f4a 0 2px, transparent 2.5px),
+    radial-gradient(ellipse 200px 40px at 30% 100%, rgba(139,58,26,.28), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 4px),
+    #2f2b24;
+}
+[data-theme="wasteland"] .group { border-right-color: #463f31; }
+[data-theme="wasteland"] .group-name { color: #9c8f6f; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-family: var(--stencil); }
+[data-theme="wasteland"] .btn { color: var(--text); }
+[data-theme="wasteland"] .btn svg { fill: currentColor; }
+[data-theme="wasteland"] .btn:hover { background: #3d352a; border-color: #6e5a3a; box-shadow: 0 0 8px rgba(255,140,40,.35); }
+[data-theme="wasteland"] .btn.active, [data-theme="wasteland"] .btn.on { background: #5a3418; border-color: var(--accent); color: #ffcf70; }
+[data-theme="wasteland"] .btn[data-command="edit.undo"]:not(.disabled) svg,
+[data-theme="wasteland"] .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--toxic); }
+[data-theme="wasteland"] select,
+[data-theme="wasteland"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { background: #1d1b17; color: var(--text); border-color: #514938; }
+[data-theme="wasteland"] .formula-bar { background: var(--bg); }
+[data-theme="wasteland"] .name-box, [data-theme="wasteland"] .formula-wrap { background: #1d1b17; color: #ffcf70; border-color: #514938; }
+[data-theme="wasteland"] .formula, [data-theme="wasteland"] .fx { color: #ffcf70; }
+[data-theme="wasteland"] .cell-editor { background: #fbf3dc; color: #2b2418; -webkit-text-fill-color: #2b2418; border-color: var(--accent); }
+[data-theme="wasteland"] .sheet-tabs { background: var(--bg); }
+[data-theme="wasteland"] .sheet-tab { color: var(--muted); }
+[data-theme="wasteland"] .sheet-tab.active { background: #f2e8cf; color: #6e2c10; border-color: #514938; border-top-color: #f2e8cf; box-shadow: inset 0 -3px var(--hazard); }
+/* Строка состояния — счётчик Гейгера. */
+[data-theme="wasteland"] .statusbar { background: #1b1915; color: var(--toxic); font-family: var(--stencil); }
+[data-theme="wasteland"] .statusbar::before { content: "\2622"; color: var(--hazard); margin-right: 6px; }
+[data-theme="wasteland"] .stat { background: #2a2620; color: var(--text); }
+/* Окна и меню — тёмные металлические таблички с жёлтой кромкой. */
+[data-theme="wasteland"] .modal, [data-theme="wasteland"] .context-menu, [data-theme="wasteland"] .cf-menu,
+[data-theme="wasteland"] .palette, [data-theme="wasteland"] .backstage {
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px), #2f2b24;
+  color: var(--text); border-color: #5a4f3b;
+}
+[data-theme="wasteland"] .modal { border: 1px solid #5a4f3b; border-top: 4px solid var(--hazard); }
+[data-theme="wasteland"] .modal h2 { color: #ffcf70; font-family: var(--stencil); letter-spacing: .04em; }
+[data-theme="wasteland"] .modal p, [data-theme="wasteland"] .group-name { color: var(--muted); }
+[data-theme="wasteland"] .modal button, [data-theme="wasteland"] .cf-menu button { color: var(--text); background-color: #3a342a; border-color: #5a4f3b; }
+[data-theme="wasteland"] .context-menu > button { color: var(--text); background-color: transparent; }
+[data-theme="wasteland"] .modal button:hover, [data-theme="wasteland"] .context-menu > button:hover, [data-theme="wasteland"] .cf-menu button:hover { background-color: #4a3d2c; }
+[data-theme="wasteland"] .modal button.primary { background: var(--accent); border-color: #e07a2c; color: #fff; }
+[data-theme="wasteland"] .context-menu > button.checked { background: #4a3420; }
+[data-theme="wasteland"] .context-menu > button .menu-icon { color: #ffcf70; }
+[data-theme="wasteland"] .overlay { background: rgba(10,8,4,.55); }
+[data-theme="wasteland"] .toast { background: #1b1915; color: var(--toxic); border: 1px solid #514938; font-family: var(--stencil); }
+[data-theme="wasteland"] .fmt-cats button.active, [data-theme="wasteland"] .fmt-list button.active, [data-theme="wasteland"] .cf-row.active { background: #5a3418 !important; color: #ffcf70; }
+[data-theme="wasteland"] .fmt-cats button:hover, [data-theme="wasteland"] .fmt-list button:hover, [data-theme="wasteland"] .cf-row:hover { background: #3d352a; }
+[data-theme="wasteland"] .fmt-sample, [data-theme="wasteland"] .cf-preview, [data-theme="wasteland"] .cf-table, [data-theme="wasteland"] .fmt-list { border-color: #5a4f3b; }
+[data-theme="wasteland"] .fmt-sample b { color: #ffcf70; }
+[data-theme="wasteland"] .format-chip { background: #2f2b24; color: var(--text); border-color: #5a4f3b; }
+[data-theme="wasteland"] ::-webkit-scrollbar { width: 12px; height: 12px; background: #24211c; }
+[data-theme="wasteland"] ::-webkit-scrollbar-thumb { background: linear-gradient(90deg, #6b3a17, #8b4a1f); border-radius: 6px; border: 2px solid #24211c; }
+@media (prefers-reduced-motion: reduce) { :root:not([data-theme-forced])[data-theme="wasteland"] .app-mark { animation: none; } }
+
+/* --- «Диско-неон»: ночной клуб, розовый и голубой неон, переливающийся
+       заголовок, танцпол на ленте, нажатые кнопки пульсируют. --- */
+:root[data-theme="neon"] {
+  --accent: #ff2bd6;
+  --accent-dark: #b0109a;
+  --bg: #0d0a1a;
+  --panel: #160f2b; --hover: #2b1d52; --panel-alt: #21173f;
+  --border: #3a2466;
+  --text: #f3e9ff;
+  --muted: #b9a3e0;
+  --pink: #ff2bd6;
+  --cyan: #00f0ff;
+  --brand-bg: linear-gradient(90deg, #ff2bd6 0%, #7a2cff 25%, #00f0ff 50%, #7a2cff 75%, #ff2bd6 100%);
+}
+@keyframes ens-disco { from { background-position: 0% 0; } to { background-position: 200% 0; } }
+@keyframes ens-hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+@keyframes ens-pulse { 0%, 100% { box-shadow: 0 0 4px rgba(255,43,214,.5); } 50% { box-shadow: 0 0 14px rgba(0,240,255,.9), 0 0 4px rgba(255,43,214,.8); } }
+[data-theme="neon"] body { background: var(--bg); }
+[data-theme="neon"] .titlebar { background-size: 200% 100%; color: #fff; text-shadow: 0 0 6px rgba(0,0,0,.6); }
+[data-theme="neon"]:not([data-theme-still]) .titlebar { animation: ens-disco 10s linear infinite; }
+[data-theme="neon"] .app-mark { color: #fff; text-shadow: 0 0 4px #fff, 0 0 10px var(--pink), 0 0 18px var(--pink); }
+[data-theme="neon"]:not([data-theme-still]) .app-mark { animation: ens-hue 6s linear infinite; }
+[data-theme="neon"] .search { background: rgba(13,10,26,.75); border: 1px solid rgba(255,255,255,.35); color: #e6d9ff; }
+[data-theme="neon"] .search input { color: #fff; }
+[data-theme="neon"] .tabs { background: var(--bg); }
+[data-theme="neon"] .tab { color: var(--muted); }
+[data-theme="neon"] .tab:hover { background: #1f1540; color: #fff; }
+[data-theme="neon"] .tab.active { color: #fff; border-bottom-color: var(--cyan); text-shadow: 0 0 8px var(--cyan); }
+[data-theme="neon"] .tab.file { color: var(--pink); text-shadow: 0 0 6px var(--pink); }
+/* Лента — танцпол: квадратные плитки и неоновая кромка. */
+[data-theme="neon"] .ribbon {
+  border-color: var(--pink); box-shadow: 0 0 10px rgba(255,43,214,.35), inset 0 0 18px rgba(0,240,255,.08);
+  background:
+    repeating-linear-gradient(0deg, rgba(122,44,255,.12) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(90deg, rgba(122,44,255,.12) 0 1px, transparent 1px 24px),
+    #160f2b;
+}
+[data-theme="neon"] .group { border-right-color: #3a2466; }
+[data-theme="neon"] .group-name { color: var(--cyan); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; text-shadow: 0 0 6px rgba(0,240,255,.6); }
+[data-theme="neon"] .btn { color: var(--text); }
+[data-theme="neon"] .btn svg { fill: currentColor; }
+[data-theme="neon"] .btn:hover { background: #241a4a; border-color: var(--cyan); box-shadow: 0 0 10px rgba(0,240,255,.6); color: #fff; }
+[data-theme="neon"] .btn.on, [data-theme="neon"] .btn.active { background: #3a0f45; border-color: var(--pink); color: #fff; }
+[data-theme="neon"]:not([data-theme-still]) .btn.on { animation: ens-pulse 1.6s ease-in-out infinite; }
+[data-theme="neon"] .btn[data-command="edit.undo"]:not(.disabled) svg,
+[data-theme="neon"] .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--cyan); }
+[data-theme="neon"] select,
+[data-theme="neon"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { background: #0d0a1a; color: var(--text); border-color: #3a2466; }
+[data-theme="neon"] .formula-bar { background: var(--bg); }
+[data-theme="neon"] .name-box, [data-theme="neon"] .formula-wrap { background: #0d0a1a; color: var(--cyan); border-color: #3a2466; }
+[data-theme="neon"] .formula, [data-theme="neon"] .fx { color: var(--cyan); }
+[data-theme="neon"] .formula-wrap:focus-within { border-color: var(--pink); box-shadow: 0 0 8px rgba(255,43,214,.5); }
+[data-theme="neon"] .cell-editor { border-color: var(--pink); box-shadow: 0 0 10px rgba(255,43,214,.6); }
+[data-theme="neon"] .sheet-tabs { background: var(--bg); }
+[data-theme="neon"] .sheet-tab { color: var(--muted); }
+[data-theme="neon"] .sheet-tab.active { background: #fbf7ff; color: #b0109a; border-color: #3a2466; border-top-color: #fbf7ff; box-shadow: inset 0 -3px var(--pink); }
+[data-theme="neon"] .statusbar { background: #0d0a1a; color: var(--cyan); }
+[data-theme="neon"] .statusbar::before { content: "\266B"; color: var(--pink); margin-right: 6px; text-shadow: 0 0 6px var(--pink); }
+[data-theme="neon"] .stat { background: #1f1540; color: var(--text); }
+[data-theme="neon"] .modal, [data-theme="neon"] .context-menu, [data-theme="neon"] .cf-menu,
+[data-theme="neon"] .palette, [data-theme="neon"] .backstage { background: #160f2b; color: var(--text); border-color: #3a2466; }
+[data-theme="neon"] .modal { border: 1px solid var(--pink); box-shadow: 0 0 24px rgba(255,43,214,.45), 0 0 60px rgba(0,240,255,.15); }
+[data-theme="neon"] .modal h2 { color: #fff; text-shadow: 0 0 8px var(--pink); }
+[data-theme="neon"] .modal p { color: var(--muted); }
+[data-theme="neon"] .modal button, [data-theme="neon"] .cf-menu button { color: var(--text); background-color: #241a4a; border-color: #3a2466; }
+[data-theme="neon"] .context-menu > button { color: var(--text); background-color: transparent; }
+[data-theme="neon"] .modal button:hover, [data-theme="neon"] .context-menu > button:hover, [data-theme="neon"] .cf-menu button:hover { background-color: #2e2060; box-shadow: 0 0 8px rgba(0,240,255,.4); }
+[data-theme="neon"] .modal button.primary { background: linear-gradient(90deg, var(--pink), #7a2cff); border-color: var(--pink); color: #fff; }
+[data-theme="neon"] .context-menu > button.checked { background: #3a0f45; }
+[data-theme="neon"] .context-menu > button .menu-icon { color: var(--cyan); }
+[data-theme="neon"] .overlay { background: rgba(8,4,20,.6); }
+[data-theme="neon"] .toast { background: #160f2b; color: #fff; border: 1px solid var(--pink); box-shadow: 0 0 12px rgba(255,43,214,.5); }
+[data-theme="neon"] .fmt-cats button.active, [data-theme="neon"] .fmt-list button.active, [data-theme="neon"] .cf-row.active { background: #3a0f45 !important; color: #fff; }
+[data-theme="neon"] .fmt-cats button:hover, [data-theme="neon"] .fmt-list button:hover, [data-theme="neon"] .cf-row:hover { background: #241a4a; }
+[data-theme="neon"] .fmt-sample b { color: var(--cyan); }
+[data-theme="neon"] .format-chip { background: #160f2b; color: var(--text); border-color: var(--pink); }
+[data-theme="neon"] ::-webkit-scrollbar { width: 12px; height: 12px; background: #0d0a1a; }
+[data-theme="neon"] ::-webkit-scrollbar-thumb { background: linear-gradient(90deg, var(--pink), var(--cyan)); border-radius: 6px; border: 2px solid #0d0a1a; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-theme-forced])[data-theme="neon"] .titlebar, :root:not([data-theme-forced])[data-theme="neon"] .app-mark,
+  :root:not([data-theme-forced])[data-theme="neon"] .btn.on { animation: none !important; }
+}
+
+/* --- «Матрица»: зелёный код на чёрном, цифровой дождь в заголовке
+       (canvas.matrix-rain из themes.ts), моноширинный шрифт. --- */
+:root[data-theme="matrix"] {
+  --accent: #00b336;
+  --accent-dark: #007a24;
+  --bg: #000000;
+  --panel: #030a04; --hover: #0d2a12; --panel-alt: #07170a;
+  --border: #0b3d17;
+  --text: #7dff9b;
+  --muted: #2fbf5a;
+  --code: #00ff41;
+  --brand-bg: #000;
+  font-family: Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+@keyframes ens-cursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+[data-theme="matrix"] body { background: #000; }
+[data-theme="matrix"] .titlebar { position: relative; overflow: hidden; color: var(--code); }
+[data-theme="matrix"] .titlebar > :not(.matrix-rain) { position: relative; z-index: 1; }
+[data-theme="matrix"] .matrix-rain { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .65; pointer-events: none; z-index: 0; }
+[data-theme="matrix"] .app-mark { color: var(--code); text-shadow: 0 0 8px var(--code); }
+[data-theme="matrix"] .doc-name { text-shadow: 0 0 6px #000, 0 0 2px #000; }
+[data-theme="matrix"] .search { background: rgba(0,0,0,.85); border: 1px solid #0b3d17; color: var(--muted); }
+[data-theme="matrix"] .search input { color: var(--code); font-family: inherit; }
+[data-theme="matrix"] .tabs { background: #000; }
+[data-theme="matrix"] .tab { color: var(--muted); font-family: inherit; }
+[data-theme="matrix"] .tab:hover { background: #021a08; color: var(--code); }
+[data-theme="matrix"] .tab.active { color: var(--code); border-bottom-color: var(--code); text-shadow: 0 0 6px var(--code); }
+[data-theme="matrix"] .tab.file { color: #d8ffe0; }
+[data-theme="matrix"] .ribbon { background: #030a04; border-color: #0b3d17; box-shadow: inset 0 0 20px rgba(0,255,65,.05); }
+[data-theme="matrix"] .group { border-right-color: #0b3d17; }
+[data-theme="matrix"] .group-name { color: #1f8f3f; font-size: 10px; text-transform: lowercase; }
+[data-theme="matrix"] .group-name::before { content: "// "; opacity: .6; }
+[data-theme="matrix"] .btn { color: var(--text); font-family: inherit; }
+[data-theme="matrix"] .btn svg { fill: currentColor; }
+[data-theme="matrix"] .btn:hover { background: #032b0d; border-color: #0f6b28; box-shadow: 0 0 8px rgba(0,255,65,.35); color: var(--code); }
+[data-theme="matrix"] .btn.on, [data-theme="matrix"] .btn.active { background: #014d17; border-color: var(--code); color: #d8ffe0; }
+[data-theme="matrix"] select,
+[data-theme="matrix"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]) { background: #000; color: var(--code); border-color: #0b3d17; font-family: inherit; }
+[data-theme="matrix"] .formula-bar { background: #000; }
+[data-theme="matrix"] .name-box, [data-theme="matrix"] .formula-wrap { background: #000; color: var(--code); border-color: #0b3d17; }
+[data-theme="matrix"] .formula, [data-theme="matrix"] .fx { color: var(--code); }
+[data-theme="matrix"] .cell-editor { background: #f2fff4; color: #002b0c; -webkit-text-fill-color: #002b0c; border-color: var(--accent); }
+[data-theme="matrix"] .sheet-tabs { background: #000; }
+[data-theme="matrix"] .sheet-tab { color: var(--muted); font-family: inherit; }
+[data-theme="matrix"] .sheet-tab.active { background: #f2fff4; color: #006b20; border-color: #0b3d17; border-top-color: #f2fff4; box-shadow: inset 0 -3px var(--code); }
+/* Строка состояния — командная строка с мигающим курсором. */
+[data-theme="matrix"] .statusbar { background: #000; color: var(--code); }
+[data-theme="matrix"] .statusbar::before { content: "> "; color: var(--code); }
+[data-theme="matrix"] .statusbar::after { content: "\258C"; color: var(--code); margin-left: auto; padding-left: 8px; }
+[data-theme="matrix"]:not([data-theme-still]) .statusbar::after { animation: ens-cursor 1.1s steps(1) infinite; }
+[data-theme="matrix"] .stat { background: #021a08; color: var(--text); }
+[data-theme="matrix"] .modal, [data-theme="matrix"] .context-menu, [data-theme="matrix"] .cf-menu,
+[data-theme="matrix"] .palette, [data-theme="matrix"] .backstage { background: #000; color: var(--text); border-color: #0f6b28; }
+[data-theme="matrix"] .modal { border: 1px solid var(--code); box-shadow: 0 0 24px rgba(0,255,65,.3); }
+[data-theme="matrix"] .modal h2 { color: var(--code); text-shadow: 0 0 6px var(--code); }
+[data-theme="matrix"] .modal h2::before { content: "> "; }
+[data-theme="matrix"] .modal p { color: var(--muted); }
+[data-theme="matrix"] .modal button, [data-theme="matrix"] .cf-menu button { color: var(--text); background-color: #021a08; border-color: #0b3d17; font-family: inherit; }
+[data-theme="matrix"] .context-menu > button { color: var(--text); background-color: transparent; font-family: inherit; }
+[data-theme="matrix"] .modal button:hover, [data-theme="matrix"] .context-menu > button:hover, [data-theme="matrix"] .cf-menu button:hover { background-color: #032b0d; color: var(--code); }
+[data-theme="matrix"] .modal button.primary { background: #007a24; border-color: var(--code); color: #000; font-weight: 700; }
+[data-theme="matrix"] .context-menu > button.checked { background: #014d17; }
+[data-theme="matrix"] .context-menu > button .menu-icon { color: var(--code); }
+[data-theme="matrix"] .overlay { background: rgba(0,0,0,.65); }
+[data-theme="matrix"] .toast { background: #000; color: var(--code); border: 1px solid var(--code); font-family: inherit; }
+[data-theme="matrix"] .fmt-cats button.active, [data-theme="matrix"] .fmt-list button.active, [data-theme="matrix"] .cf-row.active { background: #014d17 !important; color: #d8ffe0; }
+[data-theme="matrix"] .fmt-cats button:hover, [data-theme="matrix"] .fmt-list button:hover, [data-theme="matrix"] .cf-row:hover { background: #032b0d; }
+[data-theme="matrix"] .fmt-sample b { color: var(--code); }
+[data-theme="matrix"] .format-chip { background: #000; color: var(--text); border-color: var(--code); }
+[data-theme="matrix"] ::-webkit-scrollbar { width: 12px; height: 12px; background: #000; }
+[data-theme="matrix"] ::-webkit-scrollbar-thumb { background: #0b3d17; border-radius: 6px; border: 2px solid #000; }
+[data-theme="matrix"] ::-webkit-scrollbar-thumb:hover { background: #0f6b28; }
+@media (prefers-reduced-motion: reduce) { :root:not([data-theme-forced])[data-theme="matrix"] .statusbar::after { animation: none; } }

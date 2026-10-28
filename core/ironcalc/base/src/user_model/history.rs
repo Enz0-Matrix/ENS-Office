@@ -104,6 +104,91 @@ pub(crate) enum Diff {
         new_value: bool,
         old_value: bool,
     },
+    /// ENS-Office: outline level and "collapsed" flag of a row.
+    SetRowOutline {
+        sheet: u32,
+        row: i32,
+        new_value: (u8, bool),
+        old_value: (u8, bool),
+    },
+    /// ENS-Office: print area of a sheet (`_xlnm.Print_Area`), [r1, c1, r2, c2].
+    SetPrintArea {
+        sheet: u32,
+        new_value: Option<[i32; 4]>,
+        old_value: Option<[i32; 4]>,
+    },
+    /// ENS-Office: rows and columns repeated on printed pages (`_xlnm.Print_Titles`), [r1, r2, c1, c2].
+    SetPrintTitles {
+        sheet: u32,
+        new_value: [i32; 4],
+        old_value: [i32; 4],
+    },
+    /// ENS-Office: the rich text of a cell changed (`None` — plain text `old_text` / `new_text`).
+    SetRichText {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        new_value: Option<Vec<crate::types::RichRun>>,
+        old_value: Option<Vec<crate::types::RichRun>>,
+        new_text: String,
+        old_text: String,
+    },
+    /// ENS-Office: the pictures of a sheet changed.
+    SetImages {
+        sheet: u32,
+        new_value: Vec<crate::types::Image>,
+        old_value: Vec<crate::types::Image>,
+    },
+    /// ENS-Office: the charts of a sheet changed.
+    SetCharts {
+        sheet: u32,
+        new_value: Vec<crate::types::Chart>,
+        old_value: Vec<crate::types::Chart>,
+    },
+    /// ENS-Office: a sheet is protected / unprotected.
+    SetSheetProtected {
+        sheet: u32,
+        new_value: bool,
+        old_value: bool,
+    },
+    /// ENS-Office: the book structure is locked / unlocked.
+    SetStructureLocked {
+        new_value: bool,
+        old_value: bool,
+    },
+    /// ENS-Office: a cell comment (note) set, changed or deleted (`None` — no comment).
+    SetComment {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        new_value: Option<crate::types::Comment>,
+        old_value: Option<crate::types::Comment>,
+    },
+    /// ENS-Office: manual page breaks of a sheet, (after rows, after columns).
+    SetPageBreaks {
+        sheet: u32,
+        new_value: (Vec<i32>, Vec<i32>),
+        old_value: (Vec<i32>, Vec<i32>),
+    },
+    /// ENS-Office: page setup of a sheet (JSON, see `Worksheet::ens_page_setup`).
+    SetPageSetup {
+        sheet: u32,
+        new_value: String,
+        old_value: String,
+    },
+    /// ENS-Office: position of the outline "+/−" buttons (see `Worksheet::ens_summary`).
+    SetOutlineSummary {
+        sheet: u32,
+        new_value: (bool, bool),
+        old_value: (bool, bool),
+    },
+    /// ENS-Office: outline level and "collapsed" flag of a column.
+    SetColumnOutline {
+        sheet: u32,
+        column: i32,
+        new_value: (u8, bool),
+        old_value: (u8, bool),
+    },
     SetColumnStyle {
         sheet: u32,
         column: i32,
@@ -314,6 +399,13 @@ pub(crate) enum Diff {
         sheet: u32,
         old_value: Vec<MergedCell>,
         new_value: Vec<MergedCell>,
+    },
+    /// ENS-Office: the whole list of conditional formatting rules of a sheet (kept when rows or
+    /// columns are deleted: the deletion can shrink or remove rules and undo must bring them back).
+    SetConditionalFormattingList {
+        sheet: u32,
+        old_value: Vec<crate::cf_types::ConditionalFormatting>,
+        new_value: Vec<crate::cf_types::ConditionalFormatting>,
     },
     // FIXME: we are missing SetViewDiffs
 }

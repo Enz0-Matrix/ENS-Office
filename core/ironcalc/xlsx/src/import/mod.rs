@@ -1,6 +1,7 @@
 mod conditional_formatting;
 mod metadata;
 pub(crate) mod shared_strings;
+mod drawings;
 mod sheet_data;
 mod styles;
 mod tables;
@@ -29,7 +30,7 @@ use ironcalc_base::{
 
 use crate::error::XlsxError;
 
-use shared_strings::{read_shared_strings, SharedStringTable};
+use shared_strings::{read_rich_runs, read_shared_strings, SharedStringTable};
 
 use metadata::load_metadata;
 use styles::load_styles;
@@ -96,7 +97,9 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
 ) -> Result<Workbook, XlsxError> {
     let mut archive = zip::ZipArchive::new(reader)?;
 
-    let mut shared_strings = SharedStringTable::new(read_shared_strings(&mut archive)?);
+    let strings = read_shared_strings(&mut archive)?;
+    let ens_rich = read_rich_runs(&mut archive);
+    let mut shared_strings = SharedStringTable::new_excluding(strings, &ens_rich);
     let mut workbook = load_workbook(&mut archive)?;
     let rels = load_relationships(&mut archive)?;
     let theme_path = resolve_theme_path(&rels);
@@ -121,6 +124,10 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         .map(|s| s.name.clone())
         .collect::<Vec<_>>();
     for dn in &mut workbook.defined_names {
+        // ENS-Office: Excel's own names (`_xlnm.Print_Titles` is a list of ranges) stay as written.
+        if dn.name.starts_with("_xlnm.") {
+            continue;
+        }
         dn.formula = reparse_formula_hack(&dn.formula, &worksheet_names)?;
     }
     let metadata = match load_metadata(&mut archive) {
@@ -137,6 +144,8 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
             }
         }
     };
+    let ens_change_log = load_change_log(&mut archive);
+    let ens_structure_locked = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
     views.insert(
         0,
@@ -160,7 +169,50 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         tables,
         views,
         theme,
+        ens_change_log,
+        ens_structure_locked,
+        ens_rich,
     })
+}
+
+/// ENS-Office: `<workbookProtection lockStructure>` of `xl/workbook.xml`.
+fn load_structure_locked<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> bool {
+    let mut text = String::new();
+    let read = archive.by_name("xl/workbook.xml").map(|mut f| f.read_to_string(&mut text));
+    if !matches!(read, Ok(Ok(_))) {
+        return false;
+    }
+    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return false };
+    let locked = root
+        .children()
+        .find(|n| n.has_tag_name("workbookProtection"))
+        .and_then(|n| n.attribute("lockStructure").map(|v| v == "1" || v == "true"))
+        .unwrap_or(false);
+    locked
+}
+
+/// ENS-Office: the change log from `customXml/item*.xml` (root `<ensChangeLog>`).
+fn load_change_log<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> String {
+    let names: Vec<String> = archive
+        .file_names()
+        .filter(|n| n.starts_with("customXml/item") && !n.contains("Props") && n.ends_with(".xml"))
+        .map(|n| n.to_string())
+        .collect();
+    for name in names {
+        let mut text = String::new();
+        if let Ok(mut f) = archive.by_name(&name) {
+            if f.read_to_string(&mut text).is_err() {
+                continue;
+            }
+        }
+        let Ok(root) = XmlNode::parse(text.as_bytes()) else {
+            continue;
+        };
+        if root.has_tag_name("ensChangeLog") {
+            return root.text().unwrap_or_default().to_string();
+        }
+    }
+    String::new()
 }
 
 // Imports a file from disk into an internal representation

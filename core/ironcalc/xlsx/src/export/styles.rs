@@ -28,6 +28,11 @@ fn get_fonts_xml(styles: &Styles) -> String {
         let italic = if font.i { "<i/>" } else { "" };
         let underline = if font.u { "<u/>" } else { "" };
         let strike = if font.strike { "<strike/>" } else { "" };
+        let vert_align = match font.vert_align {
+            ironcalc_base::types::VertAlign::Superscript => "<vertAlign val=\"superscript\"/>",
+            ironcalc_base::types::VertAlign::Subscript => "<vertAlign val=\"subscript\"/>",
+            ironcalc_base::types::VertAlign::Baseline => "",
+        };
         let family = format!("<family val=\"{}\"/>", font.family);
         let scheme = format!("<scheme val=\"{}\"/>", font.scheme);
         fonts_str.push(format!(
@@ -39,6 +44,7 @@ fn get_fonts_xml(styles: &Styles) -> String {
                 {italic}\
                 {underline}\
                 {strike}\
+                {vert_align}\
                 {family}\
                 {scheme}\
              </font>"
@@ -217,11 +223,15 @@ fn get_cell_xfs_xml(styles: &Styles) -> String {
                 {apply_number_format_str}\
                 {apply_border_str}"
         );
-        if let Some(alignment) = &cell_xf.alignment {
-            let alignment = get_alignment(alignment);
-            cell_xfs_str.push(format!("<xf {properties}>{alignment}</xf>"));
-        } else {
+        let protection = match cell_xf.protection {
+            Some(p) => format!("<protection locked=\"{}\" hidden=\"{}\"/>", u8::from(p.locked), u8::from(p.hidden)),
+            None => String::new(),
+        };
+        let alignment = cell_xf.alignment.as_ref().map(get_alignment).unwrap_or_default();
+        if alignment.is_empty() && protection.is_empty() {
             cell_xfs_str.push(format!("<xf {properties}/>"));
+        } else {
+            cell_xfs_str.push(format!("<xf {properties}{}>{alignment}{protection}</xf>", if protection.is_empty() { "" } else { " applyProtection=\"1\"" }));
         }
     }
     let style_count = cell_xfs.len();

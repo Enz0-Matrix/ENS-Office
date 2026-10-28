@@ -139,6 +139,50 @@ impl<'a> UserModel<'a> {
                 } => {
                     self.model.set_row_hidden(*sheet, *row, *old_value)?;
                 }
+                Diff::SetRowOutline { sheet, row, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.set_row_outline(*row, old_value.0, old_value.1)?;
+                }
+                Diff::SetColumnOutline { sheet, column, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.set_column_outline(*column, old_value.0, old_value.1)?;
+                }
+                Diff::SetPrintArea { sheet, new_value: _, old_value } => {
+                    self.write_print_area(*sheet, *old_value)?;
+                }
+                Diff::SetConditionalFormattingList { sheet, old_value, new_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = old_value.clone();
+                    needs_evaluation = true;
+                }
+                Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
+                }
+                Diff::SetRichText { sheet, row, column, new_value: _, old_value, new_text: _, old_text } => {
+                    self.write_rich_text(*sheet, *row, *column, old_value.clone(), old_text)?;
+                    needs_evaluation = true;
+                }
+                Diff::SetCharts { sheet, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_charts = old_value.clone();
+                }
+                Diff::SetImages { sheet, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_images = old_value.clone();
+                }
+                Diff::SetSheetProtected { sheet, new_value: _, old_value } => {
+                    self.write_sheet_protected(*sheet, *old_value)?;
+                }
+                Diff::SetStructureLocked { new_value: _, old_value } => {
+                    self.write_structure_locked(*old_value);
+                }
+                Diff::SetComment { sheet, row, column, new_value: _, old_value } => {
+                    self.write_comment(*sheet, *row, *column, old_value.clone())?;
+                }
+                Diff::SetPageBreaks { sheet, new_value: _, old_value } => {
+                    self.write_page_breaks(*sheet, old_value.clone())?;
+                }
+                Diff::SetPrintTitles { sheet, new_value: _, old_value } => {
+                    self.write_print_titles(*sheet, *old_value)?;
+                }
+                Diff::SetPageSetup { sheet, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = old_value.clone();
+                }
                 Diff::SetRowHeight {
                     sheet,
                     row,
@@ -702,6 +746,50 @@ impl<'a> UserModel<'a> {
                     old_value: _,
                 } => {
                     self.model.set_row_hidden(*sheet, *row, *new_value)?;
+                }
+                Diff::SetRowOutline { sheet, row, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.set_row_outline(*row, new_value.0, new_value.1)?;
+                }
+                Diff::SetColumnOutline { sheet, column, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.set_column_outline(*column, new_value.0, new_value.1)?;
+                }
+                Diff::SetPrintArea { sheet, new_value, old_value: _ } => {
+                    self.write_print_area(*sheet, *new_value)?;
+                }
+                Diff::SetConditionalFormattingList { sheet, old_value: _, new_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = new_value.clone();
+                    needs_evaluation = true;
+                }
+                Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;
+                }
+                Diff::SetRichText { sheet, row, column, new_value, old_value: _, new_text, old_text: _ } => {
+                    self.write_rich_text(*sheet, *row, *column, new_value.clone(), new_text)?;
+                    needs_evaluation = true;
+                }
+                Diff::SetCharts { sheet, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_charts = new_value.clone();
+                }
+                Diff::SetImages { sheet, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_images = new_value.clone();
+                }
+                Diff::SetSheetProtected { sheet, new_value, old_value: _ } => {
+                    self.write_sheet_protected(*sheet, *new_value)?;
+                }
+                Diff::SetStructureLocked { new_value, old_value: _ } => {
+                    self.write_structure_locked(*new_value);
+                }
+                Diff::SetComment { sheet, row, column, new_value, old_value: _ } => {
+                    self.write_comment(*sheet, *row, *column, new_value.clone())?;
+                }
+                Diff::SetPageBreaks { sheet, new_value, old_value: _ } => {
+                    self.write_page_breaks(*sheet, new_value.clone())?;
+                }
+                Diff::SetPrintTitles { sheet, new_value, old_value: _ } => {
+                    self.write_print_titles(*sheet, *new_value)?;
+                }
+                Diff::SetPageSetup { sheet, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = new_value.clone();
                 }
                 Diff::SetRowHeight {
                     sheet,
