@@ -3,8 +3,9 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type Chart, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun } from './engine';
 import { fontStack } from './fonts';
+import { drawChart, parseRange, type ChartData } from './chart';
 import { PALETTE } from './numfmt';
 
 export interface Selection {
@@ -198,12 +199,15 @@ export class Grid {
   /** Правый щелчок по ячейке или заголовку. */
   /** Рисунки листа, выбранный рисунок (-1 — нет) и перенос или изменение размера мышью. */
   images: ImageInfo[] = [];
-  selImage = -1;
+  charts: Chart[] = [];
+  selObj = -1;
   private imgCache = new Map<string, HTMLImageElement | null>();
   private imgDrag: { mode: 'move' | 'resize'; i: number; sx: number; sy: number; orig: { x: number; y: number; w: number; h: number }; cur: { x: number; y: number; w: number; h: number } } | null = null;
   /** Рисунок перенесён или изменён: индекс, ячейка левого верхнего угла, сдвиг и размер (px). */
-  onImagePlace: (index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
+  onImagePlace: (kind: 'image' | 'chart', index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
   onImageSelect: (index: number) => void = () => {};
+  /** Двойной щелчок по выбранному рисунку или диаграмме. */
+  onObjectDouble: () => void = () => {};
   /** Ячейки с примечаниями ("строка:столбец") — красный уголок. */
   commentCells = new Set<string>();
   /** Ручные разрывы страниц листа: [после строк, после столбцов] — штриховые линии. */
@@ -398,7 +402,8 @@ export class Grid {
     this.canvas.addEventListener('dblclick', (e) => {
       const g = this.grip(e);
       const h = this.hit(e);
-      if (g) this.onResize(g.kind, g.index, null);
+      if (this.selObj >= 0) this.onObjectDouble();
+      else if (g) this.onResize(g.kind, g.index, null);
       else if (!h.header) this.onEditRequest();
       else if (h.header === 'row' && h.row >= 1) this.toggleMark('row', h.row, this.markColor(e));
       else if (h.header === 'column' && h.column >= 1) this.toggleMark('column', h.column, this.markColor(e));
@@ -884,22 +889,22 @@ export class Grid {
       const cr0 = this.canvas.getBoundingClientRect();
       if (this.outlineClick((e.clientX - cr0.left) / this.zoom, (e.clientY - cr0.top) / this.zoom)) { e.preventDefault(); return; }
     }
-    if (this.images.length) {
+    if (this.images.length || this.charts.length) {
       const cr1 = this.canvas.getBoundingClientRect();
       const px = (e.clientX - cr1.left) / this.zoom, py = (e.clientY - cr1.top) / this.zoom;
-      const sel = this.selImage >= 0 ? this.imageRect(this.selImage) : null;
+      const sel = this.selObj >= 0 ? this.imageRect(this.selObj) : null;
       const onHandle = sel && Math.abs(px - (sel.x + sel.w)) <= 7 && Math.abs(py - (sel.y + sel.h)) <= 7;
-      const hit = onHandle ? this.selImage : this.imageAt(px, py);
+      const hit = onHandle ? this.selObj : this.imageAt(px, py);
       if (hit >= 0 && px > this.headerW && py > this.headerH) {
         e.preventDefault();
-        this.selImage = hit;
+        this.selObj = hit;
         const orig = { ...this.imageRect(hit) };
         this.imgDrag = { mode: onHandle ? 'resize' : 'move', i: hit, sx: px, sy: py, orig, cur: orig };
         this.onImageSelect(hit);
         this.render();
         return;
       }
-      if (this.selImage >= 0) { this.selImage = -1; this.onImageSelect(-1); this.render(); }
+      if (this.selObj >= 0) { this.selObj = -1; this.onImageSelect(-1); this.render(); }
     }
     const g = this.grip(e);
     if (g) {
@@ -978,7 +983,8 @@ export class Grid {
     const row = Math.max(1, this.rowAt(this.sheetY(Math.max(c.y, this.headerH + 1))));
     const column = Math.max(1, this.columnAt(this.sheetX(Math.max(c.x, this.headerW + 1))));
     const r = this.lrect(row, column);
-    this.onImagePlace(d.i, row, column, Math.round(c.x - r.x), Math.round(c.y - r.y), Math.round(c.w), Math.round(c.h));
+    const o = this.objs()[d.i];
+    if (o) this.onImagePlace(o.kind, o.index, row, column, Math.round(c.x - r.x), Math.round(c.y - r.y), Math.round(c.w), Math.round(c.h));
     this.render();
   }
 
@@ -1738,14 +1744,44 @@ export class Grid {
   }
 
   /** Положение рисунка на экране (в логических пикселях) с учётом переноса мышью. */
+  /** Рисунки, затем диаграммы — единый список объектов поверх листа. */
+  private objs(): { kind: 'image' | 'chart'; index: number; row: number; column: number; dx: number; dy: number; width: number; height: number }[] {
+    return [
+      ...this.images.map((o, index) => ({ ...o, kind: 'image' as const, index })),
+      ...this.charts.map((o, index) => ({ ...o, kind: 'chart' as const, index })),
+    ];
+  }
+
+  /** Вид объекта по номеру в общем списке (для главного окна). */
+  objAt(i: number): { kind: 'image' | 'chart'; index: number } | null {
+    const o = this.objs()[i];
+    return o ? { kind: o.kind, index: o.index } : null;
+  }
+
+  private chartData(c: Chart): ChartData {
+    const empty: ChartData = { cats: [], names: [], series: [] };
+    const rg = parseRange(c.range);
+    if (!rg) return empty;
+    const [r1, c1, r2, c2] = rg, m = this.model();
+    const cats: string[] = [];
+    for (let r = r1 + 1; r <= r2; r++) cats.push(m.getFormattedCellValue(this.sheet, r, c1));
+    const names: string[] = [], series: number[][] = [];
+    const cols = c.kind === 2 ? 1 : c2 - c1;
+    for (let k = 1; k <= cols; k++) {
+      names.push(m.getFormattedCellValue(this.sheet, r1, c1 + k));
+      series.push(m.getRangeNumbers(this.sheet, r1 + 1, c1 + k, r2, c1 + k));
+    }
+    return { cats, names, series };
+  }
+
   private imageRect(i: number): { x: number; y: number; w: number; h: number } {
     if (this.imgDrag?.i === i) return this.imgDrag.cur;
-    const im = this.images[i], c = this.lrect(im.row, im.column);
+    const im = this.objs()[i], c = this.lrect(im.row, im.column);
     return { x: c.x + im.dx, y: c.y + im.dy, w: im.width, h: im.height };
   }
 
   private imageAt(px: number, py: number): number {
-    for (let i = this.images.length - 1; i >= 0; i--) {
+    for (let i = this.objs().length - 1; i >= 0; i--) {
       const r = this.imageRect(i);
       if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
     }
@@ -1756,27 +1792,36 @@ export class Grid {
     const ctx = this.ctx, model = this.model();
     ctx.save();
     ctx.beginPath(); ctx.rect(this.headerW, this.headerH, this.viewW - this.headerW, this.viewH - this.headerH); ctx.clip();
-    this.images.forEach((im, i) => {
+    const all = this.objs();
+    all.forEach((o, i) => {
       const r = this.imageRect(i);
       if (r.x > this.viewW || r.y > this.viewH || r.x + r.w < this.headerW || r.y + r.h < this.headerH) return;
-      const key = `${this.sheet}:${i}:${im.sig}`;
+      const drawFrame = () => {
+        if (i !== this.selObj) return;
+        ctx.strokeStyle = '#1f4e9c'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
+      };
+      if (o.kind === 'chart') {
+        try { drawChart(ctx, r, this.charts[o.index].kind, this.charts[o.index].title, this.chartData(this.charts[o.index]), this.theme.textColor ? '#333' : '#333'); } catch { /* диаграмма без данных */ }
+        drawFrame();
+        return;
+      }
+      const im = this.images[o.index];
+      const key = `${this.sheet}:${o.index}:${im.sig}`;
       let el = this.imgCache.get(key);
       if (el === undefined) {
         this.imgCache.set(key, null);
         try {
           const img = new Image();
           img.onload = () => { this.imgCache.set(key, img); this.render(); };
-          img.src = URL.createObjectURL(new Blob([model.getImageData(this.sheet, i) as BlobPart], { type: `image/${im.ext}` }));
+          img.src = URL.createObjectURL(new Blob([model.getImageData(this.sheet, o.index) as BlobPart], { type: `image/${im.ext}` }));
         } catch { /* битый рисунок */ }
         el = null;
       }
       if (el) ctx.drawImage(el, r.x, r.y, r.w, r.h);
       else { ctx.strokeStyle = '#999'; ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h); }
-      if (i === this.selImage) {
-        ctx.strokeStyle = '#1f4e9c'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
-        ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
-        ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
-      }
+      drawFrame();
     });
     ctx.restore();
   }
@@ -1792,7 +1837,8 @@ export class Grid {
       this.pageBreaks = model.getPageBreaks(this.sheet);
     } catch { this.pageBreaks = [[], []]; }
     try { this.images = model.getImages(this.sheet); } catch { this.images = []; }
-    if (this.selImage >= this.images.length) this.selImage = -1;
+    try { this.charts = model.getCharts(this.sheet); } catch { this.charts = []; }
+    if (this.selObj >= this.images.length + this.charts.length) this.selObj = -1;
   }
 
   /** Значок метки: синий кружок. */

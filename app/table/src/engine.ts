@@ -20,6 +20,9 @@ export interface RichRun { text: string; b?: boolean; i?: boolean; u?: boolean; 
 /** Рисунок на листе: левый верхний угол — в ячейке (row, column) со сдвигом dx, dy (px). sig меняется вместе с содержимым. */
 export interface ImageInfo { row: number; column: number; dx: number; dy: number; width: number; height: number; ext: string; name: string; sig: number }
 
+/** Диаграмма: kind 0 — столбцы, 1 — линии, 2 — круговая; range — «A1:C5» (первая строка — имена рядов, первый столбец — подписи). */
+export interface Chart { kind: number; title: string; range: string; row: number; column: number; dx: number; dy: number; width: number; height: number }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
@@ -128,6 +131,10 @@ export interface Model {
   addImage(sheet: number, row: number, column: number, width: number, height: number, ext: string, name: string, data: Uint8Array): number;
   placeImage(sheet: number, index: number, row: number, column: number, dx: number, dy: number, width: number, height: number): void;
   deleteImage(sheet: number, index: number): void;
+  getCharts(sheet: number): Chart[];
+  /** Заменяет все диаграммы листа (одно действие отмены). */
+  setCharts(sheet: number, charts: Chart[]): void;
+  getRangeNumbers(sheet: number, r1: number, c1: number, r2: number, c2: number): number[];
   isSheetProtected(sheet: number): boolean;
   /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
   isSheetPasswordProtected(sheet: number): boolean;

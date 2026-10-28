@@ -654,6 +654,25 @@ impl Model {
         self.model.delete_image(sheet, index as usize).map_err(to_js_error)
     }
 
+    /// ENS-Office: charts of the sheet, `[{kind, title, range, row, column, dx, dy, width, height}]`.
+    #[wasm_bindgen(js_name = "getCharts")]
+    pub fn get_charts(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let list = self.model.get_charts(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setCharts")]
+    pub fn set_charts(&mut self, sheet: u32, charts: JsValue) -> Result<(), JsError> {
+        let charts: Vec<ironcalc_base::types::Chart> = serde_wasm_bindgen::from_value(charts).map_err(JsError::from)?;
+        self.model.set_charts(sheet, charts).map_err(to_js_error)
+    }
+
+    /// ENS-Office: the numbers of a range, row by row (`NaN` — not a number).
+    #[wasm_bindgen(js_name = "getRangeNumbers")]
+    pub fn get_range_numbers(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Result<Vec<f64>, JsError> {
+        self.model.get_range_numbers(sheet, r1, c1, r2, c2).map_err(to_js_error)
+    }
+
     /// ENS-Office: protection of the sheet (no password) and of the book structure.
     #[wasm_bindgen(js_name = "isSheetProtected")]
     pub fn is_sheet_protected(&self, sheet: u32) -> Result<bool, JsError> {

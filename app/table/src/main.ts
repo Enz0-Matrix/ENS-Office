@@ -2,6 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
+import { parseRange } from './chart';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
@@ -1137,15 +1138,86 @@ imageInput.addEventListener('change', async () => {
     const k = Math.min(1, 480 / bmp.width, 360 / bmp.height);
     const index = model.addImage(grid.sheet, grid.sel.row, grid.sel.column, Math.max(8, Math.round(bmp.width * k)), Math.max(8, Math.round(bmp.height * k)), ext, file.name, bytes);
     bmp.close();
-    grid.selImage = index;
+    grid.selObj = index;
     grid.render();
   } catch (e) { showToast(`Не удалось вставить рисунок: ${e}`); }
   focusGrid();
 });
-grid.onImagePlace = (i, row, column, dx, dy, w, h) => {
-  try { model.placeImage(grid.sheet, i, row, column, dx, dy, w, h); } catch (e) { showToast(String(e)); }
+grid.onImagePlace = (kind, i, row, column, dx, dy, w, h) => {
+  try {
+    if (kind === 'image') model.placeImage(grid.sheet, i, row, column, dx, dy, w, h);
+    else model.setCharts(grid.sheet, model.getCharts(grid.sheet).map((c, k) => (k === i ? { ...c, row, column, dx, dy, width: w, height: h } : c)));
+  } catch (e) { showToast(String(e)); }
   grid.render();
 };
+
+function deleteSelectedObject(): void {
+  const o = grid.objAt(grid.selObj);
+  try {
+    if (o?.kind === 'image') model.deleteImage(grid.sheet, o.index);
+    else if (o) model.setCharts(grid.sheet, model.getCharts(grid.sheet).filter((_, k) => k !== o.index));
+  } catch (e) { showToast(String(e)); }
+  grid.selObj = -1;
+  grid.render();
+}
+
+// --- Диаграммы ---
+
+/** Окно диаграммы: тип, заголовок, диапазон данных; для существующей — ещё «Удалить». */
+function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string }): void {
+  const overlay = $('recovery');
+  const kinds = ['Столбцы', 'Линии', 'Круговая'];
+  overlay.innerHTML = `<div class="modal"><h2>${existing === null ? 'Новая диаграмма' : 'Диаграмма'}</h2>
+    <p>Первая строка диапазона — названия рядов, первый столбец — подписи. Круговая берёт первый ряд.</p>
+    <p><label>Тип: <select data-f="kind">${kinds.map((k, i) => `<option value="${i}"${i === initial.kind ? ' selected' : ''}>${k}</option>`).join('')}</select></label></p>
+    <p><label>Заголовок: <input data-f="title" style="width:60%"></label></p>
+    <p><label>Данные: <input data-f="range" style="width:40%" placeholder="A1:C5"></label></p>
+    <div class="rec-actions">${existing === null ? '' : '<button data-act="delete" class="danger">Удалить</button>'}
+    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
+  f('title').value = initial.title;
+  f('range').value = initial.range;
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    try {
+      const list = model.getCharts(grid.sheet);
+      if (act === 'delete' && existing !== null) model.setCharts(grid.sheet, list.filter((_, k) => k !== existing));
+      if (act === 'ok') {
+        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase() };
+        if (!parseRange(c.range)) { showToast('Укажите диапазон из двух и более строк и столбцов, например A1:C5.'); return; }
+        if (existing === null) {
+          const s = grid.sel;
+          model.setCharts(grid.sheet, [...list, { ...c, row: s.row, column: s.column, dx: 0, dy: 0, width: 480, height: 288 }]);
+          grid.selObj = grid.images.length + list.length;
+        } else {
+          model.setCharts(grid.sheet, list.map((x, k) => (k === existing ? { ...x, ...c } : x)));
+        }
+      }
+    } catch (err) { showToast(String(err)); }
+    grid.render();
+    close();
+  });
+}
+
+function insertChart(kind: number): void {
+  const s = grid.sel;
+  const single = s.r1 === s.r2 && s.c1 === s.c2;
+  const [r1, c1, r2, c2] = single ? model.getSheetDimension(grid.sheet) : [s.r1, s.c1, s.r2, s.c2];
+  chartDialog(null, { kind, title: '', range: `${columnName(c1)}${r1}:${columnName(c2)}${r2}` });
+}
+
+function editSelectedChart(): void {
+  const o = grid.objAt(grid.selObj);
+  if (o?.kind !== 'chart') { showToast('Выделите диаграмму щелчком мыши.'); return; }
+  const c = model.getCharts(grid.sheet)[o.index];
+  chartDialog(o.index, { kind: c.kind, title: c.title, range: c.range });
+}
+grid.onObjectDouble = () => { if (grid.objAt(grid.selObj)?.kind === 'chart') editSelectedChart(); };
 
 // --- Защита листа, ячеек и структуры книги ---
 
@@ -2562,7 +2634,7 @@ register(
   { id: 'edit.undo', label: 'Отменить', keywords: ['undo', 'назад', 'отмена'], keys: ['Ctrl+KeyZ'], run: () => undoRedo('undo') },
   { id: 'edit.redo', label: 'Повторить', keywords: ['redo', 'вернуть'], keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => undoRedo('redo') },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
-    if (grid.selImage >= 0) { try { model.deleteImage(grid.sheet, grid.selImage); } catch (e) { showToast(String(e)); } grid.selImage = -1; grid.render(); return; }
+    if (grid.selObj >= 0) { deleteSelectedObject(); return; }
     void onTargets('Очистка', () => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); })
       .then(() => { grid.render(); updateFormulaBar(); });
   } },
@@ -2602,6 +2674,10 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'chart.bar', label: 'Диаграмма: столбцы', keywords: ['chart', 'column chart', 'диаграмма', 'гистограмма', 'график'], run: () => insertChart(0) },
+  { id: 'chart.line', label: 'Диаграмма: линии', keywords: ['line chart', 'график', 'диаграмма'], run: () => insertChart(1) },
+  { id: 'chart.pie', label: 'Диаграмма: круговая', keywords: ['pie chart', 'круговая', 'диаграмма'], run: () => insertChart(2) },
+  { id: 'chart.edit', label: 'Изменить диаграмму', keywords: ['edit chart'], run: () => editSelectedChart() },
   { id: 'insert.image', label: 'Вставить рисунок', keywords: ['picture', 'image', 'рисунок', 'картинка', 'изображение', 'фото'],
     run: () => imageInput.click() },
   { id: 'protect.sheet', label: 'Защитить лист / снять защиту', keywords: ['protect sheet', 'защита листа', 'защитить', 'блокировка'],

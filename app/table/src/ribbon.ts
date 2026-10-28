@@ -209,6 +209,12 @@ export const TABS: RibbonTab[] = [
     label: 'Вставка',
     groups: [
       { name: 'Листы', items: [{ type: 'large', command: 'sheet.new', icon: 'table_add', label: 'Новый лист' }] },
+      { name: 'Диаграммы', items: [
+        { type: 'large', command: 'chart.bar', icon: 'chart_bar', label: 'Столбцы' },
+        { type: 'large', command: 'chart.line', icon: 'chart_line', label: 'Линии' },
+        { type: 'large', command: 'chart.pie', icon: 'chart_pie', label: 'Круговая' },
+        { type: 'large', command: 'chart.edit', icon: 'chart_bar', label: 'Изменить' },
+      ] },
       { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
