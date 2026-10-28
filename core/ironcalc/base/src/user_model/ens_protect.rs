@@ -67,7 +67,8 @@ impl UserModel<'_> {
 
     /// Error if the sheet is protected (rows, columns, formatting and the like).
     pub(crate) fn guard_sheet(&self, sheet: u32) -> Result<(), String> {
-        if self.model.workbook.worksheet(sheet)?.ens_protected {
+        // An invalid sheet is reported by the operation itself.
+        if self.model.workbook.worksheet(sheet).is_ok_and(|w| w.ens_protected) {
             return Err("Лист защищён. Снимите защиту листа, чтобы внести изменения.".to_string());
         }
         Ok(())
@@ -84,7 +85,7 @@ impl UserModel<'_> {
 
     /// Error if the sheet is protected and the cells `r1..=r2` × `c1..=c2` are not all unlocked.
     pub(crate) fn guard_cells(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Result<(), String> {
-        if !self.model.workbook.worksheet(sheet)?.ens_protected {
+        if !self.model.workbook.worksheet(sheet).is_ok_and(|w| w.ens_protected) {
             return Ok(());
         }
         let count = i64::from(r2 - r1 + 1) * i64::from(c2 - c1 + 1);
