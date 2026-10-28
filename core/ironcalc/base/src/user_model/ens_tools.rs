@@ -755,6 +755,66 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    pub(crate) fn write_rich_text(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        runs: Option<Vec<crate::types::RichRun>>,
+        text: &str,
+    ) -> Result<(), String> {
+        let style = self.model.workbook.worksheet(sheet)?.cell(row, column).map_or(0, |c| c.get_style());
+        match runs {
+            Some(r) => self.model.set_cell_with_rich_text(sheet, row, column, r, style),
+            None => self.model.set_user_input(sheet, row, column, text.to_string()),
+        }
+    }
+
+    /// ENS-Office: the runs of the rich text of a cell (`None` — a plain cell).
+    pub fn get_rich_text(&self, sheet: u32, row: i32, column: i32) -> Result<Option<Vec<crate::types::RichRun>>, String> {
+        Ok(match self.model.workbook.worksheet(sheet)?.cell(row, column).as_deref() {
+            Some(crate::types::Cell::SharedString { si, .. }) => self.model.workbook.ens_rich.get(si).cloned(),
+            _ => None,
+        })
+    }
+
+    /// ENS-Office: cells with a rich text in the rectangle, flat `[row, column, …]`.
+    pub fn rich_text_cells_in(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Result<Vec<i32>, String> {
+        let mut out = Vec::new();
+        if self.model.workbook.ens_rich.is_empty() {
+            return Ok(out);
+        }
+        let ws = self.model.workbook.worksheet(sheet)?;
+        for row in r1..=r2 {
+            for (column, cell) in ws.sheet_data.cells_in_row_between(row, c1, c2) {
+                if let crate::types::Cell::SharedString { si, .. } = &*cell {
+                    if self.model.workbook.ens_rich.contains_key(si) {
+                        out.extend([row, column]);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// ENS-Office: sets a text cell made of formatted runs (no runs, or one plain run — a plain text);
+    /// an undoable step.
+    pub fn set_rich_text(&mut self, sheet: u32, row: i32, column: i32, runs: Vec<crate::types::RichRun>) -> Result<(), String> {
+        self.guard_cells(sheet, row, column, row, column)?;
+        let new_text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let plain = |r: &crate::types::RichRun| !(r.b || r.i || r.u || r.strike || r.sz.is_some() || r.color.is_some() || r.name.is_some() || r.vert != 0);
+        let new_value = if runs.iter().all(plain) { None } else { Some(runs) };
+        let old_value = self.get_rich_text(sheet, row, column)?;
+        let old_text = self.model.get_localized_cell_content(sheet, row, column)?;
+        if old_value == new_value && old_text == new_text {
+            return Ok(());
+        }
+        self.write_rich_text(sheet, row, column, new_value.clone(), &new_text)?;
+        self.model.evaluate();
+        self.push_diff_list(vec![Diff::SetRichText { sheet, row, column, new_value, old_value, new_text, old_text }]);
+        Ok(())
+    }
+
     /// ENS-Office: all comments (notes) of the sheet.
     pub fn get_comments(&self, sheet: u32) -> Result<Vec<crate::types::Comment>, String> {
         Ok(self.model.workbook.worksheet(sheet)?.comments.clone())

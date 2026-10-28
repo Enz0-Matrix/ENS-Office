@@ -264,3 +264,38 @@ fn test_ens_protection_export() {
     back.set_sheet_protected(0, false).unwrap();
     back.set_user_input(0, 1, 1, "z").unwrap();
 }
+
+// ENS-Office: rich text (formatted parts of a cell's text) round trip, with undo.
+#[test]
+fn test_ens_rich_text_export() {
+    use ironcalc_base::types::RichRun;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 2, 1, "Жирный & курсив").unwrap();
+    let runs = vec![
+        RichRun { text: "Жирный".to_string(), b: true, color: Some("#FF0000".to_string()), sz: Some(14.0), ..Default::default() },
+        RichRun { text: " & ".to_string(), ..Default::default() },
+        RichRun { text: "курсив".to_string(), i: true, u: true, vert: 1, name: Some("Arial".to_string()), ..Default::default() },
+    ];
+    model.set_rich_text(0, 1, 1, runs.clone()).unwrap();
+    assert_eq!(model.get_cell_content(0, 1, 1).unwrap(), "Жирный & курсив");
+    // Plain input of the same text does not pick up the formatting.
+    assert_eq!(model.get_rich_text(0, 2, 1).unwrap(), None);
+    model.undo().unwrap();
+    assert_eq!(model.get_rich_text(0, 1, 1).unwrap(), None);
+    assert_eq!(model.get_cell_content(0, 1, 1).unwrap(), "");
+    model.redo().unwrap();
+    assert_eq!(model.get_rich_text(0, 1, 1).unwrap().unwrap(), runs);
+    let name = "temp_ens_rich.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/sharedStrings.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(xml.contains("<r><rPr><b/><color rgb=\"FFFF0000\"/><sz val=\"14\"/></rPr><t xml:space=\"preserve\">Жирный</t></r>"), "{xml}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_rich_text(0, 1, 1).unwrap().unwrap(), runs);
+    assert_eq!(back.get_rich_text(0, 2, 1).unwrap(), None);
+    assert_eq!(back.get_cell_content(0, 1, 1).unwrap(), "Жирный & курсив");
+}

@@ -155,6 +155,10 @@ impl<'a> UserModel<'a> {
                 Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
                 }
+                Diff::SetRichText { sheet, row, column, new_value: _, old_value, new_text: _, old_text } => {
+                    self.write_rich_text(*sheet, *row, *column, old_value.clone(), old_text)?;
+                    needs_evaluation = true;
+                }
                 Diff::SetSheetProtected { sheet, new_value: _, old_value } => {
                     self.write_sheet_protected(*sheet, *old_value)?;
                 }
@@ -752,6 +756,10 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;
+                }
+                Diff::SetRichText { sheet, row, column, new_value, old_value: _, new_text, old_text: _ } => {
+                    self.write_rich_text(*sheet, *row, *column, new_value.clone(), new_text)?;
+                    needs_evaluation = true;
                 }
                 Diff::SetSheetProtected { sheet, new_value, old_value: _ } => {
                     self.write_sheet_protected(*sheet, *new_value)?;

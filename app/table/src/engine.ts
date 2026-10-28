@@ -14,6 +14,9 @@ export interface BorderItem { style: string; color?: Color }
 
 export interface CellBorder { top?: BorderItem; bottom?: BorderItem; left?: BorderItem; right?: BorderItem; diagonal?: BorderItem }
 
+/** Часть текста ячейки со своим шрифтом; vert: 0 — обычный, 1 — надстрочный, 2 — подстрочный. */
+export interface RichRun { text: string; b?: boolean; i?: boolean; u?: boolean; strike?: boolean; sz?: number | null; color?: string | null; name?: string | null; vert?: number }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
@@ -112,6 +115,11 @@ export interface Model {
   getPageBreaks(sheet: number): [number[], number[]];
   setPageBreak(sheet: number, isRow: boolean, index: number, on: boolean): void;
   clearPageBreaks(sheet: number): void;
+  /** Части текста ячейки с собственным оформлением (rich text) или null. */
+  getRichText(sheet: number, row: number, column: number): RichRun[] | null;
+  setRichText(sheet: number, row: number, column: number, runs: RichRun[]): void;
+  /** Ячейки с rich text в прямоугольнике: [строка, столбец, …]. */
+  richTextCellsIn(sheet: number, r1: number, c1: number, r2: number, c2: number): number[];
   isSheetProtected(sheet: number): boolean;
   /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
   isSheetPasswordProtected(sheet: number): boolean;

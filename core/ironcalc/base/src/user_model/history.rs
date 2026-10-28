@@ -123,6 +123,16 @@ pub(crate) enum Diff {
         new_value: [i32; 4],
         old_value: [i32; 4],
     },
+    /// ENS-Office: the rich text of a cell changed (`None` — plain text `old_text` / `new_text`).
+    SetRichText {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        new_value: Option<Vec<crate::types::RichRun>>,
+        old_value: Option<Vec<crate::types::RichRun>>,
+        new_text: String,
+        old_text: String,
+    },
     /// ENS-Office: a sheet is protected / unprotected.
     SetSheetProtected {
         sheet: u32,

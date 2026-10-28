@@ -1853,7 +1853,10 @@ impl<'a> Model<'a> {
         );
         let mut shared_strings = HashMap::new();
         for (index, s) in workbook.shared_strings.iter().enumerate() {
-            shared_strings.insert(s.to_string(), index);
+            // ENS-Office: a rich string belongs to its cell only, plain input must not reuse it.
+            if !workbook.ens_rich.contains_key(&(index as i32)) {
+                shared_strings.insert(s.to_string(), index);
+            }
         }
 
         let mut model = Model {
@@ -2918,6 +2921,22 @@ impl<'a> Model<'a> {
         let worksheet = self.workbook.worksheet_mut(sheet)?;
         worksheet.set_cell_with_array_formula(row, column, formula_index, style, width, height)?;
         Ok(formula_index)
+    }
+
+    /// ENS-Office: a cell with a rich text (a new shared string that is not looked up by its text).
+    pub(crate) fn set_cell_with_rich_text(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        runs: Vec<crate::types::RichRun>,
+        style: i32,
+    ) -> Result<(), String> {
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let index = self.workbook.shared_strings.len();
+        self.workbook.shared_strings.push(text);
+        self.workbook.ens_rich.insert(index as i32, runs);
+        self.workbook.worksheet_mut(sheet)?.set_cell_with_string(row, column, index as i32, style)
     }
 
     pub(crate) fn set_cell_with_string(

@@ -3,7 +3,7 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type MergedCell, type Model } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type MergedCell, type Model, type RichRun } from './engine';
 import { fontStack } from './fonts';
 import { PALETTE } from './numfmt';
 
@@ -1171,6 +1171,14 @@ export class Grid {
     }
 
     // Текст.
+    const richAt = new Map<number, RichRun[]>();
+    try {
+      const flat = model.richTextCellsIn(this.sheet, ra, ca, rb, cb);
+      for (let i = 0; i < flat.length; i += 2) {
+        const runs = model.getRichText(this.sheet, flat[i], flat[i + 1]);
+        if (runs) richAt.set(flat[i] * 16_385 + flat[i + 1], runs);
+      }
+    } catch { /* без rich text */ }
     for (const cell of cells) {
       const ext = extOf(cell.r, cell.c);
       if (ext?.data_bar?.show_value === false || ext?.icon?.show_value === false || ext?.rating?.show_value === false) continue;
@@ -1199,7 +1207,9 @@ export class Grid {
       let fc = 0;
       try { fc = model.getFormattedCellColor(this.sheet, cell.r, cell.c); } catch { fc = 0; }
       const shownStyle = fc > 0 && style ? { ...style, font: { ...style.font, color: PALETTE[fc] } } : style;
-      this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
+      const runs = richAt.get(cell.r * 16_385 + cell.c);
+      if (runs && !style?.alignment?.text_rotation) this.drawRich(runs, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
+      else this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
     }
 
     // Границы — поверх всего.
@@ -1440,6 +1450,58 @@ export class Grid {
         if (f?.strike) ctx.fillRect(ux, ty, tw, 1);
       }
       y0 += lineH;
+    });
+    ctx.restore();
+  }
+
+  /** Текст ячейки с разным оформлением частей (rich text): слова с переносом, у каждой части свой шрифт. */
+  private drawRich(runs: RichRun[], style: CellStyle | null, align: string,
+    cell: { x: number; y: number; w: number; h: number }, spillL: number, spillR: number): void {
+    const ctx = this.ctx, model = this.model();
+    const f = style?.font;
+    const basePx = Math.round((f?.sz ?? 11) * 1.33);
+    const base = f?.color ? model.resolveColor(f.color) || '#000' : this.theme.textColor ?? '#000';
+    interface Seg { text: string; font: string; color: string; u: boolean; strike: boolean; px: number; shift: number; w: number }
+    const wrap = !!style?.alignment?.wrap_text;
+    const lines: Seg[][] = [[]];
+    const widths = [0];
+    for (const run of runs) {
+      const px = Math.round((run.sz ?? f?.sz ?? 11) * 1.33);
+      const drawPx = run.vert ? Math.round(px * 0.7) : px;
+      const font = `${run.i ? 'italic ' : ''}${run.b ? 'bold ' : ''}${drawPx}px ${fontStack(run.name ?? f?.name)}`;
+      ctx.font = font;
+      const shift = run.vert === 1 ? -Math.round(px * 0.3) : run.vert === 2 ? Math.round(px * 0.2) : 0;
+      for (const part of run.text.split(/(\n|\s+|[^\s]+)/).filter((t) => t)) {
+        if (part === '\n') { lines.push([]); widths.push(0); continue; }
+        const w = ctx.measureText(part).width;
+        const last = lines.length - 1;
+        if (wrap && lines[last].length && widths[last] + w > cell.w - 6 && part.trim()) { lines.push([]); widths.push(0); }
+        const cur = lines.length - 1;
+        if (wrap && !lines[cur].length && !part.trim()) continue;
+        lines[cur].push({ text: part, font, color: run.color ?? base, u: !!run.u, strike: !!run.strike, px: drawPx, shift, w });
+        widths[cur] += w;
+      }
+    }
+    const lh = lines.map((l) => Math.round(Math.max(basePx, ...l.map((s) => s.px)) * 1.22));
+    const blockH = lh.reduce((a, b) => a + b, 0);
+    const vertical = style?.alignment?.vertical ?? 'bottom';
+    let y = vertical === 'top' ? cell.y + 2 : vertical === 'center' || vertical === 'justify' || vertical === 'distributed' ? cell.y + (cell.h - blockH) / 2
+      : cell.y + cell.h - blockH - 2;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(spillL + 1, cell.y, spillR - spillL - 2, cell.h); ctx.clip();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    lines.forEach((line, n) => {
+      let x = align === 'right' ? cell.x + cell.w - 3 - widths[n] : align === 'center' || align === 'centercontinuous' ? cell.x + (cell.w - widths[n]) / 2 : cell.x + 3;
+      const ty = y + lh[n] / 2 + 1;
+      for (const s of line) {
+        ctx.font = s.font; ctx.fillStyle = s.color;
+        ctx.fillText(s.text, x, ty + s.shift);
+        if (s.u) ctx.fillRect(x, ty + s.shift + s.px / 2 - 1, s.w, 1);
+        if (s.strike) ctx.fillRect(x, ty + s.shift, s.w, 1);
+        x += s.w;
+      }
+      y += lh[n];
     });
     ctx.restore();
   }

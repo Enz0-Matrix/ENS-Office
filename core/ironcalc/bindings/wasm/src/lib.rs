@@ -581,6 +581,25 @@ impl Model {
         self.model.clear_page_breaks(sheet).map_err(to_js_error)
     }
 
+    /// ENS-Office: formatted runs of a cell's text, `[{text, b, i, u, strike, sz, color, name, vert}]` or `null`.
+    #[wasm_bindgen(js_name = "getRichText")]
+    pub fn get_rich_text(&self, sheet: u32, row: i32, column: i32) -> Result<JsValue, JsError> {
+        let r = self.model.get_rich_text(sheet, row, column).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&r).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setRichText")]
+    pub fn set_rich_text(&mut self, sheet: u32, row: i32, column: i32, runs: JsValue) -> Result<(), JsError> {
+        let runs: Vec<ironcalc_base::types::RichRun> = serde_wasm_bindgen::from_value(runs).map_err(JsError::from)?;
+        self.model.set_rich_text(sheet, row, column, runs).map_err(to_js_error)
+    }
+
+    /// ENS-Office: cells with a rich text in a rectangle, flat `[row, column, …]`.
+    #[wasm_bindgen(js_name = "richTextCellsIn")]
+    pub fn rich_text_cells_in(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Result<Vec<i32>, JsError> {
+        self.model.rich_text_cells_in(sheet, r1, c1, r2, c2).map_err(to_js_error)
+    }
+
     /// ENS-Office: protection of the sheet (no password) and of the book structure.
     #[wasm_bindgen(js_name = "isSheetProtected")]
     pub fn is_sheet_protected(&self, sheet: u32) -> Result<bool, JsError> {

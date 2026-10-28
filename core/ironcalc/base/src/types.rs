@@ -137,6 +137,34 @@ pub struct Workbook {
     pub ens_change_log: String,
     /// ENS-Office: the book structure is locked (Excel's `<workbookProtection lockStructure>`).
     pub ens_structure_locked: bool,
+    /// ENS-Office: formatted parts of the text of shared strings (Excel's `<r>` runs), by index in
+    /// `shared_strings`. Such a string is used by one cell only and is not found by text.
+    pub ens_rich: HashMap<i32, Vec<RichRun>>,
+}
+
+/// A run of a rich text (a part of a cell's text with its own font).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone, Default)]
+pub struct RichRun {
+    pub text: String,
+    #[serde(default)]
+    pub b: bool,
+    #[serde(default)]
+    pub i: bool,
+    #[serde(default)]
+    pub u: bool,
+    #[serde(default)]
+    pub strike: bool,
+    /// Size in points; `None` — as the cell's.
+    #[serde(default)]
+    pub sz: Option<f64>,
+    /// "#RRGGBB"; `None` — as the cell's.
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 0 — normal, 1 — superscript, 2 — subscript.
+    #[serde(default)]
+    pub vert: u8,
 }
 
 /// A defined name. The `sheet_id` is the sheet index in case the name is local

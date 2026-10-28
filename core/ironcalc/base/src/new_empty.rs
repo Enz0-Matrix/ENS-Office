@@ -687,6 +687,7 @@ impl<'a> Model<'a> {
             theme: Default::default(),
             ens_change_log: String::new(),
             ens_structure_locked: false,
+            ens_rich: HashMap::new(),
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;

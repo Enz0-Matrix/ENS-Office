@@ -2,7 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog, userName } from './changelog';
@@ -140,6 +140,86 @@ function focusGrid(): void {
   editor.focus({ preventScroll: true });
 }
 
+// --- Rich text: оформление части текста при вводе ---
+
+type Fmt = Omit<RichRun, 'text'>;
+const fmtKey = (f: Fmt) => JSON.stringify([f.b, f.i, f.u, f.strike, f.sz, f.color, f.name, f.vert]);
+/** Оформление каждого знака редактируемого текста (по индексу знака в строке JS). */
+let rich: { fmt: Fmt[]; text: string } | null = null;
+let lastEditInput: HTMLTextAreaElement = editor;
+
+function richFromModel(sheet: number, row: number, column: number): void {
+  rich = null;
+  try {
+    const runs = model.getRichText(sheet, row, column);
+    if (!runs) return;
+    const fmt: Fmt[] = [];
+    for (const r of runs) { const { text, ...f } = r; for (let i = 0; i < text.length; i++) fmt.push(f); }
+    rich = { fmt, text: runs.map((r) => r.text).join('') };
+  } catch { rich = null; }
+}
+
+/** Ввод изменил текст: вставленные знаки берут оформление соседнего слева. */
+function richReconcile(value: string): void {
+  if (!rich) rich = { fmt: [], text: '' };
+  const old = rich.text;
+  if (old === value) return;
+  let p = 0;
+  while (p < old.length && p < value.length && old[p] === value[p]) p++;
+  let s = 0;
+  while (s < old.length - p && s < value.length - p && old[old.length - 1 - s] === value[value.length - 1 - s]) s++;
+  const inherit: Fmt = rich.fmt[p - 1] ?? rich.fmt[p] ?? {};
+  const inserted = Array.from({ length: value.length - p - s }, () => inherit);
+  rich.fmt = [...rich.fmt.slice(0, p), ...inserted, ...rich.fmt.slice(old.length - s)];
+  rich.text = value;
+}
+
+/** Части текста с одинаковым оформлением; null, если оформления нет или это формула. */
+function richRuns(value: string): RichRun[] | null {
+  if (!rich || value.startsWith('=')) return null;
+  richReconcile(value);
+  const f = rich!.fmt;
+  if (!f.some((x) => fmtKey(x) !== fmtKey({}))) return null;
+  const runs: RichRun[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const last = runs[runs.length - 1];
+    if (last && fmtKey(f[i]) === fmtKey(f[i - 1])) last.text += value[i];
+    else runs.push({ ...f[i], text: value[i] });
+  }
+  return runs;
+}
+
+/** Команда оформления при выделенной части текста в поле ввода — применяется к части, а не к ячейке. */
+function richStyle(path: string, value: string): boolean {
+  if (!editing) return false;
+  const inp = lastEditInput;
+  const a = inp.selectionStart ?? 0, b = inp.selectionEnd ?? 0;
+  if (a === b || inp.value.startsWith('=')) return false;
+  richReconcile(inp.value);
+  const f = rich!.fmt;
+  const part = f.slice(a, b);
+  const all = (get: (x: Fmt) => unknown) => part.every((x) => !!get(x));
+  const apply = (set: (x: Fmt) => Fmt) => { for (let i = a; i < b; i++) f[i] = set(f[i]); };
+  switch (path) {
+    case 'font.b': { const on = !all((x) => x.b); apply((x) => ({ ...x, b: on })); break; }
+    case 'font.i': { const on = !all((x) => x.i); apply((x) => ({ ...x, i: on })); break; }
+    case 'font.u': { const on = !all((x) => x.u); apply((x) => ({ ...x, u: on })); break; }
+    case 'font.strike': { const on = !all((x) => x.strike); apply((x) => ({ ...x, strike: on })); break; }
+    case 'font.color': if (/^#[0-9a-f]{6}$/i.test(value)) apply((x) => ({ ...x, color: value })); else return false; break;
+    case 'font.size': { const n = Number(value); if (!(n > 0)) return false; apply((x) => ({ ...x, sz: n })); break; }
+    case 'font.name': apply((x) => ({ ...x, name: value })); break;
+    case 'font.vert_align': apply((x) => ({ ...x, vert: value === 'superscript' ? 1 : value === 'subscript' ? 2 : 0 })); break;
+    default: return false;
+  }
+  showToast('Оформление части текста применится при вводе (Enter).');
+  return true;
+}
+
+editor.addEventListener('input', () => { if (editing) richReconcile(editor.value); lastEditInput = editor; });
+formula.addEventListener('input', () => { if (editing) richReconcile(formula.value); lastEditInput = formula; });
+editor.addEventListener('focus', () => { lastEditInput = editor; });
+formula.addEventListener('focus', () => { lastEditInput = formula; });
+
 function startEdit(initial?: string): void {
   if (model.isSheetProtected(grid.sheet) && (model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.protection?.locked ?? true)) {
     showToast('Ячейка защищена от изменений. Снимите защиту листа (Рецензирование) или защиту ячейки.');
@@ -147,6 +227,7 @@ function startEdit(initial?: string): void {
   }
   editMode = initial === undefined ? 'edit' : 'enter';
   editCell = { sheet: grid.sheet, row: grid.sel.row, column: grid.sel.column };
+  if (initial === undefined) richFromModel(grid.sheet, grid.sel.row, grid.sel.column); else rich = null;
   placeEditor();
   editor.value = initial ?? model.getCellContent(grid.sheet, grid.sel.row, grid.sel.column);
   formula.value = editor.value;
@@ -178,7 +259,9 @@ function commitEdit(dRow: number, dCol: number): void {
       const text = String(Math.round((n / d) * 1e12) / 1e12);
       model.setUserInput(s.sheet, s.row, s.column, settings.decimal === 'comma' ? text.replace('.', ',') : text);
     } else {
-    model.setUserInput(s.sheet, s.row, s.column, value);
+      const runs = richRuns(value);
+      if (runs) model.setRichText(s.sheet, s.row, s.column, runs);
+      else model.setUserInput(s.sheet, s.row, s.column, value);
     }
     // Текст в несколько строк (Alt+Enter) — сразу с переносом, как в Excel.
     if (!value.startsWith('=') && value.includes('\n') && !model.getCellStyle(s.sheet, s.row, s.column).style.alignment?.wrap_text) {
@@ -197,6 +280,7 @@ function commitEdit(dRow: number, dCol: number): void {
     return;
   }
   editing = false;
+  rich = null;
   editor.classList.remove('editing', 'away');
   showRefs();
   const after = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
@@ -218,6 +302,7 @@ function activeValue(): string {
 function cancelEdit(): void {
   endPoint();
   editing = false;
+  rich = null;
   editor.classList.remove('editing', 'away');
   showRefs();
   editor.value = '';
@@ -317,6 +402,9 @@ function editKey(e: KeyboardEvent): void {
     applyPoint(inp, from.row + d[0], from.col + d[1], e.shiftKey && point !== null);
     return;
   }
+  // Ctrl+B / I / U по выделенной части текста — оформление части (rich text).
+  const rk = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey ? ({ KeyB: 'font.b', KeyI: 'font.i', KeyU: 'font.u' } as Record<string, string>)[e.code] : undefined;
+  if (rk) { lastEditInput = inp; if (richStyle(rk, '')) { e.preventDefault(); return; } }
   if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) endPoint();
   if (e.key === 'Enter' && e.altKey) {
     // Alt+Enter — новая строка внутри ячейки (и в ячейке, и в строке формул), как в Excel.
@@ -2093,6 +2181,7 @@ function pasteText(text: string): void {
 // --- Команды ---
 
 function style(path: string, value: (current: boolean) => string, flag?: (s: ReturnType<Model['getCellStyle']>['style']) => boolean): void {
+  if (editing && richStyle(path, value(false))) return;
   const s = grid.sel;
   const current = flag ? flag(model.getCellStyle(grid.sheet, s.row, s.column).style) : false;
   const v = value(current);
