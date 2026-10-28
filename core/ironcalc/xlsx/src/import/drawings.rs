@@ -2,7 +2,7 @@
 
 use std::io::{BufReader, Read};
 
-use ironcalc_base::types::Image;
+use ironcalc_base::types::{Chart, Image};
 
 use super::xml::XmlNode;
 
@@ -48,8 +48,13 @@ fn number(n: Option<&XmlNode>, child: &str) -> i64 {
 }
 
 /// The pictures of the sheet stored at `sheet_path`; anything unreadable is skipped.
-pub(crate) fn load_images<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>, sheet_path: &str) -> Vec<Image> {
+pub(crate) fn load_images<R: Read + std::io::Seek>(
+    archive: &mut zip::read::ZipArchive<R>,
+    sheet_path: &str,
+    sheet_name: &str,
+) -> (Vec<Image>, Vec<Chart>) {
     let mut out = Vec::new();
+    let mut charts = Vec::new();
     let sheet_dir = dir_of(sheet_path).to_string();
     for (_, t, target) in rels_of(archive, sheet_path) {
         if !t.ends_with("/drawing") {
@@ -64,6 +69,12 @@ pub(crate) fn load_images<R: Read + std::io::Seek>(archive: &mut zip::read::ZipA
         let Ok(doc) = XmlNode::parse(text.as_bytes()) else { continue };
         for anchor in doc.children() {
             if !matches!(anchor.tag_name(), "oneCellAnchor" | "twoCellAnchor" | "absoluteAnchor") {
+                continue;
+            }
+            if let Some(frame) = anchor.children().find(|n| n.has_tag_name("graphicFrame")) {
+                if let Some(c) = load_chart(archive, &drawing_rels, &drawing_path, anchor, frame, sheet_name) {
+                    charts.push(c);
+                }
                 continue;
             }
             let Some(pic) = anchor.descendants().find(|n| n.has_tag_name("pic")) else { continue };
@@ -103,5 +114,86 @@ pub(crate) fn load_images<R: Read + std::io::Seek>(archive: &mut zip::read::ZipA
             });
         }
     }
-    out
+    (out, charts)
+}
+
+/// "'My sheet'!$A$2:$A$5" → (sheet name, column1, row1, column2, row2).
+fn parse_ref(f: &str) -> Option<(String, i32, i32, i32, i32)> {
+    let (sheet, cells) = f.rsplit_once('!')?;
+    let sheet = sheet.trim_matches('\'').replace("''", "'");
+    let cells = cells.replace('$', "");
+    let (a, b) = cells.split_once(':').unwrap_or((&cells, &cells));
+    let a = ironcalc_base::expressions::utils::parse_reference_a1(a)?;
+    let b = ironcalc_base::expressions::utils::parse_reference_a1(b)?;
+    Some((sheet, a.column, a.row, b.column, b.row))
+}
+
+fn load_chart<R: Read + std::io::Seek>(
+    archive: &mut zip::read::ZipArchive<R>,
+    drawing_rels: &[(String, String, String)],
+    drawing_path: &str,
+    anchor: &XmlNode,
+    frame: &XmlNode,
+    sheet_name: &str,
+) -> Option<Chart> {
+    let id = frame.descendants().find(|n| n.has_tag_name("chart"))?.attribute_ns(R_NS, "id")?;
+    let (_, _, target) = drawing_rels.iter().find(|(i, _, _)| i == id)?;
+    let path = resolve(dir_of(drawing_path), target);
+    let mut text = String::new();
+    archive.by_name(&path).ok()?.read_to_string(&mut text).ok()?;
+    let doc = XmlNode::parse(text.as_bytes()).ok()?;
+    let plot = doc.descendants().find(|n| n.has_tag_name("plotArea"))?;
+    let (kind, chart) = plot.children().find_map(|n| match n.tag_name() {
+        "barChart" => Some((0u8, n)),
+        "lineChart" => Some((1, n)),
+        "pieChart" => Some((2, n)),
+        _ => None,
+    })?;
+    let title: String = doc
+        .children()
+        .flat_map(|c| c.children())
+        .find(|n| n.has_tag_name("title"))
+        .map(|t| t.descendants().filter(|n| n.has_tag_name("t")).filter_map(|n| n.text()).collect())
+        .unwrap_or_default();
+    let formula = |ser: &XmlNode, tag: &str| {
+        ser.children()
+            .find(|n| n.has_tag_name(tag))
+            .and_then(|n| n.descendants().find(|n| n.has_tag_name("f")))
+            .and_then(|n| n.text().map(|t| t.to_string()))
+            .and_then(|f| parse_ref(&f))
+    };
+    let sers: Vec<&XmlNode> = chart.children().filter(|n| n.has_tag_name("ser")).collect();
+    let first = sers.first()?;
+    let last = sers.last()?;
+    let vals_first = formula(first, "val")?;
+    let vals_last = formula(last, "val")?;
+    if vals_first.0 != sheet_name {
+        return None;
+    }
+    let cat = formula(first, "cat");
+    let c1 = cat.as_ref().map_or(vals_first.1 - 1, |c| c.1).max(1);
+    let r1 = (vals_first.2 - 1).max(1);
+    let (c2, r2) = (vals_last.3, vals_first.4);
+    let from = anchor.children().find(|n| n.has_tag_name("from"));
+    let ext = anchor.children().find(|n| n.has_tag_name("ext"));
+    let size = |a: &str| ext.and_then(|n| n.attribute(a)).and_then(|v| v.parse::<i64>().ok()).map_or(0, |v| (v / EMU_PER_PX) as i32);
+    let (mut width, mut height) = (size("cx"), size("cy"));
+    if width <= 0 || height <= 0 {
+        (width, height) = (480, 288);
+    }
+    Some(Chart {
+        kind,
+        title,
+        range: format!(
+            "{}{r1}:{}{r2}",
+            ironcalc_base::expressions::utils::number_to_column(c1)?,
+            ironcalc_base::expressions::utils::number_to_column(c2)?
+        ),
+        row: number(from, "row") as i32 + 1,
+        column: number(from, "col") as i32 + 1,
+        dx: (number(from, "colOff") / EMU_PER_PX) as i32,
+        dy: (number(from, "rowOff") / EMU_PER_PX) as i32,
+        width,
+        height,
+    })
 }

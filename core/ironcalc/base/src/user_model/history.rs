@@ -139,6 +139,12 @@ pub(crate) enum Diff {
         new_value: Vec<crate::types::Image>,
         old_value: Vec<crate::types::Image>,
     },
+    /// ENS-Office: the charts of a sheet changed.
+    SetCharts {
+        sheet: u32,
+        new_value: Vec<crate::types::Chart>,
+        old_value: Vec<crate::types::Chart>,
+    },
     /// ENS-Office: a sheet is protected / unprotected.
     SetSheetProtected {
         sheet: u32,

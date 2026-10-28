@@ -84,6 +84,7 @@ impl<'a> Model<'a> {
             ens_protected: false,
             ens_protect_attrs: String::new(),
             ens_images: vec![],
+            ens_charts: vec![],
         }
     }
 

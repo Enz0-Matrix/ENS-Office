@@ -815,6 +815,42 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    /// ENS-Office: the charts of the sheet.
+    pub fn get_charts(&self, sheet: u32) -> Result<Vec<crate::types::Chart>, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_charts.clone())
+    }
+
+    /// ENS-Office: replaces the charts of the sheet (add, change, delete are done by the caller); an undoable step.
+    pub fn set_charts(&mut self, sheet: u32, charts: Vec<crate::types::Chart>) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
+        for c in &charts {
+            if c.kind > 2 || parse_chart_range(&c.range).is_none() {
+                return Err(format!("Неверная диаграмма: {}", c.range));
+            }
+        }
+        let old_value = self.get_charts(sheet)?;
+        if old_value == charts {
+            return Ok(());
+        }
+        self.model.workbook.worksheet_mut(sheet)?.ens_charts = charts.clone();
+        self.push_diff_list(vec![Diff::SetCharts { sheet, new_value: charts, old_value }]);
+        Ok(())
+    }
+
+    /// ENS-Office: the numbers of the cells `r1..=r2` × `c1..=c2`, row by row (`NaN` — not a number).
+    pub fn get_range_numbers(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Result<Vec<f64>, String> {
+        let mut out = Vec::new();
+        for r in r1..=r2 {
+            for c in c1..=c2 {
+                out.push(match self.model.get_cell_value_by_index(sheet, r, c)? {
+                    crate::cell::CellValue::Number(n) => n,
+                    _ => f64::NAN,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     /// ENS-Office: the pictures of the sheet.
     pub fn get_images(&self, sheet: u32) -> Result<Vec<crate::types::Image>, String> {
         Ok(self.model.workbook.worksheet(sheet)?.ens_images.clone())
@@ -1348,4 +1384,13 @@ fn comment_ref(row: i32, column: i32) -> Result<String, String> {
         return Err(format!("Invalid row: {row}"));
     }
     Ok(format!("{col}{row}"))
+}
+
+/// "A1:C5" → (row1, column1, row2, column2); at least two rows and two columns, as a chart needs.
+pub fn parse_chart_range(range: &str) -> Option<(i32, i32, i32, i32)> {
+    let (a, b) = range.split_once(':')?;
+    let a = crate::expressions::utils::parse_reference_a1(a)?;
+    let b = crate::expressions::utils::parse_reference_a1(b)?;
+    let (r1, r2, c1, c2) = (a.row.min(b.row), a.row.max(b.row), a.column.min(b.column), a.column.max(b.column));
+    (r2 > r1 && c2 > c1).then_some((r1, c1, r2, c2))
 }

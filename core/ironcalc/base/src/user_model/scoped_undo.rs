@@ -47,6 +47,7 @@ fn sheet_of(diff: &Diff) -> Option<u32> {
         | Diff::SetPrintTitles { sheet, .. }
         | Diff::SetComment { sheet, .. }
         | Diff::SetImages { sheet, .. }
+        | Diff::SetCharts { sheet, .. }
         | Diff::SetRichText { sheet, .. }
         | Diff::SetSheetProtected { sheet, .. }
         | Diff::SetPageBreaks { sheet, .. }

@@ -342,3 +342,45 @@ fn test_ens_images_export() {
     assert_eq!(got[0].data, png);
     assert_eq!(back.get_comment(0, 1, 1).unwrap().unwrap().text, "note");
 }
+
+// ENS-Office: charts round trip (chart part, drawing anchor), with undo.
+#[test]
+fn test_ens_charts_export() {
+    use ironcalc_base::types::Chart;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    for (r, row) in [["Кв.", "План", "Факт"], ["1", "10", "12"], ["2", "20", "18"], ["3", "30", "33"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            model.set_user_input(0, r as i32 + 1, c as i32 + 1, v).unwrap();
+        }
+    }
+    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250 };
+    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250 };
+    assert!(model.set_charts(0, vec![Chart { range: "A1".to_string(), ..bar.clone() }]).is_err());
+    model.set_charts(0, vec![bar.clone()]).unwrap();
+    model.set_charts(0, vec![bar.clone(), pie.clone()]).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_charts(0).unwrap(), vec![bar.clone()]);
+    model.redo().unwrap();
+    assert_eq!(model.get_range_numbers(0, 2, 2, 2, 3).unwrap(), vec![10.0, 12.0]);
+    let name = "temp_ens_charts.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut read = |n: &str| {
+        let mut s = String::new();
+        zip.by_name(n).unwrap().read_to_string(&mut s).unwrap();
+        s
+    };
+    let chart1 = read("xl/charts/chart1.xml");
+    let chart2 = read("xl/charts/chart2.xml");
+    let drawing = read("xl/drawings/drawing1.xml");
+    let types = read("[Content_Types].xml");
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(chart1.contains("<c:barChart>") && chart1.contains("<c:f>Sheet1!$B$2:$B$4</c:f>") && chart1.contains("План &amp; факт"), "{chart1}");
+    assert!(chart1.contains("<c:v>12</c:v>"), "{chart1}");
+    assert!(chart2.contains("<c:pieChart>") && !chart2.contains("$C$"), "{chart2}");
+    assert!(drawing.contains("<xdr:graphicFrame") && types.contains("/xl/charts/chart2.xml"), "{drawing}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie]);
+}

@@ -331,6 +331,24 @@ pub struct Worksheet {
     pub ens_protect_attrs: String,
     /// ENS-Office: pictures placed over the sheet.
     pub ens_images: Vec<Image>,
+    /// ENS-Office: charts over the sheet.
+    pub ens_charts: Vec<Chart>,
+}
+
+/// A chart over a sheet: drawn from the cells of `range` ("A1:C5" on the same sheet; the first row —
+/// names of the series, the first column — categories, the other columns — series).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct Chart {
+    /// 0 — columns, 1 — lines, 2 — pie.
+    pub kind: u8,
+    pub title: String,
+    pub range: String,
+    pub row: i32,
+    pub column: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 /// A picture over a sheet: its top left corner is at the top left of the cell (`row`, `column`).
