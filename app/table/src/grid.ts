@@ -105,6 +105,7 @@ const LAST_ROW = 1_048_576;
 const LAST_COLUMN = 16_384;
 
 export const ZOOM_MIN = 0.25, ZOOM_MAX = 4;
+export const MARK_COLORS = { blue: '#2f6fd1', red: '#d93025', green: '#1e9e4a' };
 
 export class Grid {
   sheet = 0;
@@ -363,8 +364,11 @@ export class Grid {
     window.addEventListener('mouseup', () => { this.endResize(); this.endFill(); });
     this.canvas.addEventListener('dblclick', (e) => {
       const g = this.grip(e);
+      const h = this.hit(e);
       if (g) this.onResize(g.kind, g.index, null);
-      else if (!this.hit(e).header) this.onEditRequest();
+      else if (!h.header) this.onEditRequest();
+      else if (h.header === 'row' && h.row >= 1) this.toggleMark('row', h.row, this.markColor(e));
+      else if (h.header === 'column' && h.column >= 1) this.toggleMark('column', h.column, this.markColor(e));
     });
     this.canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -382,17 +386,23 @@ export class Grid {
 
   // --- Метки строк и столбцов (закладки, как в Notepad++) ---
 
-  private marks = new Map<number, { rows: Set<number>; cols: Set<number> }>();
-  /** Метки действуют, пока открыта книга: щелчок по полоске у края заголовка ставит и снимает. */
-  private marksOf(sheet = this.sheet): { rows: Set<number>; cols: Set<number> } {
+  private marks = new Map<number, { rows: Map<number, string>; cols: Map<number, string> }>();
+  /** Метки действуют, пока открыта книга: двойной щелчок по заголовку ставит (синяя; Shift — красная,
+   *  Ctrl — зелёная) и снимает (любую) метку. */
+  private marksOf(sheet = this.sheet): { rows: Map<number, string>; cols: Map<number, string> } {
     let m = this.marks.get(sheet);
-    if (!m) this.marks.set(sheet, m = { rows: new Set(), cols: new Set() });
+    if (!m) this.marks.set(sheet, m = { rows: new Map(), cols: new Map() });
     return m;
   }
 
-  toggleMark(kind: 'row' | 'column', index: number): void {
-    const set = kind === 'row' ? this.marksOf().rows : this.marksOf().cols;
-    if (!set.delete(index)) set.add(index);
+  /** Цвет новой метки: Shift — красная, Ctrl — зелёная, иначе синяя. */
+  private markColor(e: MouseEvent): string {
+    return e.shiftKey ? MARK_COLORS.red : e.ctrlKey || e.metaKey ? MARK_COLORS.green : MARK_COLORS.blue;
+  }
+
+  toggleMark(kind: 'row' | 'column', index: number, color = MARK_COLORS.blue): void {
+    const map = kind === 'row' ? this.marksOf().rows : this.marksOf().cols;
+    if (!map.delete(index)) map.set(index, color);
     this.render();
   }
 
@@ -404,7 +414,7 @@ export class Grid {
   nextMark(dir: 1 | -1): { kind: 'row' | 'column'; index: number } | null {
     const m = this.marksOf();
     const kind = m.rows.size ? 'row' : 'column';
-    const list = [...(kind === 'row' ? m.rows : m.cols)].sort((a, b) => a - b);
+    const list = [...(kind === 'row' ? m.rows : m.cols).keys()].sort((a, b) => a - b);
     if (!list.length) return null;
     const at = kind === 'row' ? this.sel.row : this.sel.column;
     const index = dir > 0 ? (list.find((i) => i > at) ?? list[0]) : ([...list].reverse().find((i) => i < at) ?? list[list.length - 1]);
@@ -894,12 +904,6 @@ export class Grid {
       this.extraRanges = [...this.extraRanges, { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
       this.ctrlPick = true;
     }
-    {
-      // Полоска у края заголовка (слева у строк, сверху у столбцов) — метка-закладка.
-      const px = (e.clientX - cr.left) / this.zoom, py = (e.clientY - cr.top) / this.zoom;
-      if (h.header === 'row' && h.row >= 1 && px - this.outlineW < 11 && px >= this.outlineW) { this.toggleMark('row', h.row); e.preventDefault(); return; }
-      if (h.header === 'column' && h.column >= 1 && py - this.outlineH < 6 && py >= this.outlineH) { this.toggleMark('column', h.column); e.preventDefault(); return; }
-    }
     if (h.header === 'column' || h.header === 'row') {
       // Несколько столбцов (строк): протянуть по заголовкам или Shift+щелчок.
       const kind = h.header, s = this.sel;
@@ -1033,8 +1037,17 @@ export class Grid {
     const styleOf = (r: number, c: number): CellStyle | null => extOf(r, c)?.style ?? null;
     let merges: MergedCell[] = [];
     try { merges = model.getMergedCells(this.sheet) ?? []; } catch { merges = []; }
-    const mergeAt = (r: number, c: number) =>
-      merges.find((m) => r >= m.row && r < m.row + m.height && c >= m.column && c < m.column + m.width);
+    // Объединения → по ячейкам видимых полос: поиск за один шаг (на листах с тысячами объединений
+    // перебор списка для каждой ячейки тормозил отрисовку).
+    const mergeIdx = new Map<number, MergedCell>();
+    for (const m of merges) {
+      const mr2 = m.row + m.height - 1, mc2 = m.column + m.width - 1;
+      for (const [ra, rb] of rowBands) for (const [ca, cb] of colBands) {
+        const r1 = Math.max(m.row, ra), r2 = Math.min(mr2, rb), c1 = Math.max(m.column, ca), c2 = Math.min(mc2, cb);
+        for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) mergeIdx.set(r * 16_385 + c, m);
+      }
+    }
+    const mergeAt = (r: number, c: number) => mergeIdx.get(r * 16_385 + c);
     const textOf = (r: number, c: number) => { try { return model.getFormattedCellValue(this.sheet, r, c); } catch { return ''; } };
 
     for (const [ra, rb, pinR] of rowBands) for (const [ca, cb, pinC] of colBands) {
@@ -1478,8 +1491,13 @@ export class Grid {
       const st = item.style;
       const width = st === 'thick' ? 3 : st.startsWith('medium') ? 2 : 1;
       ctx.save();
-      ctx.strokeStyle = item.color ? model.resolveColor(item.color) || '#000' : '#000';
+      const color = item.color ? model.resolveColor(item.color) || '#000' : '#000';
+      ctx.strokeStyle = color;
       ctx.lineWidth = width;
+      // Тонкие чёрные линии (их ставят другие программы по всей таблице) — мягче, серыми: не давят на данные.
+      if (width === 1 && /^#[0-9a-f]{6}$/i.test(color) && [1, 3, 5].every((i) => parseInt(color.slice(i, i + 2), 16) < 64)) {
+        ctx.globalAlpha = st === 'hair' ? 0.35 : 0.5;
+      }
       ctx.setLineDash(st === 'dotted' ? [1, 2] : st === 'mediumdashed' ? [5, 2] : st.includes('dashdotdot') ? [5, 2, 1, 2, 1, 2]
         : st.includes('dashdot') ? [5, 2, 1, 2] : []);
       const off = width % 2 ? 0.5 : 0;
@@ -1542,10 +1560,10 @@ export class Grid {
   }
 
   /** Значок метки: синий кружок. */
-  private drawMark(x: number, y: number): void {
+  private drawMark(x: number, y: number, color: string): void {
     const ctx = this.ctx;
     ctx.save();
-    ctx.fillStyle = '#2f6fd1';
+    ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
@@ -1579,7 +1597,8 @@ export class Grid {
       ctx.fillStyle = inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${c === s.column ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(columnName(c), x + w / 2, this.outlineH + HEADER_H / 2);
-      if (this.marksOf().cols.has(c)) this.drawMark(x + 7, this.outlineH + 5);
+      const mc = this.marksOf().cols.get(c);
+      if (mc) this.drawMark(x + 7, this.outlineH + 5, mc);
       ctx.beginPath(); ctx.moveTo(Math.round(x + w) + 0.5, this.outlineH); ctx.lineTo(Math.round(x + w) + 0.5, this.headerH); ctx.stroke();
       // Перед этим столбцом скрытые — метка в заголовке (двойная черта, как в Excel).
       if (c > 1 && this.width(c - 1) === 0) this.hiddenMark(Math.round(x), this.outlineH, 3, HEADER_H);
@@ -1607,7 +1626,8 @@ export class Grid {
       ctx.fillStyle = filtered ? '#2f6fd1' : inSel ? this.theme.headerActiveText : this.theme.headerText;
       ctx.font = `${r === s.row ? 'bold ' : ''}12px "Segoe UI", sans-serif`;
       ctx.fillText(String(r), this.outlineW + (this.headerW - this.outlineW) / 2, y + h / 2);
-      if (this.marksOf().rows.has(r)) this.drawMark(this.outlineW + 6, y + h / 2);
+      const mr = this.marksOf().rows.get(r);
+      if (mr) this.drawMark(this.outlineW + 6, y + h / 2, mr);
       if (r > 1 && this.height(r - 1) === 0) this.hiddenMark(this.outlineW, Math.round(y) - 1, this.headerW - this.outlineW, 3);
       ctx.beginPath(); ctx.moveTo(this.outlineW, Math.round(y + h) + 0.5); ctx.lineTo(this.headerW, Math.round(y + h) + 0.5); ctx.stroke();
     }

@@ -386,7 +386,7 @@ grid.onRefDrag = (id, rect) => {
 
 function jumpMark(dir: 1 | -1): void {
   const next = grid.nextMark(dir);
-  if (!next) { showToast('Меток нет: щёлкните по полоске у края номера строки или буквы столбца.'); return; }
+  if (!next) { showToast('Меток нет: сделайте двойной щелчок по номеру строки или букве столбца (Shift — красная, Ctrl — зелёная).'); return; }
   if (next.kind === 'row') grid.select(next.index, grid.sel.column);
   else grid.select(grid.sel.row, next.index);
 }

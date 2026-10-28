@@ -30,10 +30,19 @@ panel.innerHTML = `
     <label><input type="checkbox" data-f="whole"> Ячейка целиком</label>
     <label>Искать: <select data-f="where"><option value="sheet">на листе</option><option value="book">в книге</option></select></label>
     <label class="find-only">Область: <select data-f="look"><option value="values">значения</option><option value="formulas">формулы</option></select></label>
-    <div class="find-fmt">Формат поиска: <b data-fmt="find">не задан</b>
-      <button data-act="pickFind" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearFind">Сброс</button></div>
-    <div class="find-fmt find-repl">Формат замены: <b data-fmt="repl">не задан</b>
-      <button data-act="pickRepl" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearRepl">Сброс</button></div>
+    <div class="find-fmt"><span class="fmt-label">Формат поиска:</span><span class="fmt-sample" data-sample="find"></span>
+      <span class="fmt-btns"><button data-act="editFind">Формат…</button><button data-act="pickFind" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearFind">Сброс</button></span></div>
+    <div class="find-fmt find-repl"><span class="fmt-label">Формат замены:</span><span class="fmt-sample" data-sample="repl"></span>
+      <span class="fmt-btns"><button data-act="editRepl">Формат…</button><button data-act="pickRepl" title="Взять оформление активной ячейки">Из ячейки</button><button data-act="clearRepl">Сброс</button></span></div>
+    <div class="fmt-editor" hidden>
+      <label><input type="checkbox" data-e="b"> <b>Ж</b></label><label><input type="checkbox" data-e="i"> <i>К</i></label>
+      <label><input type="checkbox" data-e="u"> <u>Ч</u></label><label><input type="checkbox" data-e="strike"> <s>З</s></label>
+      <label>Шрифт <input type="color" data-e="color"> <input type="checkbox" data-e="noColor" title="Цвет шрифта не задан"> авто</label>
+      <label>Заливка <input type="color" data-e="fill"> <input type="checkbox" data-e="noFill" title="Без заливки"> нет</label>
+      <label>Число <select data-e="numFmt"><option value="General">Общий</option><option value="0.00">Числовой 0,00</option>
+        <option value="#,##0.00">С разделителем</option><option value="0%">Процентный</option><option value="dd.mm.yyyy">Дата</option><option value="@">Текстовый</option></select></label>
+      <button data-act="applyFmt" class="primary">ОК</button>
+    </div>
   </div>
   <div class="find-buttons">
     <button data-act="options" class="find-options">Параметры &gt;&gt;</button>
@@ -81,9 +90,21 @@ function describe(f: Fmt | null): string {
 const sameFmt = (a: Fmt, b: Fmt) => a.b === b.b && a.i === b.i && a.u === b.u && a.strike === b.strike
   && a.color === b.color && a.fill === b.fill && a.numFmt === b.numFmt;
 
+/** Образец оформления — маленькая ячейка, как на листе. */
+function sampleHtml(f: Fmt | null): string {
+  if (!f) return '<span class="fmt-none">не задан</span>';
+  const css = [
+    f.b && 'font-weight:700', f.i && 'font-style:italic',
+    (f.u || f.strike) && `text-decoration:${[f.u && 'underline', f.strike && 'line-through'].filter(Boolean).join(' ')}`,
+    f.color && `color:${f.color}`, f.fill && `background:${f.fill}`,
+  ].filter(Boolean).join(';');
+  const num = f.numFmt.toLowerCase() === 'general' ? '' : `<small>${esc(f.numFmt)}</small>`;
+  return `<span class="fmt-cell" style="${css}">АаБб 123</span>${num}`;
+}
+
 function showFormats(): void {
-  panel.querySelector('[data-fmt="find"]')!.textContent = describe(findFmt);
-  panel.querySelector('[data-fmt="repl"]')!.textContent = describe(replFmt);
+  panel.querySelector('[data-sample="find"]')!.innerHTML = sampleHtml(findFmt);
+  panel.querySelector('[data-sample="repl"]')!.innerHTML = sampleHtml(replFmt);
 }
 
 /** Придать найденной ячейке оформление замены. */
@@ -196,6 +217,33 @@ function replaceAll(): void {
   list.replaceChildren();
 }
 
+const fmtEditor = $('.fmt-editor');
+let editing: 'find' | 'repl' = 'find';
+const field = (k: string) => fmtEditor.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-e="${k}"]`)!;
+
+/** Выбрать оформление прямо в окне, как «Формат…» в Excel. */
+function openFmtEditor(which: 'find' | 'repl'): void {
+  editing = which;
+  const f = (which === 'find' ? findFmt : replFmt) ?? { b: false, i: false, u: false, strike: false, numFmt: 'General' } as Fmt;
+  field('b').checked = f.b; field('i').checked = f.i; field('u').checked = f.u; field('strike').checked = f.strike;
+  field('color').value = f.color?.toLowerCase() ?? '#000000'; field('noColor').checked = !f.color;
+  field('fill').value = f.fill?.toLowerCase() ?? '#ffff00'; field('noFill').checked = !f.fill;
+  field('numFmt').value = [...field('numFmt').options].some((o) => o.value === f.numFmt) ? f.numFmt : 'General';
+  fmtEditor.hidden = false;
+}
+
+function applyFmtEditor(): void {
+  const f: Fmt = {
+    b: field('b').checked, i: field('i').checked, u: field('u').checked, strike: field('strike').checked,
+    color: field('noColor').checked ? undefined : field('color').value.toUpperCase(),
+    fill: field('noFill').checked ? undefined : field('fill').value.toUpperCase(),
+    numFmt: field('numFmt').value,
+  };
+  if (editing === 'find') findFmt = f; else replFmt = f;
+  fmtEditor.hidden = true;
+  showFormats();
+}
+
 panel.addEventListener('click', (e) => {
   const t = e.target as HTMLElement;
   if (t.closest('.find-close')) { hideFind(); return; }
@@ -206,6 +254,8 @@ panel.addEventListener('click', (e) => {
   const a = host.active(), s = host.sheet();
   if (act === 'pickFind') { findFmt = fmtOf(s, a.row, a.column); showFormats(); return; }
   if (act === 'pickRepl') { replFmt = fmtOf(s, a.row, a.column); showFormats(); return; }
+  if (act === 'editFind' || act === 'editRepl') { openFmtEditor(act === 'editFind' ? 'find' : 'repl'); return; }
+  if (act === 'applyFmt') { applyFmtEditor(); return; }
   if (act === 'clearFind') { findFmt = null; showFormats(); return; }
   if (act === 'clearRepl') { replFmt = null; showFormats(); return; }
   if (!act || !text.value) return;
@@ -238,3 +288,5 @@ head.addEventListener('pointerdown', (e) => {
 });
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+showFormats();
