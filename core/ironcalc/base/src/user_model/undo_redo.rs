@@ -159,6 +159,9 @@ impl<'a> UserModel<'a> {
                     self.write_rich_text(*sheet, *row, *column, old_value.clone(), old_text)?;
                     needs_evaluation = true;
                 }
+                Diff::SetImages { sheet, new_value: _, old_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_images = old_value.clone();
+                }
                 Diff::SetSheetProtected { sheet, new_value: _, old_value } => {
                     self.write_sheet_protected(*sheet, *old_value)?;
                 }
@@ -760,6 +763,9 @@ impl<'a> UserModel<'a> {
                 Diff::SetRichText { sheet, row, column, new_value, old_value: _, new_text, old_text: _ } => {
                     self.write_rich_text(*sheet, *row, *column, new_value.clone(), new_text)?;
                     needs_evaluation = true;
+                }
+                Diff::SetImages { sheet, new_value, old_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.ens_images = new_value.clone();
                 }
                 Diff::SetSheetProtected { sheet, new_value, old_value: _ } => {
                     self.write_sheet_protected(*sheet, *new_value)?;

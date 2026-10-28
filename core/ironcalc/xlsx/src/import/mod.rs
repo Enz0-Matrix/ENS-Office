@@ -1,6 +1,7 @@
 mod conditional_formatting;
 mod metadata;
 pub(crate) mod shared_strings;
+mod drawings;
 mod sheet_data;
 mod styles;
 mod tables;

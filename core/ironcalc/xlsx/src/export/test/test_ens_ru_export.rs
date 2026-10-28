@@ -299,3 +299,46 @@ fn test_ens_rich_text_export() {
     assert_eq!(back.get_rich_text(0, 2, 1).unwrap(), None);
     assert_eq!(back.get_cell_content(0, 1, 1).unwrap(), "Жирный & курсив");
 }
+
+// ENS-Office: pictures round trip (drawing, media), together with a comment on the same sheet.
+#[test]
+fn test_ens_images_export() {
+    use ironcalc_base::types::Image;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_comment(0, 1, 1, "note", "A").unwrap();
+    let png = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+    let img = Image { name: "Рис 1".to_string(), row: 3, column: 2, dx: 4, dy: 5, width: 120, height: 80, ext: "png".to_string(), data: png.clone() };
+    assert!(model.add_image(0, Image { ext: "bmp".to_string(), ..img.clone() }).is_err());
+    let i = model.add_image(0, img.clone()).unwrap();
+    model.place_image(0, i, 5, 4, 0, 0, 200, 100).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_images(0).unwrap(), vec![img.clone()]);
+    model.redo().unwrap();
+    model.add_image(0, img.clone()).unwrap();
+    model.delete_image(0, 1).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_images(0).unwrap().len(), 2);
+    model.delete_image(0, 1).unwrap();
+    let name = "temp_ens_images.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    let mut rels = String::new();
+    zip.by_name("xl/worksheets/_rels/sheet1.xml.rels").unwrap().read_to_string(&mut rels).unwrap();
+    let mut media = Vec::new();
+    zip.by_name("xl/media/image1.png").unwrap().read_to_end(&mut media).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(xml.contains(r#"<drawing r:id="rId3"/>"#) && xml.contains(r#"<legacyDrawing r:id="rId2"/>"#), "{xml}");
+    assert!(rels.contains("drawing1.xml"), "{rels}");
+    assert_eq!(media, png);
+    let back = ironcalc_base::UserModel::from_model(back);
+    let got = back.get_images(0).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].row, got[0].column, got[0].dx, got[0].width, got[0].height), (5, 4, 0, 200, 100));
+    assert_eq!(got[0].data, png);
+    assert_eq!(back.get_comment(0, 1, 1).unwrap().unwrap().text, "note");
+}

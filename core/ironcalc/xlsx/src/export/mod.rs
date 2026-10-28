@@ -3,6 +3,7 @@
 mod _rels;
 mod conditional_formatting;
 mod doc_props;
+mod drawings;
 mod dxfs_styles;
 mod escape;
 mod shared_strings;
@@ -49,7 +50,18 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
     if workbook.worksheets.iter().any(|w| !w.comments.is_empty()) {
         content.push(r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#.to_string());
     }
+    for ext in ["png", "jpeg", "gif"] {
+        if workbook.worksheets.iter().any(|w| w.ens_images.iter().any(|i| i.ext == ext)) {
+            content.push(format!(r#"<Default Extension="{ext}" ContentType="image/{ext}"/>"#));
+        }
+    }
     for (i, w) in workbook.worksheets.iter().enumerate() {
+        if !w.ens_images.is_empty() {
+            content.push(format!(
+                r#"<Override PartName="/xl/drawings/drawing{}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#,
+                i + 1
+            ));
+        }
         if !w.comments.is_empty() {
             content.push(format!(
                 r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
@@ -167,7 +179,8 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     let mut has_worksheet_rels = false;
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
-        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id) {
+        let drawing_id = (!worksheet.ens_images.is_empty()).then_some(sheet_index + 1);
+        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id, drawing_id) {
             if !has_worksheet_rels {
                 zip.add_directory("xl/worksheets/_rels", options)?;
                 has_worksheet_rels = true;
@@ -194,6 +207,34 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         }
         zip.start_file(format!("xl/drawings/vmlDrawing{id}.vml"), options)?;
         zip.write_all(worksheets::get_comments_vml(worksheet).as_bytes())?;
+    }
+    // ENS-Office: pictures.
+    let mut media_count = 1;
+    let mut has_media_dir = false;
+    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+        let images = &worksheet.ens_images;
+        if images.is_empty() {
+            continue;
+        }
+        let id = sheet_index + 1;
+        if !has_drawings_dir {
+            zip.add_directory("xl/drawings", options)?;
+            has_drawings_dir = true;
+        }
+        if !has_media_dir {
+            zip.add_directory("xl/media", options)?;
+            zip.add_directory("xl/drawings/_rels", options)?;
+            has_media_dir = true;
+        }
+        zip.start_file(format!("xl/drawings/drawing{id}.xml"), options)?;
+        zip.write_all(drawings::get_drawing_xml(images).as_bytes())?;
+        zip.start_file(format!("xl/drawings/_rels/drawing{id}.xml.rels"), options)?;
+        zip.write_all(drawings::get_drawing_rels(images, media_count).as_bytes())?;
+        for (i, img) in images.iter().enumerate() {
+            zip.start_file(format!("xl/media/{}", drawings::media_name(media_count, i, img)), options)?;
+            zip.write_all(&img.data)?;
+        }
+        media_count += images.len();
     }
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let id = sheet_index + 1;

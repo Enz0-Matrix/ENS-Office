@@ -1084,6 +1084,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             ens_filter_criteria: load_filter_criteria(ws),
             ens_summary: load_outline_summary(ws),
             ens_page_setup: load_page_setup(ws),
+            ens_images: Vec::new(),
             ens_protected: protection.0,
             ens_protect_attrs: protection.1,
             ens_row_breaks: load_breaks(ws, "rowBreaks"),
@@ -1285,6 +1286,8 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
                 theme,
                 dxfs,
             )?;
+            let mut s = s;
+            s.ens_images = super::drawings::load_images(archive, &path);
             if is_selected {
                 selected_sheet = sheet_index;
             }

@@ -133,6 +133,12 @@ pub(crate) enum Diff {
         new_text: String,
         old_text: String,
     },
+    /// ENS-Office: the pictures of a sheet changed.
+    SetImages {
+        sheet: u32,
+        new_value: Vec<crate::types::Image>,
+        old_value: Vec<crate::types::Image>,
+    },
     /// ENS-Office: a sheet is protected / unprotected.
     SetSheetProtected {
         sheet: u32,

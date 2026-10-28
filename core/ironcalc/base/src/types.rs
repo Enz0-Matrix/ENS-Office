@@ -329,6 +329,24 @@ pub struct Worksheet {
     pub ens_protected: bool,
     /// ENS-Office: the other attributes of `<sheetProtection>` as XML text (the password hash), kept as is.
     pub ens_protect_attrs: String,
+    /// ENS-Office: pictures placed over the sheet.
+    pub ens_images: Vec<Image>,
+}
+
+/// A picture over a sheet: its top left corner is at the top left of the cell (`row`, `column`).
+#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct Image {
+    pub name: String,
+    pub row: i32,
+    pub column: i32,
+    /// Shift of the picture from the cell's corner, px.
+    pub dx: i32,
+    pub dy: i32,
+    pub width: i32,
+    pub height: i32,
+    /// "png", "jpeg" or "gif".
+    pub ext: String,
+    pub data: Vec<u8>,
 }
 
 /// Internal representation of Excel's sheet_data

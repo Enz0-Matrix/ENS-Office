@@ -204,7 +204,7 @@ pub(crate) fn get_comments_vml(worksheet: &Worksheet) -> String {
 
 /// The rels part of the worksheet (`xl/worksheets/_rels/sheetN.xml.rels`) holding one
 /// relationship per external link, or `None` if the worksheet has no external links.
-pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>) -> Option<String> {
+pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>, drawing_id: Option<usize>) -> Option<String> {
     let mut relationships_str: Vec<String> = vec![];
     let mut rel_id = 0;
     for (_, link) in get_sorted_links(worksheet) {
@@ -222,6 +222,12 @@ pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<
 <Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing\" Target=\"../drawings/vmlDrawing{id}.vml\"/>",
             rel_id + 1,
             rel_id + 2
+        ));
+    }
+    if let Some(id) = drawing_id {
+        let n = rel_id + if comments_id.is_some() { 2 } else { 0 } + 1;
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{id}.xml\"/>"
         ));
     }
     if relationships_str.is_empty() {
@@ -823,6 +829,12 @@ pub(crate) fn get_worksheet_xml(
         String::new()
     };
     let page_breaks = page_breaks_xml(worksheet);
+    let drawing = if worksheet.ens_images.is_empty() {
+        String::new()
+    } else {
+        let n = external_link_count(worksheet) + if worksheet.comments.is_empty() { 0 } else { 2 } + 1;
+        format!("<drawing r:id=\"rId{n}\"/>")
+    };
     let legacy_drawing = if worksheet.comments.is_empty() {
         String::new()
     } else {
@@ -867,6 +879,7 @@ pub(crate) fn get_worksheet_xml(
   {hyperlinks_section}\
   {page_setup}\
   {page_breaks}\
+  {drawing}\
   {legacy_drawing}\
   {cf_ext_lst}\
 </worksheet>"

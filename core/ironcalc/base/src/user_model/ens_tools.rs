@@ -815,6 +815,59 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    /// ENS-Office: the pictures of the sheet.
+    pub fn get_images(&self, sheet: u32) -> Result<Vec<crate::types::Image>, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_images.clone())
+    }
+
+    fn change_images(&mut self, sheet: u32, change: impl FnOnce(&mut Vec<crate::types::Image>) -> Result<(), String>) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
+        let old_value = self.get_images(sheet)?;
+        let mut new_value = old_value.clone();
+        change(&mut new_value)?;
+        if new_value == old_value {
+            return Ok(());
+        }
+        self.model.workbook.worksheet_mut(sheet)?.ens_images = new_value.clone();
+        self.push_diff_list(vec![Diff::SetImages { sheet, new_value, old_value }]);
+        Ok(())
+    }
+
+    /// ENS-Office: puts a picture on the sheet; an undoable step. Returns its index.
+    pub fn add_image(&mut self, sheet: u32, image: crate::types::Image) -> Result<usize, String> {
+        if !matches!(image.ext.as_str(), "png" | "jpeg" | "gif") || image.data.is_empty() {
+            return Err("Поддерживаются рисунки PNG, JPEG и GIF.".to_string());
+        }
+        let mut index = 0;
+        self.change_images(sheet, |list| {
+            list.push(image);
+            index = list.len() - 1;
+            Ok(())
+        })?;
+        Ok(index)
+    }
+
+    /// ENS-Office: moves / resizes a picture (top left corner at the cell, shift in px); an undoable step.
+    pub fn place_image(&mut self, sheet: u32, index: usize, row: i32, column: i32, dx: i32, dy: i32, width: i32, height: i32) -> Result<(), String> {
+        self.change_images(sheet, |list| {
+            let img = list.get_mut(index).ok_or("No such picture")?;
+            (img.row, img.column, img.dx, img.dy) = (row.max(1), column.max(1), dx, dy);
+            (img.width, img.height) = (width.max(8), height.max(8));
+            Ok(())
+        })
+    }
+
+    /// ENS-Office: deletes a picture; an undoable step.
+    pub fn delete_image(&mut self, sheet: u32, index: usize) -> Result<(), String> {
+        self.change_images(sheet, |list| {
+            if index >= list.len() {
+                return Err("No such picture".to_string());
+            }
+            list.remove(index);
+            Ok(())
+        })
+    }
+
     /// ENS-Office: all comments (notes) of the sheet.
     pub fn get_comments(&self, sheet: u32) -> Result<Vec<crate::types::Comment>, String> {
         Ok(self.model.workbook.worksheet(sheet)?.comments.clone())
