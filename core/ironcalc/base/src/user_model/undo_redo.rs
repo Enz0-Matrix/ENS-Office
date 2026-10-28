@@ -151,6 +151,9 @@ impl<'a> UserModel<'a> {
                 Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
                 }
+                Diff::SetPrintTitles { sheet, new_value: _, old_value } => {
+                    self.write_print_titles(*sheet, *old_value)?;
+                }
                 Diff::SetPageSetup { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = old_value.clone();
                 }
@@ -729,6 +732,9 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;
+                }
+                Diff::SetPrintTitles { sheet, new_value, old_value: _ } => {
+                    self.write_print_titles(*sheet, *new_value)?;
                 }
                 Diff::SetPageSetup { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_page_setup = new_value.clone();

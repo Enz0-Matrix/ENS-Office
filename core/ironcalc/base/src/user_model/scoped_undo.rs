@@ -44,6 +44,7 @@ fn sheet_of(diff: &Diff) -> Option<u32> {
         | Diff::SetRowHidden { sheet, .. }
         | Diff::SetRowOutline { sheet, .. }
         | Diff::SetPrintArea { sheet, .. }
+        | Diff::SetPrintTitles { sheet, .. }
         | Diff::SetPageSetup { sheet, .. }
         | Diff::SetOutlineSummary { sheet, .. }
         | Diff::SetColumnOutline { sheet, .. }

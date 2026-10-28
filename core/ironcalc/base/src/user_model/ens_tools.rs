@@ -604,6 +604,29 @@ impl UserModel<'_> {
 /// Excel keeps the print area of a sheet in this sheet-scoped name.
 pub const PRINT_AREA: &str = "_xlnm.Print_Area";
 
+/// Excel keeps the rows and columns repeated on every printed page in this sheet-scoped name.
+pub const PRINT_TITLES: &str = "_xlnm.Print_Titles";
+
+/// "Лист1!$A:$B,Лист1!$1:$3" → [row1, row2, column1, column2]; 0 — not set.
+fn parse_print_titles(formula: &str) -> [i32; 4] {
+    let mut out = [0; 4];
+    for part in formula.split(',') {
+        let range = part.rsplit('!').next().unwrap_or_default().trim().trim_start_matches('=').replace('$', "");
+        let (a, b) = range.split_once(':').unwrap_or((&range, &range));
+        if let (Ok(r1), Ok(r2)) = (a.parse::<i32>(), b.parse::<i32>()) {
+            out[0] = r1;
+            out[1] = r2;
+        } else if let (Ok(c1), Ok(c2)) = (
+            crate::expressions::utils::column_to_number(a),
+            crate::expressions::utils::column_to_number(b),
+        ) {
+            out[2] = c1;
+            out[3] = c2;
+        }
+    }
+    out
+}
+
 /// Excel keeps the autofilter range of a sheet in this hidden, sheet-scoped name.
 pub const FILTER_DATABASE: &str = "_xlnm._FilterDatabase";
 
@@ -658,6 +681,51 @@ impl UserModel<'_> {
         }
         self.write_print_area(sheet, range)?;
         self.push_diff_list(vec![Diff::SetPrintArea { sheet, new_value: range, old_value }]);
+        Ok(())
+    }
+
+    /// ENS-Office: rows and columns repeated on every printed page, [row1, row2, column1, column2]
+    /// (0 — not set), Excel's `_xlnm.Print_Titles`.
+    pub fn get_print_titles(&self, sheet: u32) -> Result<[i32; 4], String> {
+        let sheet_id = self.model.workbook.worksheet(sheet)?.sheet_id;
+        Ok(self
+            .model
+            .workbook
+            .defined_names
+            .iter()
+            .find(|d| d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(PRINT_TITLES))
+            .map(|d| parse_print_titles(&d.formula))
+            .unwrap_or([0; 4]))
+    }
+
+    pub(crate) fn write_print_titles(&mut self, sheet: u32, titles: [i32; 4]) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let (sheet_id, name) = (ws.sheet_id, ws.get_name());
+        let names = &mut self.model.workbook.defined_names;
+        names.retain(|d| !(d.sheet_id == Some(sheet_id) && d.name.eq_ignore_ascii_case(PRINT_TITLES)));
+        let q = crate::expressions::utils::quote_name(&name);
+        let col = |c: i32| crate::expressions::utils::number_to_column(c).unwrap_or_default();
+        let mut parts = Vec::new();
+        if titles[2] > 0 && titles[3] >= titles[2] {
+            parts.push(format!("{q}!${}:${}", col(titles[2]), col(titles[3])));
+        }
+        if titles[0] > 0 && titles[1] >= titles[0] {
+            parts.push(format!("{q}!${}:${}", titles[0], titles[1]));
+        }
+        if !parts.is_empty() {
+            names.push(crate::types::DefinedName { name: PRINT_TITLES.to_string(), formula: parts.join(","), sheet_id: Some(sheet_id) });
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: sets the repeated rows and columns, [row1, row2, column1, column2] (0 — none); an undoable step.
+    pub fn set_print_titles(&mut self, sheet: u32, titles: [i32; 4]) -> Result<(), String> {
+        let old_value = self.get_print_titles(sheet)?;
+        if old_value == titles {
+            return Ok(());
+        }
+        self.write_print_titles(sheet, titles)?;
+        self.push_diff_list(vec![Diff::SetPrintTitles { sheet, new_value: titles, old_value }]);
         Ok(())
     }
 
@@ -825,6 +893,19 @@ mod tests {
         assert!(m.update_range_style(&area, "alignment.text_rotation", "200").is_err());
         m.update_range_style(&area, "alignment.text_rotation", "255").unwrap();
         assert_eq!(m.get_cell_style(0, 1, 1).unwrap().alignment.unwrap().text_rotation, 255);
+    }
+
+    #[test]
+    fn ens_print_titles() {
+        let mut m = model();
+        assert_eq!(m.get_print_titles(0).unwrap(), [0; 4]);
+        m.set_print_titles(0, [1, 3, 1, 2]).unwrap();
+        assert_eq!(m.get_print_titles(0).unwrap(), [1, 3, 1, 2]);
+        m.undo().unwrap();
+        assert_eq!(m.get_print_titles(0).unwrap(), [0; 4]);
+        m.redo().unwrap();
+        m.set_print_titles(0, [2, 2, 0, 0]).unwrap();
+        assert_eq!(m.get_print_titles(0).unwrap(), [2, 2, 0, 0]);
     }
 
     #[test]

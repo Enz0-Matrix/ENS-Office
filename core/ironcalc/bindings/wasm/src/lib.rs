@@ -521,6 +521,18 @@ impl Model {
         self.model.can_redo_scoped(sheet, scope_of(mode))
     }
 
+    /// ENS-Office: [row1, row2, column1, column2] repeated on every printed page (0 — none).
+    #[wasm_bindgen(js_name = "getPrintTitles")]
+    pub fn get_print_titles(&self, sheet: u32) -> Result<Vec<i32>, JsError> {
+        Ok(self.model.get_print_titles(sheet).map_err(to_js_error)?.to_vec())
+    }
+
+    #[wasm_bindgen(js_name = "setPrintTitles")]
+    pub fn set_print_titles(&mut self, sheet: u32, titles: Vec<i32>) -> Result<(), JsError> {
+        let t: [i32; 4] = titles.try_into().map_err(|_| to_js_error("titles: four numbers expected".to_string()))?;
+        self.model.set_print_titles(sheet, t).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "getPageSetup")]
     pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {
         self.model.get_page_setup(sheet).map_err(to_js_error)

@@ -117,6 +117,12 @@ pub(crate) enum Diff {
         new_value: Option<[i32; 4]>,
         old_value: Option<[i32; 4]>,
     },
+    /// ENS-Office: rows and columns repeated on printed pages (`_xlnm.Print_Titles`), [r1, r2, c1, c2].
+    SetPrintTitles {
+        sheet: u32,
+        new_value: [i32; 4],
+        old_value: [i32; 4],
+    },
     /// ENS-Office: page setup of a sheet (JSON, see `Worksheet::ens_page_setup`).
     SetPageSetup {
         sheet: u32,

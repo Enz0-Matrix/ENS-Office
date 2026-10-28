@@ -74,6 +74,7 @@ fn test_ens_page_setup_export() {
     assert_eq!(model.get_page_setup(0).unwrap(), "");
     model.redo().unwrap();
     model.set_print_area(0, Some([1, 1, 20, 3])).unwrap();
+    model.set_print_titles(0, [1, 2, 1, 1]).unwrap();
     let name = "temp_ens_page_setup.xlsx";
     save_to_xlsx(model.get_model(), name).unwrap();
     let f = std::fs::File::open(name).unwrap();
@@ -94,6 +95,7 @@ fn test_ens_page_setup_export() {
     assert_eq!(v["footer"], "&CСтраница &P из &N");
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_print_area(0).unwrap(), Some([1, 1, 20, 3]));
+    assert_eq!(back.get_print_titles(0).unwrap(), [1, 2, 1, 1]);
 }
 
 // ENS-Office: position of the outline buttons round trip (`<outlinePr>`); Excel's default is below / right.

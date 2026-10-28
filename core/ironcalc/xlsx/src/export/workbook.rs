@@ -97,8 +97,13 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
             .formula
             .strip_prefix('=')
             .unwrap_or(&defined_name.formula);
-        let node = parser.parse(formula_body, &parse_context);
-        let formula = to_excel_string(&node, &parse_context);
+        // ENS-Office: Excel's own names (`_xlnm.Print_Titles` holds a list of ranges) are written as they are.
+        let formula = if defined_name.name.starts_with("_xlnm.") {
+            formula_body.to_string()
+        } else {
+            let node = parser.parse(formula_body, &parse_context);
+            to_excel_string(&node, &parse_context)
+        };
         let formula = escape_xml(&formula);
         defined_names_str.push(format!(
             "<definedName name=\"{name}\"{local_sheet_id}>{formula}</definedName>"

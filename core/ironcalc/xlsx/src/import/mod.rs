@@ -121,6 +121,10 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         .map(|s| s.name.clone())
         .collect::<Vec<_>>();
     for dn in &mut workbook.defined_names {
+        // ENS-Office: Excel's own names (`_xlnm.Print_Titles` is a list of ranges) stay as written.
+        if dn.name.starts_with("_xlnm.") {
+            continue;
+        }
         dn.formula = reparse_formula_hack(&dn.formula, &worksheet_names)?;
     }
     let metadata = match load_metadata(&mut archive) {
