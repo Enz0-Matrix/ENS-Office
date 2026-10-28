@@ -196,6 +196,12 @@ export class Grid {
    *  (null — двойной щелчок, подобрать по содержимому). */
   onResize: (kind: 'column' | 'row', index: number, px: number | null) => void = () => {};
   /** Правый щелчок по ячейке или заголовку. */
+  /** Ячейки с примечаниями ("строка:столбец") — красный уголок. */
+  commentCells = new Set<string>();
+  /** Ручные разрывы страниц листа: [после строк, после столбцов] — штриховые линии. */
+  pageBreaks: [number[], number[]] = [[], []];
+  /** Указатель над ячейкой (row 0 — не над ячейкой); для всплывающего примечания. */
+  onCellHover: (row: number, column: number, clientX: number, clientY: number) => void = () => {};
   onContextMenu: (x: number, y: number, header: 'row' | 'column' | 'corner' | null) => void = () => {};
   /** Протягивание маркера заполнения: куда дотянули. */
   onFill: (target: { r1: number; c1: number; r2: number; c2: number }) => void = () => {};
@@ -983,6 +989,10 @@ export class Grid {
       this.canvas.style.cursor = g ? (g.kind === 'column' ? 'col-resize' : 'row-resize') : onHandle ? 'crosshair'
         : frame ? (frame.mode === 'resize' ? 'nwse-resize' : 'move') : '';
     }
+    if (e.target === this.canvas && !this.dragging && !this.pointing && this.commentCells.size) {
+      const p = this.hit(e);
+      this.onCellHover(p.row >= 1 && p.column >= 1 ? p.row : 0, p.column, e.clientX, e.clientY);
+    }
     if (this.pointing) {
       const p = this.hit(e);
       if (p.row >= 1 && p.column >= 1) this.onPointer(p.row, p.column, 'drag', true);
@@ -1015,6 +1025,7 @@ export class Grid {
     const W = this.viewW, H = this.viewH;
     const sl = this.sLeft, st = this.sTop;
     this.readFrozen();
+    this.readDecor(model);
     const r0 = this.firstRow;
     let rN = r0;
     const bottomH = this.bottomH, rightW = this.rightW;
@@ -1195,6 +1206,36 @@ export class Grid {
     for (const cell of cells) {
       const b = styleOf(cell.r, cell.c)?.border;
       if (b) this.drawBorders(b, cell);
+    }
+    // Красные уголки примечаний.
+    if (this.commentCells.size) {
+      ctx.save();
+      ctx.fillStyle = '#d32f2f';
+      for (const cell of cells) {
+        if (!this.commentCells.has(`${cell.r}:${cell.c}`)) continue;
+        const x = cell.x + cell.w, y = cell.y;
+        ctx.beginPath(); ctx.moveTo(x - 7, y); ctx.lineTo(x, y); ctx.lineTo(x, y + 7); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+    // Ручные разрывы страниц: штриховые линии после строки (слева от столбца).
+    if (this.pageBreaks[0].length || this.pageBreaks[1].length) {
+      ctx.save();
+      ctx.strokeStyle = '#1f4e9c';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 3]);
+      const a = this.lrect(ra, ca), b = this.lrect(rb, cb);
+      for (const n of this.pageBreaks[0]) {
+        if (n < ra || n > rb) continue;
+        const r = this.lrect(n, ca), y = Math.round(r.y + r.h) - 0.5;
+        ctx.beginPath(); ctx.moveTo(a.x, y); ctx.lineTo(b.x + b.w, y); ctx.stroke();
+      }
+      for (const n of this.pageBreaks[1]) {
+        if (n < ca || n > cb) continue;
+        const r = this.lrect(ra, n), x = Math.round(r.x + r.w) - 0.5;
+        ctx.beginPath(); ctx.moveTo(x, a.y); ctx.lineTo(x, b.y + b.h); ctx.stroke();
+      }
+      ctx.restore();
     }
     // Кнопки автофильтра в строке заголовков.
     for (const flt of this.filters) {
@@ -1583,6 +1624,18 @@ export class Grid {
       if (bandRowW > 0) ctx.strokeRect(rowRect.x, rowRect.y + 0.75, bandRowW, rowRect.h - 1.5);
     }
     ctx.restore();
+  }
+
+  /** Примечания и разрывы страниц листа — из модели (их мало, чтение дешёвое). */
+  private readDecor(model: Model): void {
+    this.commentCells.clear();
+    try {
+      for (const c of model.getComments(this.sheet)) {
+        const m = /^([A-Z]+)(\d+)$/.exec(c.ref);
+        if (m) this.commentCells.add(`${m[2]}:${m[1].split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0)}`);
+      }
+      this.pageBreaks = model.getPageBreaks(this.sheet);
+    } catch { this.pageBreaks = [[], []]; }
   }
 
   /** Значок метки: синий кружок. */

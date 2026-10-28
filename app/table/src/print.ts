@@ -129,6 +129,11 @@ export function printTitles(model: Model, sheet: number): number[] {
   try { const t = model.getPrintTitles(sheet); return t.length === 4 ? t : [0, 0, 0, 0]; } catch { return [0, 0, 0, 0]; }
 }
 
+/** Ручные разрывы страниц листа: [после строк, после столбцов]. */
+export function pageBreaksOf(model: Model, sheet: number): [number[], number[]] {
+  try { return model.getPageBreaks(sheet); } catch { return [[], []]; }
+}
+
 /** Область печати листа (Excel: _xlnm.Print_Area) или null. */
 export function printAreaOf(model: Model, sheet: number): Range | null {
   try {
@@ -137,7 +142,7 @@ export function printAreaOf(model: Model, sheet: number): Range | null {
   } catch { return null; }
 }
 
-interface PrintRow { html: string; h: number; /** нельзя начинать с неё страницу (внутри объединения) */ keep: boolean }
+interface PrintRow { html: string; h: number; /** номер строки листа */ row: number; /** нельзя начинать с неё страницу (внутри объединения) */ keep: boolean }
 interface Built { colgroup: string; cls: string; width: number; head: PrintRow[]; body: PrintRow[] }
 
 /** Строки таблицы для печати и предпросмотра. */
@@ -175,7 +180,7 @@ function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions, co
       const attrs = span ? ` rowspan="${span[0]}" colspan="${span[1]}"` : '';
       tds += `<td${attrs} style="${esc(cellCss(st, model, text ? model.getCellType(sheet, row, c) : 0))}">${esc(text)}</td>`;
     }
-    return { html: `<tr style="height:${h}px">${tds}</tr>`, h, keep: insideMerge.has(row) };
+    return { html: `<tr style="height:${h}px">${tds}</tr>`, h, row, keep: insideMerge.has(row) };
   };
   // Заголовок на каждой странице: закреплённые строки (если область начинается в них), иначе первая.
   const frozen = (() => { try { return model.getFrozenRowsCount(sheet); } catch { return 0; } })();
@@ -223,7 +228,7 @@ function zoomFor(opts: PrintOptions, width: number, height: number): number {
 }
 
 /** Разбивка строк на страницы (как будет напечатано): заголовок — на каждой. */
-function paginate(b: Built, opts: PrintOptions): { pages: PrintRow[][]; zoom: number } {
+function paginate(b: Built, opts: PrintOptions, rowBreaks: number[] = []): { pages: PrintRow[][]; zoom: number } {
   const headH = b.head.reduce((s, x) => s + x.h, 0);
   const total = headH + b.body.reduce((s, x) => s + x.h, 0);
   const zoom = zoomFor(opts, b.width, total);
@@ -232,14 +237,18 @@ function paginate(b: Built, opts: PrintOptions): { pages: PrintRow[][]; zoom: nu
   const pages: PrintRow[][] = [];
   let cur: PrintRow[] = [];
   let used = 0;
+  let prev = 0;
   for (const row of b.body) {
-    if (cur.length && used + row.h > avail && !row.keep) {
+    // Ручной разрыв: страница заканчивается строкой N (разрывы в объединении не действуют).
+    const forced = !row.keep && rowBreaks.some((n) => n >= prev && n < row.row);
+    if (cur.length && (forced || (used + row.h > avail && !row.keep))) {
       pages.push(cur);
       cur = [];
       used = 0;
     }
     cur.push(row);
     used += row.h;
+    prev = row.row;
   }
   if (cur.length || !pages.length) pages.push(cur);
   return { pages, zoom };
@@ -257,6 +266,8 @@ function layout(model: Model, sheet: number, r: Range, opts: PrintOptions): { pa
   for (let c = r.c1; c <= r.c2; c++) if (!titleCols.includes(c)) own.push(c);
   const widthOf = (c: number) => Math.round(model.getColumnWidth(sheet, c));
   const chunks: number[][] = [];
+  // Ручные разрывы действуют, пока масштаб не подгоняется под страницу (как в Excel).
+  const [rowBreaks, colBreaks] = opts.fit === 'none' ? pageBreaksOf(model, sheet) : [[], []];
   if (opts.fit !== 'none') {
     chunks.push(own);
   } else {
@@ -264,7 +275,7 @@ function layout(model: Model, sheet: number, r: Range, opts: PrintOptions): { pa
     let cur: number[] = [], used = 0;
     for (const c of own) {
       const w = widthOf(c);
-      if (cur.length && used + w > avail) { chunks.push(cur); cur = []; used = 0; }
+      if (cur.length && (used + w > avail || colBreaks.some((n) => n >= cur[cur.length - 1] && n < c))) { chunks.push(cur); cur = []; used = 0; }
       cur.push(c);
       used += w;
     }
@@ -273,7 +284,7 @@ function layout(model: Model, sheet: number, r: Range, opts: PrintOptions): { pa
   const pages: PrintPage[] = [];
   for (const chunk of chunks) {
     const b = buildRows(model, sheet, r, opts, [...titleCols, ...chunk]);
-    const p = paginate(b, opts);
+    const p = paginate(b, opts, rowBreaks);
     for (const rows of p.pages) pages.push({ b, rows, zoom: p.zoom });
   }
   return { pages, chunks: chunks.length };

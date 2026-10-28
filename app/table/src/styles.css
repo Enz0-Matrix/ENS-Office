@@ -427,3 +427,6 @@ footer { display: flex; flex-direction: column; }
 .print-titles input { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; background: var(--panel); color: var(--text); }
 .pt-note { color: #a4262c; }
 .names-form[hidden] { display: none; }
+
+/* Всплывающее примечание ячейки */
+.comment-tip { position: fixed; z-index: 60; max-width: 260px; padding: 6px 8px; background: #ffffe1; color: #222; border: 1px solid #8a8a8a; box-shadow: 0 2px 8px rgba(0,0,0,.25); font-size: 12px; white-space: pre-wrap; pointer-events: none; }

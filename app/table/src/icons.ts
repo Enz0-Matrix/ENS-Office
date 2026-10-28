@@ -16,6 +16,10 @@ import i_font_24 from '@fluentui/svg-icons/icons/text_font_24_regular.svg?raw';
 import i_fork_24 from '@fluentui/svg-icons/icons/branch_fork_24_regular.svg?raw';
 import i_more_24 from '@fluentui/svg-icons/icons/more_horizontal_24_regular.svg?raw';
 import i_book_24 from '@fluentui/svg-icons/icons/book_open_24_regular.svg?raw';
+import i_comment_add_24 from '@fluentui/svg-icons/icons/comment_add_24_regular.svg?raw';
+import i_comment_edit_24 from '@fluentui/svg-icons/icons/comment_edit_24_regular.svg?raw';
+import i_comment_dismiss_24 from '@fluentui/svg-icons/icons/comment_dismiss_24_regular.svg?raw';
+import i_page_break_24 from '@fluentui/svg-icons/icons/document_page_break_24_regular.svg?raw';
 import i_symbols_24 from '@fluentui/svg-icons/icons/symbols_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
@@ -96,6 +100,10 @@ export const ICONS: Record<string, string> = {
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
   'symbols_24': i_symbols_24,
+  'comment_add_24': i_comment_add_24,
+  'comment_edit_24': i_comment_edit_24,
+  'comment_dismiss_24': i_comment_dismiss_24,
+  'page_break_24': i_page_break_24,
   'money_24': i_money_24,
   'calculator_24': i_calc_24,
   'text_font_24': i_font_24,

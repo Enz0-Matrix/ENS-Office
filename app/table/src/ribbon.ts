@@ -209,6 +209,15 @@ export const TABS: RibbonTab[] = [
     label: 'Вставка',
     groups: [
       { name: 'Листы', items: [{ type: 'large', command: 'sheet.new', icon: 'table_add', label: 'Новый лист' }] },
+      { name: 'Примечания', items: [
+        { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
+        { type: 'large', command: 'comment.delete', icon: 'comment_dismiss', label: 'Удалить примечание' },
+      ] },
+      { name: 'Разрывы страниц', items: [
+        { type: 'large', command: 'page.breakInsert', icon: 'page_break', label: 'Вставить разрыв' },
+        { type: 'large', command: 'page.breakRemove', icon: 'page_break', label: 'Убрать разрыв' },
+        { type: 'large', command: 'page.breakReset', icon: 'page_break', label: 'Сбросить разрывы' },
+      ] },
       { name: 'Символы', items: [{ type: 'large', command: 'insert.symbol', icon: 'symbols', label: 'Символ' }] },
     ],
   },

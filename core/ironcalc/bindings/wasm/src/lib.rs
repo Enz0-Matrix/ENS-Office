@@ -533,6 +533,54 @@ impl Model {
         self.model.set_print_titles(sheet, t).map_err(to_js_error)
     }
 
+    /// ENS-Office: comments (notes) of the sheet, `[{ref, text, author}]`.
+    #[wasm_bindgen(js_name = "getComments")]
+    pub fn get_comments(&self, sheet: u32) -> Result<JsValue, JsError> {
+        #[derive(Serialize)]
+        struct C {
+            #[serde(rename = "ref")]
+            cell_ref: String,
+            text: String,
+            author: String,
+        }
+        let list: Vec<C> = self
+            .model
+            .get_comments(sheet)
+            .map_err(to_js_error)?
+            .into_iter()
+            .map(|c| C { cell_ref: c.cell_ref, text: c.text, author: c.author_name })
+            .collect();
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    /// ENS-Office: sets the comment of a cell (an empty text deletes it).
+    #[wasm_bindgen(js_name = "setComment")]
+    pub fn set_comment(&mut self, sheet: u32, row: i32, column: i32, text: &str, author: &str) -> Result<(), JsError> {
+        self.model.set_comment(sheet, row, column, text, author).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "deleteComment")]
+    pub fn delete_comment(&mut self, sheet: u32, row: i32, column: i32) -> Result<(), JsError> {
+        self.model.delete_comment(sheet, row, column).map_err(to_js_error)
+    }
+
+    /// ENS-Office: manual page breaks, `[[after rows…], [after columns…]]`.
+    #[wasm_bindgen(js_name = "getPageBreaks")]
+    pub fn get_page_breaks(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let b = self.model.get_page_breaks(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&[b.0, b.1]).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setPageBreak")]
+    pub fn set_page_break(&mut self, sheet: u32, is_row: bool, index: i32, on: bool) -> Result<(), JsError> {
+        self.model.set_page_break(sheet, is_row, index, on).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "clearPageBreaks")]
+    pub fn clear_page_breaks(&mut self, sheet: u32) -> Result<(), JsError> {
+        self.model.clear_page_breaks(sheet).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "getPageSetup")]
     pub fn get_page_setup(&self, sheet: u32) -> Result<String, JsError> {
         self.model.get_page_setup(sheet).map_err(to_js_error)

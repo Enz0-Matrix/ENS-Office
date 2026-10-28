@@ -102,6 +102,14 @@ export interface Model {
   /** Отбор фильтров листа (JSON), сохраняется в xlsx. */
   getFilterCriteria(sheet: number): string;
   setFilterCriteria(sheet: number, json: string): void;
+  /** Комментарии (примечания) листа; ref — адрес ячейки A1. */
+  getComments(sheet: number): { ref: string; text: string; author: string }[];
+  setComment(sheet: number, row: number, column: number, text: string, author: string): void;
+  deleteComment(sheet: number, row: number, column: number): void;
+  /** Ручные разрывы страниц: [после строк, после столбцов] (номера с 1). */
+  getPageBreaks(sheet: number): [number[], number[]];
+  setPageBreak(sheet: number, isRow: boolean, index: number, on: boolean): void;
+  clearPageBreaks(sheet: number): void;
   getPageSetup(sheet: number): string;
   getPrintArea(sheet: number): number[];
   /** Сквозные строки и столбцы печати: [строка1, строка2, столбец1, столбец2], 0 — нет. */

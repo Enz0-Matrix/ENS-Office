@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { showLog } from './changelog';
+import { showLog, userName } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
@@ -991,6 +991,11 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: cols > 1 ? `Удалить столбцы (${cols})` : 'Удалить столбец', run: () => void deleteLines('column') });
   }
   items.push({ label: 'Очистить содержимое', keys: keysOf('edit.clear'), run: () => run('edit.clear') });
+  if (!header) {
+    const has = !!commentOf(s.row, s.column);
+    items.push({ label: has ? 'Изменить примечание…' : 'Вставить примечание…', separator: true, run: () => editComment(s.row, s.column) });
+    if (has) items.push({ label: 'Удалить примечание', run: () => deleteComment(s.row, s.column) });
+  }
   if (!header) items.push({ label: 'Формат ячеек…', keys: keysOf('format.cells'), run: () => run('format.cells') });
   if (!header && (rows > 1 || cols > 1)) {
     items.push({ label: 'Объединить и поместить в центр', separator: true, run: () => merge('center') });
@@ -1024,6 +1029,74 @@ function structure(change: () => void): void {
 }
 
 /** «Ширина столбца…» / «Высота строки…» — в пикселях, для всех выделенных. */
+// --- Примечания и разрывы страниц ---
+
+function commentOf(row: number, column: number): { ref: string; text: string; author: string } | undefined {
+  const ref = `${columnName(column)}${row}`;
+  try { return model.getComments(grid.sheet).find((c) => c.ref === ref); } catch { return undefined; }
+}
+
+function deleteComment(row: number, column: number): void {
+  if (!commentOf(row, column)) return;
+  model.deleteComment(grid.sheet, row, column);
+  grid.render();
+}
+
+/** Окно примечания: создать, изменить или удалить (пустой текст). */
+function editComment(row: number, column: number): void {
+  const old = commentOf(row, column);
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Примечание к ячейке ${columnName(column)}${row}</h2>
+    <textarea class="comment-text" rows="6" style="width:100%;box-sizing:border-box;font:inherit"></textarea>
+    <div class="rec-actions">${old ? '<button data-act="delete" class="danger">Удалить</button>' : ''}
+    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Сохранить</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const area = box.querySelector<HTMLTextAreaElement>('textarea')!;
+  area.value = old?.text ?? '';
+  area.focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (act === 'ok') model.setComment(grid.sheet, row, column, area.value, old?.author || userName(''));
+    if (act === 'delete') model.deleteComment(grid.sheet, row, column);
+    if (act !== 'cancel') grid.render();
+    close();
+  });
+}
+
+/** Всплывающее примечание при наведении. */
+const commentTip = Object.assign(document.createElement('div'), { className: 'comment-tip', hidden: true });
+document.body.appendChild(commentTip);
+let tipCell = '';
+grid.onCellHover = (row, column, x, y) => {
+  const c = row ? commentOf(row, column) : undefined;
+  if (!c) { commentTip.hidden = true; tipCell = ''; return; }
+  const key = `${row}:${column}`;
+  if (key !== tipCell) {
+    tipCell = key;
+    commentTip.textContent = '';
+    if (c.author) commentTip.append(Object.assign(document.createElement('b'), { textContent: `${c.author}:` }), document.createElement('br'));
+    commentTip.append(c.text);
+  }
+  commentTip.style.left = `${Math.min(x + 14, window.innerWidth - 280)}px`;
+  commentTip.style.top = `${Math.min(y + 14, window.innerHeight - 120)}px`;
+  commentTip.hidden = false;
+};
+document.addEventListener('mouseleave', () => { commentTip.hidden = true; tipCell = ''; });
+
+/** Разрыв страницы выше и левее активной ячейки (как в Excel). */
+function pageBreak(on: boolean): void {
+  const s = grid.sel;
+  const mark = model.undoMark();
+  if (s.r1 > 1) model.setPageBreak(grid.sheet, true, s.r1 - 1, on);
+  if (s.c1 > 1) model.setPageBreak(grid.sheet, false, s.c1 - 1, on);
+  model.mergeUndoSince(mark);
+  grid.render();
+}
+
 function askSize(kind: 'column' | 'row'): void {
   const s = grid.sel;
   const current = kind === 'column' ? Math.round(model.getColumnWidth(grid.sheet, s.column))
@@ -2360,6 +2433,16 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
+    run: () => editComment(grid.sel.row, grid.sel.column) },
+  { id: 'comment.delete', label: 'Удалить примечание', keywords: ['delete comment', 'удалить комментарий'],
+    run: () => deleteComment(grid.sel.row, grid.sel.column) },
+  { id: 'page.breakInsert', label: 'Вставить разрыв страницы', keywords: ['page break', 'разрыв страницы', 'печать'],
+    run: () => pageBreak(true) },
+  { id: 'page.breakRemove', label: 'Убрать разрыв страницы', keywords: ['remove page break', 'убрать разрыв'],
+    run: () => pageBreak(false) },
+  { id: 'page.breakReset', label: 'Сбросить все разрывы страниц', keywords: ['reset page breaks'],
+    run: () => { model.clearPageBreaks(grid.sheet); grid.render(); } },
   { id: 'insert.symbol', label: 'Вставить символ', keywords: ['symbol', 'символ', 'спецсимвол', 'знак', 'греческие буквы', 'валюта', 'стрелка'],
     run: () => openSymbols(insertSymbol) },
   { id: 'formulas.names', label: 'Диспетчер имён', keywords: ['name manager', 'имена', 'именованный диапазон', 'присвоить имя'], keys: ['Ctrl+F3'],
