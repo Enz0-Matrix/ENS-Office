@@ -201,7 +201,10 @@ footer { display: flex; flex-direction: column; }
 .pick { color: var(--text); }
 .pick:hover, .pick.active { background: var(--hover); }
 .pick kbd { color: var(--muted); font: 11px "Segoe UI", sans-serif; }
-.cell-editor.editing { opacity: 1; pointer-events: auto; caret-color: auto; }
+.cell-editor.editing { opacity: 1; pointer-events: auto; caret-color: auto; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+/* Поле ввода осталось на экране, а ячейка ушла из вида (прокрутка, другой лист): тень, обводка и метка. */
+.cell-editor.floating { box-shadow: 0 10px 28px rgba(0,0,0,.45), 0 0 0 4px rgba(43,122,107,.3); }
+.editor-tag { position: fixed; z-index: 11; padding: 2px 8px; border-radius: 4px 4px 0 0; background: var(--accent); color: #fff; font-size: 11px; letter-spacing: .03em; pointer-events: none; white-space: nowrap; }
 
 .bs-donate { display: block; margin: 8px 12px; padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,.14); color: #fff; text-decoration: none; text-align: center; }
 .bs-donate:hover { background: rgba(255,255,255,.24); }

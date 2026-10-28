@@ -93,6 +93,27 @@ function placeEditor(): void {
   if (editing && settings.expandEditor) growEditor();
 }
 
+/** Поле ввода остаётся на экране при прокрутке и смене листа: выделяем его тенью и меткой с адресом ячейки. */
+function syncEditorTag(): void {
+  const tag = $('editor-tag');
+  if (!editing || editor.classList.contains('away')) { tag.hidden = true; editor.classList.remove('floating'); return; }
+  const er = editor.getBoundingClientRect();
+  let away = grid.sheet !== editCell.sheet;
+  if (!away) {
+    const host = grid.scroller.getBoundingClientRect(), r = grid.cellRect(editCell.row, editCell.column);
+    away = Math.abs(host.left + r.x - er.left) > 3 || Math.abs(host.top + r.y - er.top) > 3;
+  }
+  editor.classList.toggle('floating', away);
+  tag.hidden = !away;
+  if (!away) return;
+  const sheetName = model.getWorksheetsProperties()[editCell.sheet]?.name ?? '';
+  tag.textContent = `Ввод: ${sheetName}!${columnName(editCell.column)}${editCell.row}`;
+  tag.style.left = `${er.left}px`;
+  tag.style.top = `${er.top >= 22 ? er.top - 20 : er.bottom}px`;
+}
+grid.scroller.addEventListener('scroll', syncEditorTag);
+setInterval(syncEditorTag, 250);
+
 /** Настройка «Расширять поле ввода»: поле растёт вправо по мере набора.
  *  По умолчанию выключено — текст прокручивается внутри ячейки. */
 const measure = document.createElement('canvas').getContext('2d')!;
