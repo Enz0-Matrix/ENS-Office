@@ -3,6 +3,7 @@
 // «Сохранить как PDF» (Windows: «Microsoft Print to PDF», РЕД ОС: «Печать в файл»).
 
 import type { BorderItem, CellStyle, Model } from './engine';
+import { drawChart, readChartData } from './chart';
 import { fontStack } from './fonts';
 
 export type Paper = 'A4' | 'A3' | 'A5' | 'Letter';
@@ -120,8 +121,27 @@ export function printRange(model: Model, sheet: number, opts: PrintOptions, sel:
   const area = printAreaOf(model, sheet);
   if (area) return area;
   const [r1, c1, r2, c2] = model.getSheetDimension(sheet);
-  if (r1 === r2 && c1 === c2 && model.getFormattedCellValue(sheet, r1, c1) === '') return null;
-  return { r1: 1, c1: 1, r2, c2 };
+  const empty = r1 === r2 && c1 === c2 && model.getFormattedCellValue(sheet, r1, c1) === '';
+  const box = objectsExtent(model, sheet);
+  if (empty && !box) return null;
+  // Рисунки и диаграммы тоже печатаются: область растягивается до их правого нижнего угла.
+  return { r1: 1, c1: 1, r2: Math.max(empty ? 1 : r2, box?.r ?? 1), c2: Math.max(empty ? 1 : c2, box?.c ?? 1) };
+}
+
+/** Последние строка и столбец, до которых доходят рисунки и диаграммы листа. */
+function objectsExtent(model: Model, sheet: number): { r: number; c: number } | null {
+  let r = 0, c = 0;
+  try {
+    const all = [...model.getImages(sheet), ...model.getCharts(sheet)];
+    for (const o of all) {
+      let y = -o.dy, row = o.row;
+      while (y < o.height && row < 1_048_576 && row - o.row < 3000) { y += Math.max(1, Math.round(model.getRowHeight(sheet, row) * ROW_SCALE)) || 1; row++; }
+      let x = -o.dx, col = o.column;
+      while (x < o.width && col < 16_384 && col - o.column < 300) { x += Math.max(1, Math.round(model.getColumnWidth(sheet, col))); col++; }
+      r = Math.max(r, row - 1); c = Math.max(c, col - 1);
+    }
+  } catch { return null; }
+  return r && c ? { r, c } : null;
 }
 
 /** Сквозные строки и столбцы листа: [строка1, строка2, столбец1, столбец2], 0 — не заданы. */
@@ -143,7 +163,7 @@ export function printAreaOf(model: Model, sheet: number): Range | null {
 }
 
 interface PrintRow { html: string; h: number; /** номер строки листа */ row: number; /** нельзя начинать с неё страницу (внутри объединения) */ keep: boolean }
-interface Built { colgroup: string; cls: string; width: number; head: PrintRow[]; body: PrintRow[] }
+interface Built { colList: number[]; colW: number[]; colgroup: string; cls: string; width: number; head: PrintRow[]; body: PrintRow[] }
 
 /** Строки таблицы для печати и предпросмотра. */
 function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions, colList: number[]): Built {
@@ -203,7 +223,7 @@ function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions, co
     }
   }
   const colgroup = `<colgroup>${cols.map((w) => (w ? `<col style="width:${w}px">` : '')).join('')}</colgroup>`;
-  return { colgroup, cls: `print-table${opts.gridlines ? ' grid' : ''}`, width, head, body };
+  return { colList: colList.slice(), colW: cols, colgroup, cls: `print-table${opts.gridlines ? ' grid' : ''}`, width, head, body };
 }
 
 function tableHtml(b: Built, opts: PrintOptions, rows: PrintRow[]): string {
@@ -254,7 +274,45 @@ function paginate(b: Built, opts: PrintOptions, rowBreaks: number[] = []): { pag
   return { pages, zoom };
 }
 
-interface PrintPage { b: Built; rows: PrintRow[]; zoom: number }
+const toBase64 = (bytes: Uint8Array): string => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+/** Рисунки и диаграммы, у которых левый верхний угол на этой странице: поверх таблицы, по месту их ячейки.
+ *  Объект, выходящий за страницу, обрезается; перенос на следующую страницу не делается. */
+function objectsHtml(model: Model, sheet: number, b: Built, rows: PrintRow[]): string {
+  const headH = b.head.reduce((s, x) => s + x.h, 0);
+  const place = (row: number, column: number, dx: number, dy: number): { x: number; y: number } | null => {
+    const ci = b.colList.indexOf(column), ri = rows.findIndex((r) => r.row === row);
+    if (ci < 0 || ri < 0) return null;
+    return {
+      x: b.colW.slice(0, ci).reduce((s, w) => s + w, 0) + dx,
+      y: headH + rows.slice(0, ri).reduce((s, r) => s + r.h, 0) + dy,
+    };
+  };
+  let out = '';
+  try {
+    model.getImages(sheet).forEach((im, i) => {
+      const at = place(im.row, im.column, im.dx, im.dy);
+      if (at) out += `<img src="data:image/${im.ext};base64,${toBase64(model.getImageData(sheet, i))}" style="position:absolute;left:${at.x}px;top:${at.y}px;width:${im.width}px;height:${im.height}px">`;
+    });
+    for (const ch of model.getCharts(sheet)) {
+      const at = place(ch.row, ch.column, ch.dx, ch.dy);
+      if (!at) continue;
+      const k = 2, cv = document.createElement('canvas');
+      cv.width = ch.width * k; cv.height = ch.height * k;
+      const ctx = cv.getContext('2d')!;
+      ctx.scale(k, k);
+      drawChart(ctx, { x: 0, y: 0, w: ch.width, h: ch.height }, ch.kind, ch.title, readChartData(model, sheet, ch), ch);
+      out += `<img src="${cv.toDataURL('image/png')}" style="position:absolute;left:${at.x}px;top:${at.y}px;width:${ch.width}px;height:${ch.height}px">`;
+    }
+  } catch { /* без рисунков */ }
+  return out;
+}
+
+interface PrintPage { b: Built; rows: PrintRow[]; zoom: number; objs: string }
 
 /** Все страницы: сначала вниз, затем вправо (как в Excel). Если таблица шире страницы и масштаб
  *  не задан — столбцы делятся на части, сквозные столбцы повторяются в каждой. */
@@ -285,7 +343,7 @@ function layout(model: Model, sheet: number, r: Range, opts: PrintOptions): { pa
   for (const chunk of chunks) {
     const b = buildRows(model, sheet, r, opts, [...titleCols, ...chunk]);
     const p = paginate(b, opts, rowBreaks);
-    for (const rows of p.pages) pages.push({ b, rows, zoom: p.zoom });
+    for (const rows of p.pages) pages.push({ b, rows, zoom: p.zoom, objs: objectsHtml(model, sheet, b, rows) });
   }
   return { pages, chunks: chunks.length };
 }
@@ -339,13 +397,13 @@ function hfHtml(code: string, ctx: HfContext, pos: string): string {
 }
 
 /** Одна страница: бумага, поля, колонтитулы, часть таблицы. */
-function pageHtml(b: Built, opts: PrintOptions, rows: PrintRow[], zoom: number, ctx: HfContext, scaleForPreview = false): string {
+function pageHtml(b: Built, opts: PrintOptions, rows: PrintRow[], zoom: number, ctx: HfContext, objs = '', scaleForPreview = false): string {
   const [mt, mr, mb, ml] = marginsOf(opts);
   const [w, h] = paperOf(opts);
   const size = scaleForPreview ? '' : `width:${w}mm;height:${h - 0.5}mm;`;
   return `<div class="print-pg" style="${size}padding:${mt}mm ${mr}mm ${mb}mm ${ml}mm">
     ${hfHtml(opts.header, ctx, `left:${ml}mm;right:${mr}mm;top:${Math.max(3, mt / 2 - 2)}mm`)}${hfHtml(opts.footer, ctx, `left:${ml}mm;right:${mr}mm;bottom:${Math.max(3, mb / 2 - 2)}mm`)}
-    <div class="print-zoom" style="zoom:${zoom}">${tableHtml(b, opts, rows)}</div></div>`;
+    <div class="print-zoom" style="zoom:${zoom};position:relative">${tableHtml(b, opts, rows)}${objs}</div></div>`;
 }
 
 const PAPER_LABEL: Record<Paper, string> = { A4: 'A4', A3: 'A3', A5: 'A5', Letter: 'Letter' };
@@ -365,7 +423,7 @@ export function renderPreview(host: HTMLElement, model: Model, sheet: number, op
   const ctx: HfContext = { page: previewPage + 1, pages: pages.length, file, sheet: sheetName };
   const area = printAreaOf(model, sheet) && opts.what === 'sheet' ? ' · область печати' : '';
   host.innerHTML = `<div class="print-paper" style="aspect-ratio:${paperW}/${paperH}">
-      <div class="print-sheet">${pageHtml(pages[previewPage].b, opts, pages[previewPage].rows, pages[previewPage].zoom, ctx, true)}</div></div>
+      <div class="print-sheet">${pageHtml(pages[previewPage].b, opts, pages[previewPage].rows, pages[previewPage].zoom, ctx, pages[previewPage].objs, true)}</div></div>
     <div class="print-nav">
       <button data-pg="-1" ${previewPage ? '' : 'disabled'} title="Предыдущая страница">◀</button>
       <span>Страница ${previewPage + 1} из ${pages.length}</span>
@@ -406,7 +464,7 @@ export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel:
   // путь к файлу. Наши поля и колонтитулы — внутри каждой страницы.
   const size = opts.paper === 'Letter' ? 'letter' : opts.paper;
   root.innerHTML = `<style>@page { size: ${size} ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
-    ${pages.map((pg, i) => pageHtml(pg.b, opts, pg.rows, pg.zoom, { page: i + 1, pages: pages.length, file: title, sheet: sheetName })).join('')}`;
+    ${pages.map((pg, i) => pageHtml(pg.b, opts, pg.rows, pg.zoom, { page: i + 1, pages: pages.length, file: title, sheet: sheetName }, pg.objs)).join('')}`;
   const old = document.title;
   document.title = title; // имя PDF по умолчанию
   document.body.classList.add('printing');

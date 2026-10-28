@@ -1,5 +1,7 @@
 // Рисование диаграмм (столбцы, линии, круговая) на canvas по данным ячеек.
 
+import type { Chart, Model } from './engine';
+
 export interface ChartData { cats: string[]; names: string[]; series: number[][] }
 
 /** Оформление диаграммы: цвета рядов (у круговой — долей), легенда (0 — снизу, 1 — справа, 2 — нет), подписи значений. */
@@ -143,4 +145,21 @@ export function drawChart(ctx: CanvasRenderingContext2D, r: { x: number; y: numb
   }
   ctx.strokeStyle = '#888'; ctx.beginPath(); ctx.moveTo(px0, Math.round(zero) + 0.5); ctx.lineTo(px1, Math.round(zero) + 0.5); ctx.stroke();
   ctx.restore();
+}
+
+/** Данные диаграммы из ячеек её диапазона (первая строка — имена рядов, первый столбец — подписи). */
+export function readChartData(m: Model, sheet: number, c: Chart): ChartData {
+  const empty: ChartData = { cats: [], names: [], series: [] };
+  const rg = parseRange(c.range);
+  if (!rg) return empty;
+  const [r1, c1, r2, c2] = rg;
+  const cats: string[] = [];
+  for (let r = r1 + 1; r <= r2; r++) cats.push(m.getFormattedCellValue(sheet, r, c1));
+  const names: string[] = [], series: number[][] = [];
+  const cols = c.kind === 2 ? 1 : c2 - c1;
+  for (let k = 1; k <= cols; k++) {
+    names.push(m.getFormattedCellValue(sheet, r1, c1 + k));
+    series.push(Array.from(m.getRangeNumbers(sheet, r1 + 1, c1 + k, r2, c1 + k)));
+  }
+  return { cats, names, series };
 }
