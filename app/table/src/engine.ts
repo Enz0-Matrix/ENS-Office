@@ -17,6 +17,9 @@ export interface CellBorder { top?: BorderItem; bottom?: BorderItem; left?: Bord
 /** Часть текста ячейки со своим шрифтом; vert: 0 — обычный, 1 — надстрочный, 2 — подстрочный. */
 export interface RichRun { text: string; b?: boolean; i?: boolean; u?: boolean; strike?: boolean; sz?: number | null; color?: string | null; name?: string | null; vert?: number }
 
+/** Рисунок на листе: левый верхний угол — в ячейке (row, column) со сдвигом dx, dy (px). sig меняется вместе с содержимым. */
+export interface ImageInfo { row: number; column: number; dx: number; dy: number; width: number; height: number; ext: string; name: string; sig: number }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
@@ -120,6 +123,11 @@ export interface Model {
   setRichText(sheet: number, row: number, column: number, runs: RichRun[]): void;
   /** Ячейки с rich text в прямоугольнике: [строка, столбец, …]. */
   richTextCellsIn(sheet: number, r1: number, c1: number, r2: number, c2: number): number[];
+  getImages(sheet: number): ImageInfo[];
+  getImageData(sheet: number, index: number): Uint8Array;
+  addImage(sheet: number, row: number, column: number, width: number, height: number, ext: string, name: string, data: Uint8Array): number;
+  placeImage(sheet: number, index: number, row: number, column: number, dx: number, dy: number, width: number, height: number): void;
+  deleteImage(sheet: number, index: number): void;
   isSheetProtected(sheet: number): boolean;
   /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
   isSheetPasswordProtected(sheet: number): boolean;

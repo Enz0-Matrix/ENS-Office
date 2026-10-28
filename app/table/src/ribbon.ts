@@ -209,6 +209,7 @@ export const TABS: RibbonTab[] = [
     label: 'Вставка',
     groups: [
       { name: 'Листы', items: [{ type: 'large', command: 'sheet.new', icon: 'table_add', label: 'Новый лист' }] },
+      { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
         { type: 'large', command: 'comment.delete', icon: 'comment_dismiss', label: 'Удалить примечание' },

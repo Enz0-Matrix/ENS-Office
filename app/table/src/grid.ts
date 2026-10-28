@@ -3,7 +3,7 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type MergedCell, type Model, type RichRun } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun } from './engine';
 import { fontStack } from './fonts';
 import { PALETTE } from './numfmt';
 
@@ -196,6 +196,14 @@ export class Grid {
    *  (null — двойной щелчок, подобрать по содержимому). */
   onResize: (kind: 'column' | 'row', index: number, px: number | null) => void = () => {};
   /** Правый щелчок по ячейке или заголовку. */
+  /** Рисунки листа, выбранный рисунок (-1 — нет) и перенос или изменение размера мышью. */
+  images: ImageInfo[] = [];
+  selImage = -1;
+  private imgCache = new Map<string, HTMLImageElement | null>();
+  private imgDrag: { mode: 'move' | 'resize'; i: number; sx: number; sy: number; orig: { x: number; y: number; w: number; h: number }; cur: { x: number; y: number; w: number; h: number } } | null = null;
+  /** Рисунок перенесён или изменён: индекс, ячейка левого верхнего угла, сдвиг и размер (px). */
+  onImagePlace: (index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
+  onImageSelect: (index: number) => void = () => {};
   /** Ячейки с примечаниями ("строка:столбец") — красный уголок. */
   commentCells = new Set<string>();
   /** Ручные разрывы страниц листа: [после строк, после столбцов] — штриховые линии. */
@@ -386,7 +394,7 @@ export class Grid {
     this.canvas.addEventListener('mousedown', (e) => this.mouseDown(e));
     window.addEventListener('mousemove', (e) => this.mouseMove(e));
     window.addEventListener('mouseup', () => { this.dragging = false; this.pointing = false; this.headerDrag = null; this.refDrag = null; });
-    window.addEventListener('mouseup', () => { this.endResize(); this.endFill(); });
+    window.addEventListener('mouseup', () => { this.endResize(); this.endFill(); this.endImageDrag(); });
     this.canvas.addEventListener('dblclick', (e) => {
       const g = this.grip(e);
       const h = this.hit(e);
@@ -876,6 +884,23 @@ export class Grid {
       const cr0 = this.canvas.getBoundingClientRect();
       if (this.outlineClick((e.clientX - cr0.left) / this.zoom, (e.clientY - cr0.top) / this.zoom)) { e.preventDefault(); return; }
     }
+    if (this.images.length) {
+      const cr1 = this.canvas.getBoundingClientRect();
+      const px = (e.clientX - cr1.left) / this.zoom, py = (e.clientY - cr1.top) / this.zoom;
+      const sel = this.selImage >= 0 ? this.imageRect(this.selImage) : null;
+      const onHandle = sel && Math.abs(px - (sel.x + sel.w)) <= 7 && Math.abs(py - (sel.y + sel.h)) <= 7;
+      const hit = onHandle ? this.selImage : this.imageAt(px, py);
+      if (hit >= 0 && px > this.headerW && py > this.headerH) {
+        e.preventDefault();
+        this.selImage = hit;
+        const orig = { ...this.imageRect(hit) };
+        this.imgDrag = { mode: onHandle ? 'resize' : 'move', i: hit, sx: px, sy: py, orig, cur: orig };
+        this.onImageSelect(hit);
+        this.render();
+        return;
+      }
+      if (this.selImage >= 0) { this.selImage = -1; this.onImageSelect(-1); this.render(); }
+    }
     const g = this.grip(e);
     if (g) {
       e.preventDefault();
@@ -944,7 +969,30 @@ export class Grid {
     this.ctrlPick = false;
   }
 
+  private endImageDrag(): void {
+    const d = this.imgDrag;
+    if (!d) return;
+    this.imgDrag = null;
+    const c = d.cur, moved = Math.abs(c.x - d.orig.x) + Math.abs(c.y - d.orig.y) + Math.abs(c.w - d.orig.w) + Math.abs(c.h - d.orig.h) > 1;
+    if (!moved) { this.render(); return; }
+    const row = Math.max(1, this.rowAt(this.sheetY(Math.max(c.y, this.headerH + 1))));
+    const column = Math.max(1, this.columnAt(this.sheetX(Math.max(c.x, this.headerW + 1))));
+    const r = this.lrect(row, column);
+    this.onImagePlace(d.i, row, column, Math.round(c.x - r.x), Math.round(c.y - r.y), Math.round(c.w), Math.round(c.h));
+    this.render();
+  }
+
   private mouseMove(e: MouseEvent): void {
+    const d = this.imgDrag;
+    if (d) {
+      const cr = this.canvas.getBoundingClientRect();
+      const px = (e.clientX - cr.left) / this.zoom, py = (e.clientY - cr.top) / this.zoom;
+      d.cur = d.mode === 'move'
+        ? { ...d.orig, x: d.orig.x + px - d.sx, y: d.orig.y + py - d.sy }
+        : { ...d.orig, w: Math.max(12, d.orig.w + px - d.sx), h: Math.max(12, d.orig.h + py - d.sy) };
+      this.render();
+      return;
+    }
     const z = this.resizing;
     if (z) {
       const pos = z.kind === 'column' ? e.clientX : e.clientY;
@@ -1217,6 +1265,7 @@ export class Grid {
       const b = styleOf(cell.r, cell.c)?.border;
       if (b) this.drawBorders(b, cell);
     }
+    this.drawImages();
     // Красные уголки примечаний.
     if (this.commentCells.size) {
       ctx.save();
@@ -1688,6 +1737,50 @@ export class Grid {
     ctx.restore();
   }
 
+  /** Положение рисунка на экране (в логических пикселях) с учётом переноса мышью. */
+  private imageRect(i: number): { x: number; y: number; w: number; h: number } {
+    if (this.imgDrag?.i === i) return this.imgDrag.cur;
+    const im = this.images[i], c = this.lrect(im.row, im.column);
+    return { x: c.x + im.dx, y: c.y + im.dy, w: im.width, h: im.height };
+  }
+
+  private imageAt(px: number, py: number): number {
+    for (let i = this.images.length - 1; i >= 0; i--) {
+      const r = this.imageRect(i);
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
+    }
+    return -1;
+  }
+
+  private drawImages(): void {
+    const ctx = this.ctx, model = this.model();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(this.headerW, this.headerH, this.viewW - this.headerW, this.viewH - this.headerH); ctx.clip();
+    this.images.forEach((im, i) => {
+      const r = this.imageRect(i);
+      if (r.x > this.viewW || r.y > this.viewH || r.x + r.w < this.headerW || r.y + r.h < this.headerH) return;
+      const key = `${this.sheet}:${i}:${im.sig}`;
+      let el = this.imgCache.get(key);
+      if (el === undefined) {
+        this.imgCache.set(key, null);
+        try {
+          const img = new Image();
+          img.onload = () => { this.imgCache.set(key, img); this.render(); };
+          img.src = URL.createObjectURL(new Blob([model.getImageData(this.sheet, i) as BlobPart], { type: `image/${im.ext}` }));
+        } catch { /* битый рисунок */ }
+        el = null;
+      }
+      if (el) ctx.drawImage(el, r.x, r.y, r.w, r.h);
+      else { ctx.strokeStyle = '#999'; ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h); }
+      if (i === this.selImage) {
+        ctx.strokeStyle = '#1f4e9c'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
+      }
+    });
+    ctx.restore();
+  }
+
   /** Примечания и разрывы страниц листа — из модели (их мало, чтение дешёвое). */
   private readDecor(model: Model): void {
     this.commentCells.clear();
@@ -1698,6 +1791,8 @@ export class Grid {
       }
       this.pageBreaks = model.getPageBreaks(this.sheet);
     } catch { this.pageBreaks = [[], []]; }
+    try { this.images = model.getImages(this.sheet); } catch { this.images = []; }
+    if (this.selImage >= this.images.length) this.selImage = -1;
   }
 
   /** Значок метки: синий кружок. */

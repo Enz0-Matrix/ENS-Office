@@ -146,7 +146,7 @@ type Fmt = Omit<RichRun, 'text'>;
 const fmtKey = (f: Fmt) => JSON.stringify([f.b, f.i, f.u, f.strike, f.sz, f.color, f.name, f.vert]);
 /** Оформление каждого знака редактируемого текста (по индексу знака в строке JS). */
 let rich: { fmt: Fmt[]; text: string } | null = null;
-let lastEditInput: HTMLTextAreaElement = editor;
+let lastEditInput: HTMLTextAreaElement | HTMLInputElement = editor;
 
 function richFromModel(sheet: number, row: number, column: number): void {
   rich = null;
@@ -1121,6 +1121,32 @@ function structure(change: () => void): void {
 }
 
 /** «Ширина столбца…» / «Высота строки…» — в пикселях, для всех выделенных. */
+// --- Рисунки ---
+
+const imageInput = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/png,image/jpeg,image/gif', hidden: true });
+document.body.appendChild(imageInput);
+imageInput.addEventListener('change', async () => {
+  const file = imageInput.files?.[0];
+  imageInput.value = '';
+  if (!file) return;
+  const ext = file.type === 'image/png' ? 'png' : file.type === 'image/jpeg' ? 'jpeg' : file.type === 'image/gif' ? 'gif' : '';
+  if (!ext) { showToast('Поддерживаются рисунки PNG, JPEG и GIF.'); return; }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 480 / bmp.width, 360 / bmp.height);
+    const index = model.addImage(grid.sheet, grid.sel.row, grid.sel.column, Math.max(8, Math.round(bmp.width * k)), Math.max(8, Math.round(bmp.height * k)), ext, file.name, bytes);
+    bmp.close();
+    grid.selImage = index;
+    grid.render();
+  } catch (e) { showToast(`Не удалось вставить рисунок: ${e}`); }
+  focusGrid();
+});
+grid.onImagePlace = (i, row, column, dx, dy, w, h) => {
+  try { model.placeImage(grid.sheet, i, row, column, dx, dy, w, h); } catch (e) { showToast(String(e)); }
+  grid.render();
+};
+
 // --- Защита листа, ячеек и структуры книги ---
 
 // Отказы движка на защищённом листе (правка, вставка, форматирование и т. д.) — сообщением, а не ошибкой.
@@ -2536,6 +2562,7 @@ register(
   { id: 'edit.undo', label: 'Отменить', keywords: ['undo', 'назад', 'отмена'], keys: ['Ctrl+KeyZ'], run: () => undoRedo('undo') },
   { id: 'edit.redo', label: 'Повторить', keywords: ['redo', 'вернуть'], keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => undoRedo('redo') },
   { id: 'edit.clear', label: 'Очистить содержимое', keywords: ['delete', 'удалить'], keys: ['Delete'], run: () => {
+    if (grid.selImage >= 0) { try { model.deleteImage(grid.sheet, grid.selImage); } catch (e) { showToast(String(e)); } grid.selImage = -1; grid.render(); return; }
     void onTargets('Очистка', () => { const s = grid.sel; model.rangeClearContents(grid.sheet, s.r1, s.c1, s.r2, s.c2); })
       .then(() => { grid.render(); updateFormulaBar(); });
   } },
@@ -2575,6 +2602,8 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'insert.image', label: 'Вставить рисунок', keywords: ['picture', 'image', 'рисунок', 'картинка', 'изображение', 'фото'],
+    run: () => imageInput.click() },
   { id: 'protect.sheet', label: 'Защитить лист / снять защиту', keywords: ['protect sheet', 'защита листа', 'защитить', 'блокировка'],
     checked: () => model.isSheetProtected(grid.sheet), run: () => toggleSheetProtection() },
   { id: 'protect.book', label: 'Защитить структуру книги / снять защиту', keywords: ['protect workbook', 'защита книги', 'структура книги'],

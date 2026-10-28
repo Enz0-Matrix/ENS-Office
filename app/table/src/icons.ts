@@ -21,6 +21,7 @@ import i_comment_edit_24 from '@fluentui/svg-icons/icons/comment_edit_24_regular
 import i_comment_dismiss_24 from '@fluentui/svg-icons/icons/comment_dismiss_24_regular.svg?raw';
 import i_page_break_24 from '@fluentui/svg-icons/icons/document_page_break_24_regular.svg?raw';
 import i_lock_24 from '@fluentui/svg-icons/icons/lock_closed_24_regular.svg?raw';
+import i_image_24 from '@fluentui/svg-icons/icons/image_24_regular.svg?raw';
 import i_symbols_24 from '@fluentui/svg-icons/icons/symbols_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
@@ -101,6 +102,7 @@ export const ICONS: Record<string, string> = {
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
   'symbols_24': i_symbols_24,
+  'image_24': i_image_24,
   'lock_closed_24': i_lock_24,
   'comment_add_24': i_comment_add_24,
   'comment_edit_24': i_comment_edit_24,

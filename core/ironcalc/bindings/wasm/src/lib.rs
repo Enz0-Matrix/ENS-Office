@@ -600,6 +600,60 @@ impl Model {
         self.model.rich_text_cells_in(sheet, r1, c1, r2, c2).map_err(to_js_error)
     }
 
+    /// ENS-Office: pictures of the sheet, `[{row, column, dx, dy, width, height, ext, name, sig}]`
+    /// (`sig` changes when the picture's data changes).
+    #[wasm_bindgen(js_name = "getImages")]
+    pub fn get_images(&self, sheet: u32) -> Result<JsValue, JsError> {
+        #[derive(Serialize)]
+        struct I {
+            row: i32,
+            column: i32,
+            dx: i32,
+            dy: i32,
+            width: i32,
+            height: i32,
+            ext: String,
+            name: String,
+            sig: u32,
+        }
+        let list: Vec<I> = self
+            .model
+            .get_images(sheet)
+            .map_err(to_js_error)?
+            .into_iter()
+            .map(|i| {
+                let step = (i.data.len() / 256).max(1);
+                let sig = i.data.iter().step_by(step).fold(i.data.len() as u32, |h, b| h.wrapping_mul(16_777_619) ^ u32::from(*b));
+                I { row: i.row, column: i.column, dx: i.dx, dy: i.dy, width: i.width, height: i.height, ext: i.ext, name: i.name, sig }
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "getImageData")]
+    pub fn get_image_data(&self, sheet: u32, index: u32) -> Result<Vec<u8>, JsError> {
+        let list = self.model.get_images(sheet).map_err(to_js_error)?;
+        list.get(index as usize).map(|i| i.data.clone()).ok_or_else(|| to_js_error("No such picture".to_string()))
+    }
+
+    #[wasm_bindgen(js_name = "addImage")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_image(&mut self, sheet: u32, row: i32, column: i32, width: i32, height: i32, ext: &str, name: &str, data: Vec<u8>) -> Result<u32, JsError> {
+        let image = ironcalc_base::types::Image { name: name.to_string(), row, column, dx: 0, dy: 0, width, height, ext: ext.to_string(), data };
+        self.model.add_image(sheet, image).map(|i| i as u32).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "placeImage")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_image(&mut self, sheet: u32, index: u32, row: i32, column: i32, dx: i32, dy: i32, width: i32, height: i32) -> Result<(), JsError> {
+        self.model.place_image(sheet, index as usize, row, column, dx, dy, width, height).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "deleteImage")]
+    pub fn delete_image(&mut self, sheet: u32, index: u32) -> Result<(), JsError> {
+        self.model.delete_image(sheet, index as usize).map_err(to_js_error)
+    }
+
     /// ENS-Office: protection of the sheet (no password) and of the book structure.
     #[wasm_bindgen(js_name = "isSheetProtected")]
     pub fn is_sheet_protected(&self, sheet: u32) -> Result<bool, JsError> {
