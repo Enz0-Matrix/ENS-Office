@@ -355,17 +355,27 @@ fn load_comments<R: Read + std::io::Seek>(
         .children()
         .filter(|n| n.has_tag_name("commentList"))
         .collect::<Vec<&XmlNode>>();
+    let authors: Vec<String> = ws
+        .children()
+        .filter(|n| n.has_tag_name("authors"))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("author"))
+        .map(|n| n.text().unwrap_or("").to_string())
+        .collect();
     if comment_list.len() == 1 {
         for comment in comment_list[0].children() {
             let text = comment
                 .descendants()
                 .filter(|n| n.has_tag_name("t"))
-                .map(|n| n.text().unwrap().to_string())
+                .map(|n| n.text().unwrap_or("").to_string())
                 .collect::<Vec<String>>()
                 .join("");
             let cell_ref = get_attribute(comment, "ref")?.to_string();
-            // TODO: Read author_name from the list of authors
-            let author_name = "".to_string();
+            let author_name = comment
+                .attribute("authorId")
+                .and_then(|id| id.parse::<usize>().ok())
+                .and_then(|id| authors.get(id).cloned())
+                .unwrap_or_default();
             comments.push(Comment {
                 text,
                 author_name,
@@ -1073,9 +1083,27 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             ens_filter_criteria: load_filter_criteria(ws),
             ens_summary: load_outline_summary(ws),
             ens_page_setup: load_page_setup(ws),
+            ens_row_breaks: load_breaks(ws, "rowBreaks"),
+            ens_col_breaks: load_breaks(ws, "colBreaks"),
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: manual page breaks (`<rowBreaks>` / `<colBreaks>`): the numbers of the rows / columns
+/// after which a page ends.
+fn load_breaks(ws: &XmlNode, tag: &str) -> Vec<i32> {
+    let mut breaks: Vec<i32> = ws
+        .children()
+        .filter(|n| n.has_tag_name(tag))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("brk"))
+        .filter_map(|n| n.attribute("id").and_then(|v| v.parse::<i32>().ok()))
+        .filter(|id| *id > 0)
+        .collect();
+    breaks.sort_unstable();
+    breaks.dedup();
+    breaks
 }
 
 /// ENS-Office: `<sheetPr><outlinePr summaryBelow summaryRight>`; Excel's default is below / right.

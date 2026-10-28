@@ -46,6 +46,17 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         );
         content.push(sheet);
     }
+    if workbook.worksheets.iter().any(|w| !w.comments.is_empty()) {
+        content.push(r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#.to_string());
+    }
+    for (i, w) in workbook.worksheets.iter().enumerate() {
+        if !w.comments.is_empty() {
+            content.push(format!(
+                r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
+                i + 1
+            ));
+        }
+    }
     content.push(
         r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#.to_string(),
     );
@@ -155,7 +166,8 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     // sheet rels parts (one per sheet with external hyperlinks)
     let mut has_worksheet_rels = false;
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
-        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet) {
+        let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
+        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id) {
             if !has_worksheet_rels {
                 zip.add_directory("xl/worksheets/_rels", options)?;
                 has_worksheet_rels = true;
@@ -166,6 +178,22 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             )?;
             zip.write_all(rels_xml.as_bytes())?;
         }
+    }
+    // ENS-Office: comments (notes) and the VML boxes Excel shows them in.
+    let mut has_drawings_dir = false;
+    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+        if worksheet.comments.is_empty() {
+            continue;
+        }
+        let id = sheet_index + 1;
+        zip.start_file(format!("xl/comments{id}.xml"), options)?;
+        zip.write_all(worksheets::get_comments_xml(worksheet).as_bytes())?;
+        if !has_drawings_dir {
+            zip.add_directory("xl/drawings", options)?;
+            has_drawings_dir = true;
+        }
+        zip.start_file(format!("xl/drawings/vmlDrawing{id}.vml"), options)?;
+        zip.write_all(worksheets::get_comments_vml(worksheet).as_bytes())?;
     }
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let id = sheet_index + 1;

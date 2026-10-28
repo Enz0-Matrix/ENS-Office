@@ -32,7 +32,7 @@ use ironcalc_base::{
             Node,
         },
         types::CellReferenceRC,
-        utils::number_to_column,
+        utils::{number_to_column, parse_reference_a1},
     },
     types::{ArrayKind, Cell, FormulaValue, Link, SpillValue, Worksheet},
 };
@@ -125,9 +125,86 @@ fn get_tooltip_attribute(tooltip: &Option<String>) -> String {
     }
 }
 
+/// Number of relationships taken by external hyperlinks (they use `rId1`..).
+fn external_link_count(worksheet: &Worksheet) -> usize {
+    get_sorted_links(worksheet)
+        .iter()
+        .filter(|(_, l)| matches!(l, Link::External { .. }))
+        .count()
+}
+
+/// ENS-Office: `<rowBreaks>` / `<colBreaks>` of the sheet's manual page breaks.
+fn page_breaks_xml(worksheet: &Worksheet) -> String {
+    let section = |tag: &str, list: &[i32], max: i32| {
+        if list.is_empty() {
+            return String::new();
+        }
+        let brks: String = list
+            .iter()
+            .map(|id| format!("<brk id=\"{id}\" max=\"{max}\" man=\"1\"/>"))
+            .collect();
+        format!("<{tag} count=\"{}\" manualBreakCount=\"{}\">{brks}</{tag}>", list.len(), list.len())
+    };
+    format!(
+        "{}{}",
+        section("rowBreaks", &worksheet.ens_row_breaks, 16383),
+        section("colBreaks", &worksheet.ens_col_breaks, 1048575)
+    )
+}
+
+/// ENS-Office: `xl/commentsN.xml` of the sheet's comments (notes).
+pub(crate) fn get_comments_xml(worksheet: &Worksheet) -> String {
+    let mut authors: Vec<&str> = vec![];
+    let mut list = String::new();
+    for c in &worksheet.comments {
+        let a = match authors.iter().position(|x| *x == c.author_name) {
+            Some(i) => i,
+            None => {
+                authors.push(&c.author_name);
+                authors.len() - 1
+            }
+        };
+        list.push_str(&format!(
+            "<comment ref=\"{}\" authorId=\"{a}\"><text><t xml:space=\"preserve\">{}</t></text></comment>",
+            escape_xml(&c.cell_ref),
+            escape_xml(&c.text)
+        ));
+    }
+    let authors: String = authors.iter().map(|a| format!("<author>{}</author>", escape_xml(a))).collect();
+    format!(
+        "{XML_DECLARATION}\n<comments xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><authors>{authors}</authors><commentList>{list}</commentList></comments>"
+    )
+}
+
+/// ENS-Office: `xl/drawings/vmlDrawingN.vml`, the hidden note boxes Excel needs to show comments.
+pub(crate) fn get_comments_vml(worksheet: &Worksheet) -> String {
+    let mut shapes = String::new();
+    for (i, c) in worksheet.comments.iter().enumerate() {
+        let Some(r) = parse_reference_a1(&c.cell_ref) else { continue };
+        let (row, col) = (r.row - 1, r.column - 1);
+        shapes.push_str(&format!(
+            "<v:shape id=\"_x0000_s{}\" type=\"#_x0000_t202\" style=\"position:absolute;margin-left:80pt;margin-top:5pt;width:140pt;height:60pt;z-index:{};visibility:hidden\" fillcolor=\"#ffffe1\" o:insetmode=\"auto\">\
+<v:fill color2=\"#ffffe1\"/><v:shadow on=\"t\" color=\"black\" obscured=\"t\"/><v:path o:connecttype=\"none\"/>\
+<v:textbox style=\"mso-direction-alt:auto\"><div style=\"text-align:left\"></div></v:textbox>\
+<x:ClientData ObjectType=\"Note\"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>{}, 15, {}, 2, {}, 15, {}, 16</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column></x:ClientData></v:shape>",
+            1025 + i,
+            i + 1,
+            col + 1,
+            row.max(1) - 1,
+            col + 3,
+            row + 3
+        ));
+    }
+    format!(
+        "<xml xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\">\
+<o:shapelayout v:ext=\"edit\"><o:idmap v:ext=\"edit\" data=\"1\"/></o:shapelayout>\
+<v:shapetype id=\"_x0000_t202\" coordsize=\"21600,21600\" o:spt=\"202\" path=\"m,l,21600r21600,l21600,xe\"><v:stroke joinstyle=\"miter\"/><v:path gradientshapeok=\"t\" o:connecttype=\"rect\"/></v:shapetype>{shapes}</xml>"
+    )
+}
+
 /// The rels part of the worksheet (`xl/worksheets/_rels/sheetN.xml.rels`) holding one
 /// relationship per external link, or `None` if the worksheet has no external links.
-pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet) -> Option<String> {
+pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>) -> Option<String> {
     let mut relationships_str: Vec<String> = vec![];
     let mut rel_id = 0;
     for (_, link) in get_sorted_links(worksheet) {
@@ -138,6 +215,14 @@ pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet) -> Option<String> {
                 "<Relationship Id=\"rId{rel_id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{target}\" TargetMode=\"External\"/>"
             ));
         }
+    }
+    if let Some(id) = comments_id {
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"../comments{id}.xml\"/>\
+<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing\" Target=\"../drawings/vmlDrawing{id}.vml\"/>",
+            rel_id + 1,
+            rel_id + 2
+        ));
     }
     if relationships_str.is_empty() {
         return None;
@@ -732,6 +817,12 @@ pub(crate) fn get_worksheet_xml(
     } else {
         String::new()
     };
+    let page_breaks = page_breaks_xml(worksheet);
+    let legacy_drawing = if worksheet.comments.is_empty() {
+        String::new()
+    } else {
+        format!("<legacyDrawing r:id=\"rId{}\"/>", external_link_count(worksheet) + 2)
+    };
     let auto_filter_section = auto_filter;
     let (sheet_pr, page_setup) = page_setup_xml(&worksheet.ens_page_setup);
     // Excel's default is below / right; anything else is written to `<outlinePr>`.
@@ -769,6 +860,8 @@ pub(crate) fn get_worksheet_xml(
   {cf_sections}\
   {hyperlinks_section}\
   {page_setup}\
+  {page_breaks}\
+  {legacy_drawing}\
   {cf_ext_lst}\
 </worksheet>"
     )

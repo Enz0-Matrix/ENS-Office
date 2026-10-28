@@ -291,6 +291,10 @@ pub struct Worksheet {
     /// (Excel's `summaryBelow`; false — above), `.1` — right of the columns (`summaryRight`;
     /// false — left). Saved to xlsx as `<sheetPr><outlinePr>`.
     pub ens_summary: (bool, bool),
+    /// ENS-Office: manual page breaks: a break after row N / after column N (1-based, ascending;
+    /// Excel's `<rowBreaks>` / `<colBreaks>` with `id` = N).
+    pub ens_row_breaks: Vec<i32>,
+    pub ens_col_breaks: Vec<i32>,
 }
 
 /// Internal representation of Excel's sheet_data

@@ -736,6 +736,112 @@ impl UserModel<'_> {
         Ok(())
     }
 
+    pub(crate) fn write_comment(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        comment: Option<crate::types::Comment>,
+    ) -> Result<(), String> {
+        let cell_ref = comment_ref(row, column)?;
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        ws.comments.retain(|c| !c.cell_ref.eq_ignore_ascii_case(&cell_ref));
+        if let Some(c) = comment {
+            ws.comments.push(c);
+        }
+        Ok(())
+    }
+
+    /// ENS-Office: all comments (notes) of the sheet.
+    pub fn get_comments(&self, sheet: u32) -> Result<Vec<crate::types::Comment>, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.comments.clone())
+    }
+
+    /// ENS-Office: the comment of a cell.
+    pub fn get_comment(&self, sheet: u32, row: i32, column: i32) -> Result<Option<crate::types::Comment>, String> {
+        let cell_ref = comment_ref(row, column)?;
+        Ok(self
+            .model
+            .workbook
+            .worksheet(sheet)?
+            .comments
+            .iter()
+            .find(|c| c.cell_ref.eq_ignore_ascii_case(&cell_ref))
+            .cloned())
+    }
+
+    /// ENS-Office: sets (an empty text deletes) the comment of a cell; an undoable step.
+    pub fn set_comment(&mut self, sheet: u32, row: i32, column: i32, text: &str, author: &str) -> Result<(), String> {
+        let old_value = self.get_comment(sheet, row, column)?;
+        let new_value = if text.is_empty() {
+            None
+        } else {
+            Some(crate::types::Comment {
+                text: text.to_string(),
+                author_name: author.to_string(),
+                author_id: old_value.as_ref().and_then(|c| c.author_id.clone()),
+                cell_ref: comment_ref(row, column)?,
+            })
+        };
+        if old_value == new_value {
+            return Ok(());
+        }
+        self.write_comment(sheet, row, column, new_value.clone())?;
+        self.push_diff_list(vec![Diff::SetComment { sheet, row, column, new_value, old_value }]);
+        Ok(())
+    }
+
+    /// ENS-Office: deletes the comment of a cell; an undoable step.
+    pub fn delete_comment(&mut self, sheet: u32, row: i32, column: i32) -> Result<(), String> {
+        self.set_comment(sheet, row, column, "", "")
+    }
+
+    pub(crate) fn write_page_breaks(&mut self, sheet: u32, breaks: (Vec<i32>, Vec<i32>)) -> Result<(), String> {
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        ws.ens_row_breaks = breaks.0;
+        ws.ens_col_breaks = breaks.1;
+        Ok(())
+    }
+
+    /// ENS-Office: manual page breaks, (rows after which a page ends, columns after which a page ends).
+    pub fn get_page_breaks(&self, sheet: u32) -> Result<(Vec<i32>, Vec<i32>), String> {
+        let ws = self.model.workbook.worksheet(sheet)?;
+        Ok((ws.ens_row_breaks.clone(), ws.ens_col_breaks.clone()))
+    }
+
+    /// ENS-Office: inserts (`on`) or removes a break after the row (`is_row`) or column `index`; an undoable step.
+    pub fn set_page_break(&mut self, sheet: u32, is_row: bool, index: i32, on: bool) -> Result<(), String> {
+        if index < 1 {
+            return Err(format!("Invalid page break position: {index}"));
+        }
+        let old_value = self.get_page_breaks(sheet)?;
+        let mut new_value = old_value.clone();
+        let list = if is_row { &mut new_value.0 } else { &mut new_value.1 };
+        list.retain(|b| *b != index);
+        if on {
+            list.push(index);
+            list.sort_unstable();
+        }
+        if new_value == old_value {
+            return Ok(());
+        }
+        self.write_page_breaks(sheet, new_value.clone())?;
+        self.push_diff_list(vec![Diff::SetPageBreaks { sheet, new_value, old_value }]);
+        Ok(())
+    }
+
+    /// ENS-Office: removes all manual page breaks; an undoable step.
+    pub fn clear_page_breaks(&mut self, sheet: u32) -> Result<(), String> {
+        let old_value = self.get_page_breaks(sheet)?;
+        if old_value.0.is_empty() && old_value.1.is_empty() {
+            return Ok(());
+        }
+        let new_value = (vec![], vec![]);
+        self.write_page_breaks(sheet, new_value.clone())?;
+        self.push_diff_list(vec![Diff::SetPageBreaks { sheet, new_value, old_value }]);
+        Ok(())
+    }
+
     /// ENS-Office: the autofilter range of the sheet, [row1, column1, row2, column2].
     pub fn get_auto_filter(&self, sheet: u32) -> Result<Option<[i32; 4]>, String> {
         let sheet_id = self.model.workbook.worksheet(sheet)?.sheet_id;
@@ -1116,4 +1222,12 @@ mod tests {
         assert_eq!(m.get_formatted_cell_value(0, 1, 1).unwrap(), "Москва");
         assert_eq!(m.get_formatted_cell_value(0, 3, 1).unwrap(), "6");
     }
+}
+
+fn comment_ref(row: i32, column: i32) -> Result<String, String> {
+    let col = crate::expressions::utils::number_to_column(column).ok_or_else(|| format!("Invalid column: {column}"))?;
+    if row < 1 {
+        return Err(format!("Invalid row: {row}"));
+    }
+    Ok(format!("{col}{row}"))
 }

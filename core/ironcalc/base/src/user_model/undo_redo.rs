@@ -155,6 +155,12 @@ impl<'a> UserModel<'a> {
                 Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
                 }
+                Diff::SetComment { sheet, row, column, new_value: _, old_value } => {
+                    self.write_comment(*sheet, *row, *column, old_value.clone())?;
+                }
+                Diff::SetPageBreaks { sheet, new_value: _, old_value } => {
+                    self.write_page_breaks(*sheet, old_value.clone())?;
+                }
                 Diff::SetPrintTitles { sheet, new_value: _, old_value } => {
                     self.write_print_titles(*sheet, *old_value)?;
                 }
@@ -740,6 +746,12 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;
+                }
+                Diff::SetComment { sheet, row, column, new_value, old_value: _ } => {
+                    self.write_comment(*sheet, *row, *column, new_value.clone())?;
+                }
+                Diff::SetPageBreaks { sheet, new_value, old_value: _ } => {
+                    self.write_page_breaks(*sheet, new_value.clone())?;
                 }
                 Diff::SetPrintTitles { sheet, new_value, old_value: _ } => {
                     self.write_print_titles(*sheet, *new_value)?;

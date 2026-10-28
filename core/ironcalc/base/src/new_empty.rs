@@ -79,6 +79,8 @@ impl<'a> Model<'a> {
             ens_filter_criteria: String::new(),
             ens_page_setup: String::new(),
             ens_summary: (false, false),
+            ens_row_breaks: vec![],
+            ens_col_breaks: vec![],
         }
     }
 

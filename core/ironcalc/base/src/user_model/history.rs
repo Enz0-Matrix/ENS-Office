@@ -123,6 +123,20 @@ pub(crate) enum Diff {
         new_value: [i32; 4],
         old_value: [i32; 4],
     },
+    /// ENS-Office: a cell comment (note) set, changed or deleted (`None` — no comment).
+    SetComment {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        new_value: Option<crate::types::Comment>,
+        old_value: Option<crate::types::Comment>,
+    },
+    /// ENS-Office: manual page breaks of a sheet, (after rows, after columns).
+    SetPageBreaks {
+        sheet: u32,
+        new_value: (Vec<i32>, Vec<i32>),
+        old_value: (Vec<i32>, Vec<i32>),
+    },
     /// ENS-Office: page setup of a sheet (JSON, see `Worksheet::ens_page_setup`).
     SetPageSetup {
         sheet: u32,

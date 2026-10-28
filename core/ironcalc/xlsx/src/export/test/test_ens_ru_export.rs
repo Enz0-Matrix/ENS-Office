@@ -164,3 +164,58 @@ fn test_ens_change_log_export() {
     assert_eq!(back.workbook.ens_change_log, r#"[{"u":"Иванов <И.>","t":1}]"#);
     assert_eq!(back.workbook.metadata.last_modified_by, "Иванов");
 }
+
+// ENS-Office: comments (notes) and manual page breaks round trip, with undo.
+#[test]
+fn test_ens_comments_and_breaks_export() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_comment(0, 2, 3, "Проверить <значение> & сумму", "Иван").unwrap();
+    model.set_comment(0, 1, 1, "Первая", "Иван").unwrap();
+    model.set_comment(0, 1, 1, "Первая (правка)", "Пётр").unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_comment(0, 1, 1).unwrap().unwrap().text, "Первая");
+    model.redo().unwrap();
+    model.delete_comment(0, 2, 3).unwrap();
+    assert!(model.get_comment(0, 2, 3).unwrap().is_none());
+    model.undo().unwrap();
+    assert_eq!(model.get_comments(0).unwrap().len(), 2);
+    model.set_page_break(0, true, 10, true).unwrap();
+    model.set_page_break(0, true, 5, true).unwrap();
+    model.set_page_break(0, false, 2, true).unwrap();
+    model.set_page_break(0, true, 7, true).unwrap();
+    model.set_page_break(0, true, 7, false).unwrap();
+    model.undo().unwrap();
+    model.undo().unwrap();
+    model.redo().unwrap();
+    assert_eq!(model.get_page_breaks(0).unwrap(), (vec![5, 7, 10], vec![2]));
+    model.set_page_break(0, true, 7, false).unwrap();
+    let name = "temp_ens_comments.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut read = |n: &str| {
+        let mut s = String::new();
+        zip.by_name(n).unwrap().read_to_string(&mut s).unwrap();
+        s
+    };
+    let sheet = read("xl/worksheets/sheet1.xml");
+    let comments = read("xl/comments1.xml");
+    let vml = read("xl/drawings/vmlDrawing1.vml");
+    let rels = read("xl/worksheets/_rels/sheet1.xml.rels");
+    let types = read("[Content_Types].xml");
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains(r#"<rowBreaks count="2" manualBreakCount="2"><brk id="5" max="16383" man="1"/><brk id="10" max="16383" man="1"/></rowBreaks>"#), "{sheet}");
+    assert!(sheet.contains(r#"<colBreaks count="1""#), "{sheet}");
+    assert!(sheet.contains(r#"<legacyDrawing r:id="rId2"/>"#), "{sheet}");
+    assert!(comments.contains("Проверить &lt;значение&gt; &amp; сумму"), "{comments}");
+    assert!(vml.contains("<x:Row>1</x:Row><x:Column>2</x:Column>"), "{vml}");
+    assert!(rels.contains("vmlDrawing1.vml") && rels.contains("comments1.xml"), "{rels}");
+    assert!(types.contains("/xl/comments1.xml") && types.contains(r#"Extension="vml""#), "{types}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    let c = back.get_comment(0, 2, 3).unwrap().unwrap();
+    assert_eq!((c.text.as_str(), c.author_name.as_str()), ("Проверить <значение> & сумму", "Иван"));
+    assert_eq!(back.get_comment(0, 1, 1).unwrap().unwrap().author_name, "Пётр");
+    assert_eq!(back.get_page_breaks(0).unwrap(), (vec![5, 10], vec![2]));
+}
