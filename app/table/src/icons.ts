@@ -16,6 +16,7 @@ import i_font_24 from '@fluentui/svg-icons/icons/text_font_24_regular.svg?raw';
 import i_fork_24 from '@fluentui/svg-icons/icons/branch_fork_24_regular.svg?raw';
 import i_more_24 from '@fluentui/svg-icons/icons/more_horizontal_24_regular.svg?raw';
 import i_book_24 from '@fluentui/svg-icons/icons/book_open_24_regular.svg?raw';
+import i_symbols_24 from '@fluentui/svg-icons/icons/symbols_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
 import textColor20 from '@fluentui/svg-icons/icons/text_color_20_regular.svg?raw';
@@ -94,6 +95,7 @@ export const ICONS: Record<string, string> = {
   'text_bold_20': textBold20,
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
+  'symbols_24': i_symbols_24,
   'money_24': i_money_24,
   'calculator_24': i_calc_24,
   'text_font_24': i_font_24,

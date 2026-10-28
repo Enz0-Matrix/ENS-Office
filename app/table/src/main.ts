@@ -17,6 +17,7 @@ import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
 import { FUNCTION_CATEGORIES } from './funclib';
+import { openSymbols } from './symbols';
 import { defineFromSelection, initNames, nameFormula, openNameManager } from './names';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
@@ -425,6 +426,17 @@ function jumpMark(dir: 1 | -1): void {
 /** Положение текста активной ячейки: 'superscript', 'subscript' или 'baseline'. */
 const vertAlignOfStyle = (st: CellStyle) => (st.font as { vert_align?: string }).vert_align ?? 'baseline';
 const vertAlignOf = () => vertAlignOfStyle(model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style);
+
+/** Вставить знак в редактируемую ячейку (если ввода нет — начать его с текущего содержимого). */
+function insertSymbol(text: string): void {
+  if (!editing) startEdit(model.getCellContent(grid.sheet, grid.sel.row, grid.sel.column));
+  const inp = activeInput();
+  const at = inp.selectionStart ?? inp.value.length, end = inp.selectionEnd ?? at;
+  inp.value = inp.value.slice(0, at) + text + inp.value.slice(end);
+  inp.setSelectionRange(at + text.length, at + text.length);
+  (inp === editor ? formula : editor).value = inp.value;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 /** Вставить функцию из каталога: в редактируемую ячейку, а если ввода нет — в начало ввода формулы. */
 function insertFunctionText(name: string): void {
@@ -2343,6 +2355,8 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'insert.symbol', label: 'Вставить символ', keywords: ['symbol', 'символ', 'спецсимвол', 'знак', 'греческие буквы', 'валюта', 'стрелка'],
+    run: () => openSymbols(insertSymbol) },
   { id: 'formulas.names', label: 'Диспетчер имён', keywords: ['name manager', 'имена', 'именованный диапазон', 'присвоить имя'], keys: ['Ctrl+F3'],
     run: () => openNameManager() },
   { id: 'format.strike', label: 'Зачёркнутый', keywords: ['strikethrough', 'зачеркнуть', 'зачёркивание'], keys: ['Ctrl+Digit5'], checked: () => model.getCellStyle(grid.sheet, grid.sel.row, grid.sel.column).style.font.strike,

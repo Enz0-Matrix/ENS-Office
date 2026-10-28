@@ -209,6 +209,7 @@ export const TABS: RibbonTab[] = [
     label: 'Вставка',
     groups: [
       { name: 'Листы', items: [{ type: 'large', command: 'sheet.new', icon: 'table_add', label: 'Новый лист' }] },
+      { name: 'Символы', items: [{ type: 'large', command: 'insert.symbol', icon: 'symbols', label: 'Символ' }] },
     ],
   },
   {
