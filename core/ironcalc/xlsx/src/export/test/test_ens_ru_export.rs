@@ -418,3 +418,41 @@ fn test_ens_protection_password() {
     assert!(back.is_sheet_protected(0).unwrap());
     assert!(back.unlock_structure("книга").is_ok() && !back.is_structure_locked());
 }
+
+// ENS-Office: pictures, charts, comments and page breaks follow their cells when rows / columns are inserted or deleted.
+#[test]
+fn test_ens_objects_shift_with_rows_and_columns() {
+    use ironcalc_base::types::{Chart, Image};
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_comment(0, 5, 2, "n", "A").unwrap(); // B5
+    model.set_comment(0, 2, 2, "m", "A").unwrap(); // B2
+    model.add_image(0, Image { name: String::new(), row: 4, column: 3, dx: 0, dy: 0, width: 10, height: 10, ext: "png".to_string(), data: vec![1] }).unwrap();
+    model.set_charts(0, vec![Chart { kind: 0, title: String::new(), range: "A1:B3".to_string(), row: 6, column: 5, dx: 0, dy: 0, width: 100, height: 100, colors: vec![], legend: 0, labels: false }]).unwrap();
+    model.set_page_break(0, true, 4, true).unwrap();
+    model.insert_rows(0, 3, 2).unwrap();
+    assert!(model.get_comment(0, 7, 2).unwrap().is_some() && model.get_comment(0, 2, 2).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].row, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 8);
+    assert_eq!(model.get_page_breaks(0).unwrap().0, vec![6]);
+    model.undo().unwrap();
+    assert!(model.get_comment(0, 5, 2).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].row, 4);
+    assert_eq!(model.get_page_breaks(0).unwrap().0, vec![4]);
+    model.redo().unwrap();
+    model.delete_rows(0, 6, 2).unwrap();
+    // The comment on B7 was in the deleted rows 6-7; the picture on row 6 and chart on row 8 move up.
+    assert_eq!(model.get_comments(0).unwrap().len(), 1);
+    assert_eq!(model.get_images(0).unwrap()[0].row, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 6);
+    model.undo().unwrap();
+    assert_eq!(model.get_comments(0).unwrap().len(), 2);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 8);
+    model.insert_columns(0, 2, 3).unwrap();
+    assert!(model.get_comment(0, 7, 5).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].column, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].column, 8);
+    model.undo().unwrap();
+    assert!(model.get_comment(0, 7, 2).unwrap().is_some());
+    assert_eq!(model.get_charts(0).unwrap()[0].column, 5);
+}

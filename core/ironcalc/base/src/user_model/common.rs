@@ -1154,6 +1154,7 @@ impl<'a> UserModel<'a> {
         self.model.insert_rows(sheet, row, row_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.shift_objects(sheet, true, row, row_count)?);
         diff_list.push(Diff::InsertRows {
             sheet,
             row,
@@ -1187,6 +1188,7 @@ impl<'a> UserModel<'a> {
         self.model.insert_columns(sheet, column, column_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.shift_objects(sheet, false, column, column_count)?);
         diff_list.push(Diff::InsertColumns {
             sheet,
             column,
@@ -1254,6 +1256,7 @@ impl<'a> UserModel<'a> {
         self.model.delete_rows(sheet, row, row_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.shift_objects(sheet, true, row, -row_count)?);
         diff_list.extend(self.cf_list_diff(sheet, old_cf)?);
         diff_list.extend(link_diffs);
         diff_list.push(Diff::DeleteRows {
@@ -1339,6 +1342,7 @@ impl<'a> UserModel<'a> {
         self.model.delete_columns(sheet, column, column_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.shift_objects(sheet, false, column, -column_count)?);
         diff_list.extend(self.cf_list_diff(sheet, old_cf)?);
         diff_list.extend(link_diffs);
         diff_list.push(Diff::DeleteColumns {

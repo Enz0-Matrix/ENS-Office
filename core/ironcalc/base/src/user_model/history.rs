@@ -165,6 +165,12 @@ pub(crate) enum Diff {
         new_value: Option<crate::types::Comment>,
         old_value: Option<crate::types::Comment>,
     },
+    /// ENS-Office: all comments of a sheet (after rows or columns were inserted or deleted).
+    SetComments {
+        sheet: u32,
+        new_value: Vec<crate::types::Comment>,
+        old_value: Vec<crate::types::Comment>,
+    },
     /// ENS-Office: manual page breaks of a sheet, (after rows, after columns).
     SetPageBreaks {
         sheet: u32,
