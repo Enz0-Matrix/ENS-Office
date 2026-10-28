@@ -161,4 +161,10 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           notes="docs/releases/${tag}.md"
           [ -f "$notes" ] || notes=/dev/null
-          gh release create "$tag" release/* --title "ENS-Table ${tag#v}" --notes-file "$notes" --verify-tag
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # Выпуск уже создан вручную на странице Releases: добавляем файлы и заметки.
+            gh release upload "$tag" release/* --clobber
+            [ "$notes" = /dev/null ] || gh release edit "$tag" --title "ENS-Table ${tag#v}" --notes-file "$notes"
+          else
+            gh release create "$tag" release/* --title "ENS-Table ${tag#v}" --notes-file "$notes" --verify-tag
+          fi
