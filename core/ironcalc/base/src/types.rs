@@ -137,6 +137,8 @@ pub struct Workbook {
     pub ens_change_log: String,
     /// ENS-Office: the book structure is locked (Excel's `<workbookProtection lockStructure>`).
     pub ens_structure_locked: bool,
+    /// ENS-Office: the password hash of the locked structure, as XML attributes (see `Worksheet::ens_protect_attrs`).
+    pub ens_structure_attrs: String,
     /// ENS-Office: formatted parts of the text of shared strings (Excel's `<r>` runs), by index in
     /// `shared_strings`. Such a string is used by one cell only and is not found by text.
     pub ens_rich: HashMap<i32, Vec<RichRun>>,

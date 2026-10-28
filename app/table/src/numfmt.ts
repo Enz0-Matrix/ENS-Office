@@ -226,7 +226,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
         <p class="fmt-hint"></p>
       </div>
     </div>
-    <div class="rec-actions"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>
+    <div class="rec-actions"><button data-act="ok" class="primary">Применить</button><button data-act="cancel">Отмена</button></div>
   </div>`;
   o.hidden = false;
   const md = o.querySelector<HTMLElement>('.modal')!;

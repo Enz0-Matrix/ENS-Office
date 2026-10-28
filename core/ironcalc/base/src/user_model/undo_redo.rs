@@ -166,10 +166,10 @@ impl<'a> UserModel<'a> {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_images = old_value.clone();
                 }
                 Diff::SetSheetProtected { sheet, new_value: _, old_value } => {
-                    self.write_sheet_protected(*sheet, *old_value)?;
+                    self.write_sheet_protected(*sheet, old_value.clone())?;
                 }
                 Diff::SetStructureLocked { new_value: _, old_value } => {
-                    self.write_structure_locked(*old_value);
+                    self.write_structure_locked(old_value.clone());
                 }
                 Diff::SetComment { sheet, row, column, new_value: _, old_value } => {
                     self.write_comment(*sheet, *row, *column, old_value.clone())?;
@@ -774,10 +774,10 @@ impl<'a> UserModel<'a> {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_images = new_value.clone();
                 }
                 Diff::SetSheetProtected { sheet, new_value, old_value: _ } => {
-                    self.write_sheet_protected(*sheet, *new_value)?;
+                    self.write_sheet_protected(*sheet, new_value.clone())?;
                 }
                 Diff::SetStructureLocked { new_value, old_value: _ } => {
-                    self.write_structure_locked(*new_value);
+                    self.write_structure_locked(new_value.clone());
                 }
                 Diff::SetComment { sheet, row, column, new_value, old_value: _ } => {
                     self.write_comment(*sheet, *row, *column, new_value.clone())?;

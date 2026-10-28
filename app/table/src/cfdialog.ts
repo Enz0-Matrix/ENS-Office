@@ -24,6 +24,8 @@ export function initConditional(h: CfHost): void {
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+import { addRangePicker } from './rangepick';
+
 const overlay = () => document.getElementById('recovery')!;
 
 // --- Диапазоны: «B2:B20 D2:D20» ---
@@ -518,13 +520,14 @@ export function editRule(view: CfView | null, init: Partial<FormState>, quick = 
       <label class="cf-check"><input type="checkbox" data-f="stop" ${st.stop ? 'checked' : ''}> Остановить, если истина (следующие правила для ячейки не проверяются)</label>
     </div>
     <p class="cf-error" hidden></p>
-    <div class="rec-actions"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>
+    <div class="rec-actions"><button data-act="ok" class="primary">Применить</button><button data-act="cancel">Отмена</button></div>
   </div>`;
   o.hidden = false;
   const m = o.querySelector<HTMLElement>('.modal')!;
   const f = <T extends HTMLElement = HTMLInputElement>(name: string) => m.querySelector<T>(`[data-f="${name}"]`)!;
   const val = (name: string) => (f(name) as HTMLInputElement | HTMLSelectElement).value;
   const checked = (name: string) => f(name).checked;
+  addRangePicker(f('range'));
 
   const read = () => {
     st.range = normalizeRange(val('range'));

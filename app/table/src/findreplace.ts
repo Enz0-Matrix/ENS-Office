@@ -41,7 +41,7 @@ panel.innerHTML = `
       <label>Заливка <input type="color" data-e="fill"> <input type="checkbox" data-e="noFill" title="Без заливки"> нет</label>
       <label>Число <select data-e="numFmt"><option value="General">Общий</option><option value="0.00">Числовой 0,00</option>
         <option value="#,##0.00">С разделителем</option><option value="0%">Процентный</option><option value="dd.mm.yyyy">Дата</option><option value="@">Текстовый</option></select></label>
-      <button data-act="applyFmt" class="primary">ОК</button>
+      <button data-act="applyFmt" class="primary">Применить</button>
     </div>
   </div>
   <div class="find-buttons">

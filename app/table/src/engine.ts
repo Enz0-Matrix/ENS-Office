@@ -139,6 +139,13 @@ export interface Model {
   /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
   isSheetPasswordProtected(sheet: number): boolean;
   setSheetProtected(sheet: number, on: boolean): void;
+  /** Защита листа с паролем (пустой пароль — без пароля); salt — случайные байты. */
+  protectSheet(sheet: number, password: string, salt: Uint8Array): void;
+  /** Снять защиту листа; с паролем — нужен верный пароль (иначе ошибка «Неверный пароль»). */
+  unprotectSheet(sheet: number, password: string): void;
+  isStructurePasswordProtected(): boolean;
+  lockStructure(password: string, salt: Uint8Array): void;
+  unlockStructure(password: string): void;
   isStructureLocked(): boolean;
   setStructureLocked(on: boolean): void;
   getPageSetup(sheet: number): string;

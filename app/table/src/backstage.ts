@@ -244,6 +244,9 @@ function render(section: Section): void {
       <h2>Ввод и числа</h2>
       <label class="bs-row">Разделитель дробной части
         <select data-set="decimal"><option value="comma">запятая: 0,5</option><option value="point">точка: 0.5</option></select></label>
+      <label class="bs-row">Что отменяют кнопки «Отменить» и «Повторить»
+        <select data-set="undoScope"><option value="book">вся книга</option><option value="sheet">только действия на этом листе</option><option value="others">все листы, кроме этого</option></select></label>
+      <p class="bs-muted">Быстро переключить можно и стрелкой ▾ рядом с кнопками отмены вверху окна.</p>
       <label class="bs-row"><input type="checkbox" data-set="recognizeDates"> Распознавать даты при вводе в ячейки «Общий»</label>
       <label class="bs-row">Шрифт по умолчанию для новых книг
         <select data-set="defaultFont">${FONTS.map((f) => `<option>${f.label}</option>`).join('')}</select>
@@ -280,6 +283,9 @@ function render(section: Section): void {
     };
     fontSel.addEventListener('change', saveFont);
     fontSize.addEventListener('change', saveFont);
+    const scope = body.querySelector<HTMLSelectElement>('[data-set="undoScope"]')!;
+    scope.value = settings.undoScope;
+    scope.addEventListener('change', () => { settings.undoScope = scope.value as typeof settings.undoScope; saveSettings(); host.applySettings(); });
     const dates = body.querySelector<HTMLInputElement>('[data-set="recognizeDates"]')!;
     dates.checked = settings.recognizeDates;
     dates.addEventListener('change', () => { settings.recognizeDates = dates.checked; saveSettings(); host.applySettings(); });

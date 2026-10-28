@@ -384,3 +384,37 @@ fn test_ens_charts_export() {
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie]);
 }
+
+// ENS-Office: passwords of the sheet and of the book structure (agile SHA-512 hash), round trip and undo.
+#[test]
+fn test_ens_protection_password() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.protect_sheet(0, "секрет", b"0123456789abcdef").unwrap();
+    model.lock_structure("книга", b"fedcba9876543210").unwrap();
+    assert!(model.is_sheet_password_protected(0).unwrap() && model.is_structure_password_protected());
+    assert!(model.set_user_input(0, 1, 1, "y").is_err());
+    assert_eq!(model.unprotect_sheet(0, "не то"), Err("Неверный пароль.".to_string()));
+    assert_eq!(model.unlock_structure(""), Err("Неверный пароль.".to_string()));
+    let name = "temp_ens_password.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let mut book = String::new();
+    zip.by_name("xl/workbook.xml").unwrap().read_to_string(&mut book).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains(r#"algorithmName="SHA-512" hashValue=""#) && sheet.contains(r#"spinCount="100000""#), "{sheet}");
+    assert!(book.contains("workbookHashValue=") && book.contains(r#"lockStructure="1""#), "{book}");
+    let mut back = ironcalc_base::UserModel::from_model(back);
+    assert!(back.is_sheet_protected(0).unwrap());
+    assert!(back.unprotect_sheet(0, "секрет2").is_err());
+    back.unprotect_sheet(0, "секрет").unwrap();
+    back.set_user_input(0, 1, 1, "z").unwrap();
+    back.undo().unwrap();
+    back.undo().unwrap();
+    assert!(back.is_sheet_protected(0).unwrap());
+    assert!(back.unlock_structure("книга").is_ok() && !back.is_structure_locked());
+}

@@ -3,6 +3,7 @@ import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { CHART_TEMPLATES, parseRange, type ChartLook } from './chart';
+import { addRangePicker, initRangePicker } from './rangepick';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
@@ -1185,12 +1186,13 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
     <p><label>Легенда: <select data-f="legend"><option value="0">снизу</option><option value="1">справа</option><option value="2">нет</option></select></label>
       <label style="margin-left:14px"><input type="checkbox" data-f="labels"> Подписи значений</label></p>
     <div class="rec-actions">${existing === null ? '' : '<button data-act="delete" class="danger">Удалить</button>'}
-    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${existing === null ? 'Создать' : 'Применить'}</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
   const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
   f('title').value = initial.title;
   f('range').value = initial.range;
+  addRangePicker(f('range'));
   const swatches = () => {
     const rg = parseRange(f('range').value.trim().toUpperCase());
     const kind = Number(f('kind').value);
@@ -1270,14 +1272,72 @@ window.addEventListener('unhandledrejection', (e) => { if (/защищ/.test(Str
 window.addEventListener('error', (e) => { if (/защищ/.test(e.message)) { e.preventDefault(); showToast(e.message.replace(/^(Uncaught )?Error: /, '')); } });
 
 
-function toggleSheetProtection(): void {
+/** Окно пароля. confirm — ввод дважды (защита), иначе один раз (снятие). Пустой пароль при защите — без пароля. null — отмена. */
+function askPassword(title: string, okLabel: string, confirm: boolean): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = $('recovery');
+    overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
+      ${confirm ? '<p>Пароль можно не задавать: тогда защиту снимет любой. Забытый пароль восстановить нельзя.</p>' : ''}
+      <p><label>Пароль: <input type="password" data-f="pw" autocomplete="off" style="width:60%"></label></p>
+      ${confirm ? '<p><label>Повторите: <input type="password" data-f="pw2" autocomplete="off" style="width:60%"></label></p>' : ''}
+      <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${okLabel}</button></div></div>`;
+    overlay.hidden = false;
+    const box = overlay.querySelector<HTMLElement>('.modal')!;
+    const input = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`);
+    input('pw')!.focus();
+    const done = (v: string | null) => { overlay.hidden = true; focusGrid(); resolve(v); };
+    const ok = () => {
+      if (confirm && input('pw')!.value !== input('pw2')!.value) { showToast('Пароли не совпадают.'); return; }
+      done(input('pw')!.value);
+    };
+    box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') done(null); if (e.key === 'Enter') ok(); });
+    box.addEventListener('click', (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (act === 'ok') ok(); else if (act === 'cancel') done(null);
+    });
+  });
+}
+
+const randomSalt = () => crypto.getRandomValues(new Uint8Array(16));
+
+async function toggleSheetProtection(): Promise<void> {
   if (editing) commitEdit(0, 0);
-  const on = !model.isSheetProtected(grid.sheet);
   try {
-    model.setSheetProtected(grid.sheet, on);
-    showToast(on ? 'Лист защищён: менять можно только незащищённые ячейки.' : 'Защита листа снята.');
-  } catch (e) { showToast(String(e)); }
+    if (model.isSheetProtected(grid.sheet)) {
+      const pw = await askPasswordIf(model.isSheetPasswordProtected(grid.sheet), 'Снять защиту листа', 'Снять защиту');
+      if (pw === null) return;
+      model.unprotectSheet(grid.sheet, pw);
+      showToast('Защита листа снята.');
+    } else {
+      const pw = await askPassword('Защитить лист', 'Защитить', true);
+      if (pw === null) return;
+      model.protectSheet(grid.sheet, pw, randomSalt());
+      showToast('Лист защищён: менять можно только незащищённые ячейки.');
+    }
+  } catch (e) { showToast(String(e).replace(/^Error: /, '')); }
   grid.invalidateLayout(); updateFormulaBar(); refreshRibbon();
+}
+
+/** Пароль нужен — спрашиваем; не нужен — пустой пароль без вопросов. */
+async function askPasswordIf(needed: boolean, title: string, okLabel: string): Promise<string | null> {
+  return needed ? askPassword(title, okLabel, false) : '';
+}
+
+async function toggleBookProtection(): Promise<void> {
+  try {
+    if (model.isStructureLocked()) {
+      const pw = await askPasswordIf(model.isStructurePasswordProtected(), 'Снять защиту структуры книги', 'Снять защиту');
+      if (pw === null) return;
+      model.unlockStructure(pw);
+      showToast('Защита структуры снята.');
+    } else {
+      const pw = await askPassword('Защитить структуру книги', 'Защитить', true);
+      if (pw === null) return;
+      model.lockStructure(pw, randomSalt());
+      showToast('Структура книги защищена.');
+    }
+  } catch (e) { showToast(String(e).replace(/^Error: /, '')); }
+  renderSheetTabs(); refreshRibbon();
 }
 
 /** Окно «Защита ячеек»: защищаемая ячейка, скрыть формулы (действует после защиты листа). */
@@ -1290,7 +1350,7 @@ function cellProtectionDialog(): void {
     <p><label><input type="checkbox" data-f="locked"${cur.locked ? ' checked' : ''}> Защищаемая ячейка</label></p>
     <p><label><input type="checkbox" data-f="hidden"${cur.hidden ? ' checked' : ''}> Скрыть формулы</label></p>
     <p>Параметры начинают действовать после защиты листа (Рецензирование → Защитить лист).</p>
-    <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+    <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
   const close = () => { overlay.hidden = true; focusGrid(); };
@@ -2006,6 +2066,19 @@ function openConditionalMenu(): void {
 
 // После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
 grid.onFilterButton = (row, column, x, y) => setTimeout(() => openFilterPopup(row, column, x, y));
+
+initRangePicker({
+  selection: (format) => {
+    const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
+    const plain = s.r1 === s.r2 && s.c1 === s.c2 ? cell(s.r1, s.c1) : `${cell(s.r1, s.c1)}:${cell(s.r2, s.c2)}`;
+    if (format === 'plain') return plain;
+    const name = model.getWorksheetsProperties()[grid.sheet].name;
+    const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+    const abs = (r: number, c: number) => `$${columnName(c)}$${r}`;
+    return `${q}!${abs(s.r1, s.c1)}${s.r1 === s.r2 && s.c1 === s.c2 ? '' : `:${abs(s.r2, s.c2)}`}`;
+  },
+  focusGrid,
+});
 
 initNames({
   model: () => model,
@@ -2725,12 +2798,9 @@ register(
   { id: 'insert.image', label: 'Вставить рисунок', keywords: ['picture', 'image', 'рисунок', 'картинка', 'изображение', 'фото'],
     run: () => imageInput.click() },
   { id: 'protect.sheet', label: 'Защитить лист / снять защиту', keywords: ['protect sheet', 'защита листа', 'защитить', 'блокировка'],
-    checked: () => model.isSheetProtected(grid.sheet), run: () => toggleSheetProtection() },
+    checked: () => model.isSheetProtected(grid.sheet), run: () => void toggleSheetProtection() },
   { id: 'protect.book', label: 'Защитить структуру книги / снять защиту', keywords: ['protect workbook', 'защита книги', 'структура книги'],
-    checked: () => model.isStructureLocked(), run: () => {
-      try { model.setStructureLocked(!model.isStructureLocked()); showToast(model.isStructureLocked() ? 'Структура книги защищена.' : 'Защита структуры снята.'); } catch (e) { showToast(String(e)); }
-      renderSheetTabs(); refreshRibbon();
-    } },
+    checked: () => model.isStructureLocked(), run: () => void toggleBookProtection() },
   { id: 'protect.cells', label: 'Защита ячеек…', keywords: ['locked', 'hidden', 'скрыть формулы', 'защищаемая ячейка'],
     run: () => cellProtectionDialog() },
   { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
@@ -3235,6 +3305,7 @@ initBackstage({
     model.setRecognizeDates(settings.recognizeDates);
     newBookFont.name = settings.defaultFont;
     newBookFont.size = settings.defaultFontSize;
+    showScope(); syncUndoState();
     grid.render(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat();
   },
   recoveryFolder: () => desk.recoveryFolder(),

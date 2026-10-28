@@ -251,7 +251,7 @@ export function openFilterPopup(row: number, column: number, x: number, y: numbe
     <input class="filter-search" placeholder="Поиск" autocomplete="off">
     <label class="filter-all"><input type="checkbox" data-all checked> (Выделить все)</label>
     <div class="filter-values"></div>
-    <div class="filter-buttons"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>`;
+    <div class="filter-buttons"><button data-act="ok" class="primary">Применить</button><button data-act="cancel">Отмена</button></div>`;
   const palette = popup.querySelector<HTMLElement>('.filter-colors');
   for (const [token, label] of colors) {
     if (!palette) break;

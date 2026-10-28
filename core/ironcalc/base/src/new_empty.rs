@@ -689,6 +689,7 @@ impl<'a> Model<'a> {
             theme: Default::default(),
             ens_change_log: String::new(),
             ens_structure_locked: false,
+            ens_structure_attrs: String::new(),
             ens_rich: HashMap::new(),
         };
         let parsed_formulas = Vec::new();
