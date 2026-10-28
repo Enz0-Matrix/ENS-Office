@@ -421,3 +421,8 @@ footer { display: flex; flex-direction: column; }
 .print-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 2px; max-width: 560px; color: var(--muted); }
 .print-nav button { border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 2px 10px; cursor: pointer; }
 .print-nav button:disabled { opacity: .4; cursor: default; }
+
+.print-titles { display: grid; gap: 6px; margin: 8px 0; }
+.print-titles label { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 8px; }
+.print-titles input { height: 28px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; background: var(--panel); color: var(--text); }
+.pt-note { color: #a4262c; }

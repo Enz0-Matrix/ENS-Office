@@ -32,6 +32,9 @@ export interface BackstageHost {
   /** Область печати: задать по выделению / убрать; текст для показа или ''. */
   printArea(): string;
   setPrintArea(clear: boolean): void;
+  /** Сквозные строки и столбцы: тексты «1:3» и «A:B» ('' — нет); set возвращает текст ошибки или ''. */
+  printTitles(): { rows: string; cols: string };
+  setPrintTitles(rows: string, cols: string): string;
   savePrintOptions(opts: PrintOptions): void;
   recoveryFolder(): Promise<string>;
   chooseRecoveryFolder(): Promise<void>;
@@ -162,6 +165,11 @@ function render(section: Section): void {
           <input class="print-hf-custom" data-hfc="footer" placeholder="Например: &CСтраница &P из &N" hidden>
           <div class="print-area"><span class="bs-muted">Область печати: <b class="pa-text"></b></span>
             <button data-act="pa-set">Задать по выделению</button><button data-act="pa-clear">Убрать</button></div>
+          <div class="print-titles">
+            <label>Сквозные строки <input data-t="rows" placeholder="например, 1:3" autocomplete="off"></label>
+            <label>Сквозные столбцы <input data-t="cols" placeholder="например, A:B" autocomplete="off"></label>
+            <span class="bs-muted pt-note"></span>
+          </div>
           <label class="check"><input type="checkbox" data-p="centerH"> По центру страницы</label>
           <label class="check"><input type="checkbox" data-p="gridlines"> Печатать сетку</label>
           <label class="check"><input type="checkbox" data-p="repeatHeader"> Заголовок на каждой странице (первая или закреплённые строки)</label>
@@ -192,6 +200,16 @@ function render(section: Section): void {
     showArea();
     body.querySelector('[data-act="pa-set"]')!.addEventListener('click', () => { host.setPrintArea(false); showArea(); refresh(); });
     body.querySelector('[data-act="pa-clear"]')!.addEventListener('click', () => { host.setPrintArea(true); showArea(); refresh(); });
+    // Сквозные строки и столбцы: повторяются на каждой странице, хранятся в книге (и в xlsx).
+    const tRows = body.querySelector<HTMLInputElement>('[data-t="rows"]')!;
+    const tCols = body.querySelector<HTMLInputElement>('[data-t="cols"]')!;
+    const tNote = body.querySelector<HTMLElement>('.pt-note')!;
+    const showTitles = () => { const t = host.printTitles(); tRows.value = t.rows; tCols.value = t.cols; };
+    showTitles();
+    for (const inp of [tRows, tCols]) inp.addEventListener('change', () => {
+      tNote.textContent = host.setPrintTitles(tRows.value, tCols.value);
+      if (!tNote.textContent) refresh();
+    });
     const marginBox = body.querySelector<HTMLElement>('.print-margins')!;
     const marginInputs = [...marginBox.querySelectorAll<HTMLInputElement>('[data-m]')];
     const showMargins = () => {

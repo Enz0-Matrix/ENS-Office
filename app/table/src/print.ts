@@ -124,6 +124,11 @@ export function printRange(model: Model, sheet: number, opts: PrintOptions, sel:
   return { r1: 1, c1: 1, r2, c2 };
 }
 
+/** Сквозные строки и столбцы листа: [строка1, строка2, столбец1, столбец2], 0 — не заданы. */
+export function printTitles(model: Model, sheet: number): number[] {
+  try { const t = model.getPrintTitles(sheet); return t.length === 4 ? t : [0, 0, 0, 0]; } catch { return [0, 0, 0, 0]; }
+}
+
 /** Область печати листа (Excel: _xlnm.Print_Area) или null. */
 export function printAreaOf(model: Model, sheet: number): Range | null {
   try {
@@ -136,7 +141,7 @@ interface PrintRow { html: string; h: number; /** нельзя начинать 
 interface Built { colgroup: string; cls: string; width: number; head: PrintRow[]; body: PrintRow[] }
 
 /** Строки таблицы для печати и предпросмотра. */
-function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions): Built {
+function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions, colList: number[]): Built {
   if ((r.r2 - r.r1 + 1) * (r.c2 - r.c1 + 1) > MAX_CELLS) {
     throw new Error('Слишком большая область для печати. Выделите нужный диапазон и выберите «Выделенный диапазон».');
   }
@@ -153,7 +158,7 @@ function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions): B
   }
   const cols: number[] = [];
   let width = 0;
-  for (let c = r.c1; c <= r.c2; c++) {
+  for (const c of colList) {
     const w = Math.round(model.getColumnWidth(sheet, c));
     cols.push(w);
     width += w;
@@ -162,8 +167,8 @@ function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions): B
     const h = Math.round(model.getRowHeight(sheet, row) * ROW_SCALE);
     if (h === 0) return null; // скрытая строка не печатается
     let tds = '';
-    for (let c = r.c1; c <= r.c2; c++) {
-      if (cols[c - r.c1] === 0 || covered.has(`${row}:${c}`)) continue;
+    for (const [i, c] of colList.entries()) {
+      if (cols[i] === 0 || covered.has(`${row}:${c}`)) continue;
       const span = spans.get(`${row}:${c}`);
       const st = (() => { try { return model.getCellStyle(sheet, row, c).style; } catch { return null; } })();
       const text = model.getFormattedCellValue(sheet, row, c);
@@ -174,12 +179,23 @@ function buildRows(model: Model, sheet: number, r: Range, opts: PrintOptions): B
   };
   // Заголовок на каждой странице: закреплённые строки (если область начинается в них), иначе первая.
   const frozen = (() => { try { return model.getFrozenRowsCount(sheet); } catch { return 0; } })();
-  const headEnd = opts.repeatHeader ? (frozen >= r.r1 ? Math.min(frozen, r.r2) : r.r1) : r.r1 - 1;
+  const titles = printTitles(model, sheet);
   const head: PrintRow[] = [];
   const body: PrintRow[] = [];
-  for (let row = r.r1; row <= r.r2; row++) {
-    const pr = rowOf(row);
-    if (pr) (row <= headEnd ? head : body).push(pr);
+  if (titles[0]) {
+    // Сквозные строки листа (Excel: Print_Titles) — на каждой странице, даже если они вне области печати.
+    for (let row = titles[0]; row <= titles[1]; row++) { const pr = rowOf(row); if (pr) head.push(pr); }
+    for (let row = r.r1; row <= r.r2; row++) {
+      if (row >= titles[0] && row <= titles[1]) continue;
+      const pr = rowOf(row);
+      if (pr) body.push(pr);
+    }
+  } else {
+    const headEnd = opts.repeatHeader ? (frozen >= r.r1 ? Math.min(frozen, r.r2) : r.r1) : r.r1 - 1;
+    for (let row = r.r1; row <= r.r2; row++) {
+      const pr = rowOf(row);
+      if (pr) (row <= headEnd ? head : body).push(pr);
+    }
   }
   const colgroup = `<colgroup>${cols.map((w) => (w ? `<col style="width:${w}px">` : '')).join('')}</colgroup>`;
   return { colgroup, cls: `print-table${opts.gridlines ? ' grid' : ''}`, width, head, body };
@@ -227,6 +243,40 @@ function paginate(b: Built, opts: PrintOptions): { pages: PrintRow[][]; zoom: nu
   }
   if (cur.length || !pages.length) pages.push(cur);
   return { pages, zoom };
+}
+
+interface PrintPage { b: Built; rows: PrintRow[]; zoom: number }
+
+/** Все страницы: сначала вниз, затем вправо (как в Excel). Если таблица шире страницы и масштаб
+ *  не задан — столбцы делятся на части, сквозные столбцы повторяются в каждой. */
+function layout(model: Model, sheet: number, r: Range, opts: PrintOptions): { pages: PrintPage[]; chunks: number } {
+  const titles = printTitles(model, sheet);
+  const titleCols: number[] = [];
+  if (titles[2]) for (let c = titles[2]; c <= titles[3]; c++) titleCols.push(c);
+  const own: number[] = [];
+  for (let c = r.c1; c <= r.c2; c++) if (!titleCols.includes(c)) own.push(c);
+  const widthOf = (c: number) => Math.round(model.getColumnWidth(sheet, c));
+  const chunks: number[][] = [];
+  if (opts.fit !== 'none') {
+    chunks.push(own);
+  } else {
+    const avail = pageArea(opts)[0] - titleCols.reduce((s, c) => s + widthOf(c), 0);
+    let cur: number[] = [], used = 0;
+    for (const c of own) {
+      const w = widthOf(c);
+      if (cur.length && used + w > avail) { chunks.push(cur); cur = []; used = 0; }
+      cur.push(c);
+      used += w;
+    }
+    if (cur.length || !chunks.length) chunks.push(cur);
+  }
+  const pages: PrintPage[] = [];
+  for (const chunk of chunks) {
+    const b = buildRows(model, sheet, r, opts, [...titleCols, ...chunk]);
+    const p = paginate(b, opts);
+    for (const rows of p.pages) pages.push({ b, rows, zoom: p.zoom });
+  }
+  return { pages, chunks: chunks.length };
 }
 
 // --- Колонтитулы (запись Excel: &L, &C, &R, &P, &N, &D, &T, &F, &A) ---
@@ -294,17 +344,17 @@ let previewPage = 0;
 export function renderPreview(host: HTMLElement, model: Model, sheet: number, opts: PrintOptions, sel: Range, file = ''): void {
   const r = printRange(model, sheet, opts, sel);
   if (!r) { host.innerHTML = '<p class="bs-muted">На листе нет данных для печати.</p>'; return; }
-  let b: Built;
-  try { b = buildRows(model, sheet, r, opts); } catch (e) { host.innerHTML = `<p class="bs-muted">${esc(String((e as Error).message ?? e))}</p>`; return; }
-  const { pages, zoom } = paginate(b, opts);
+  let lay: ReturnType<typeof layout>;
+  try { lay = layout(model, sheet, r, opts); } catch (e) { host.innerHTML = `<p class="bs-muted">${esc(String((e as Error).message ?? e))}</p>`; return; }
+  const { pages, chunks } = lay;
+  const zoom = pages[0].zoom;
   previewPage = Math.max(0, Math.min(previewPage, pages.length - 1));
   const [paperW, paperH] = paperOf(opts);
   const sheetName = model.getWorksheetsProperties()[sheet]?.name ?? '';
   const ctx: HfContext = { page: previewPage + 1, pages: pages.length, file, sheet: sheetName };
-  const tooWide = opts.fit === 'none' && b.width > pageArea(opts)[0];
   const area = printAreaOf(model, sheet) && opts.what === 'sheet' ? ' · область печати' : '';
   host.innerHTML = `<div class="print-paper" style="aspect-ratio:${paperW}/${paperH}">
-      <div class="print-sheet">${pageHtml(b, opts, pages[previewPage], zoom, ctx, true)}</div></div>
+      <div class="print-sheet">${pageHtml(pages[previewPage].b, opts, pages[previewPage].rows, pages[previewPage].zoom, ctx, true)}</div></div>
     <div class="print-nav">
       <button data-pg="-1" ${previewPage ? '' : 'disabled'} title="Предыдущая страница">◀</button>
       <span>Страница ${previewPage + 1} из ${pages.length}</span>
@@ -312,7 +362,7 @@ export function renderPreview(host: HTMLElement, model: Model, sheet: number, op
     </div>
     <p class="bs-muted">${opts.fit === 'none' ? 'Без масштабирования' : `Масштаб ${Math.round(zoom * 100)}%`} · ${PAPER_LABEL[opts.paper]} ·
       ${opts.landscape ? 'альбомная' : 'книжная'}${area} · строк: ${r.r2 - r.r1 + 1}, столбцов: ${r.c2 - r.c1 + 1}
-      ${tooWide ? '<br>Таблица шире страницы: правые столбцы не поместятся — выберите «Вписать все столбцы на одну страницу».' : ''}</p>`;
+      ${chunks > 1 ? `<br>Таблица шире страницы: она разбита по столбцам на части (${chunks}), страницы идут сначала вниз, потом вправо.` : ''}</p>`;
   host.querySelectorAll<HTMLButtonElement>('[data-pg]').forEach((btn) => btn.addEventListener('click', () => {
     previewPage += Number(btn.dataset.pg);
     renderPreview(host, model, sheet, opts, sel, file);
@@ -333,8 +383,7 @@ export function resetPreviewPage(): void { previewPage = 0; }
 export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel: Range, title: string): void {
   const r = printRange(model, sheet, opts, sel);
   if (!r) throw new Error('На листе нет данных для печати.');
-  const b = buildRows(model, sheet, r, opts);
-  const { pages, zoom } = paginate(b, opts);
+  const { pages } = layout(model, sheet, r, opts);
   const sheetName = model.getWorksheetsProperties()[sheet]?.name ?? '';
   let root = document.getElementById('print-root');
   if (!root) {
@@ -346,7 +395,7 @@ export function printSheet(model: Model, sheet: number, opts: PrintOptions, sel:
   // путь к файлу. Наши поля и колонтитулы — внутри каждой страницы.
   const size = opts.paper === 'Letter' ? 'letter' : opts.paper;
   root.innerHTML = `<style>@page { size: ${size} ${opts.landscape ? 'landscape' : 'portrait'}; margin: 0; }</style>
-    ${pages.map((rows, i) => pageHtml(b, opts, rows, zoom, { page: i + 1, pages: pages.length, file: title, sheet: sheetName })).join('')}`;
+    ${pages.map((pg, i) => pageHtml(pg.b, opts, pg.rows, pg.zoom, { page: i + 1, pages: pages.length, file: title, sheet: sheetName })).join('')}`;
   const old = document.title;
   document.title = title; // имя PDF по умолчанию
   document.body.classList.add('printing');

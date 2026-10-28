@@ -104,6 +104,9 @@ export interface Model {
   setFilterCriteria(sheet: number, json: string): void;
   getPageSetup(sheet: number): string;
   getPrintArea(sheet: number): number[];
+  /** Сквозные строки и столбцы печати: [строка1, строка2, столбец1, столбец2], 0 — нет. */
+  getPrintTitles(sheet: number): number[];
+  setPrintTitles(sheet: number, titles: number[]): void;
   setPrintArea(sheet: number, area: number[]): void;
   getEnsChanges(): string;
   clearEnsChanges(): void;

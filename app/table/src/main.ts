@@ -6,7 +6,7 @@ import { type BorderType, type CellStyle, columnName, columnNumber, loadEngine, 
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog } from './changelog';
-import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, renderPreview, toSaved } from './print';
+import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
@@ -2859,6 +2859,21 @@ initBackstage({
   setPrintArea: (clear) => {
     const s = grid.sel;
     try { model.setPrintArea(grid.sheet, clear ? [] : [s.r1, s.c1, Math.min(s.r2, 1_048_576), Math.min(s.c2, 16_384)]); } catch (e) { showToast(String(e)); }
+  },
+  printTitles: () => {
+    const t = printTitles(model, grid.sheet);
+    return { rows: t[0] ? (t[0] === t[1] ? String(t[0]) : `${t[0]}:${t[1]}`) : '', cols: t[2] ? (t[2] === t[3] ? columnName(t[2]) : `${columnName(t[2])}:${columnName(t[3])}`) : '' };
+  },
+  setPrintTitles: (rows, cols) => {
+    const r = rows.trim().replace(/\$/g, '') ? /^(\d+)(?::(\d+))?$/.exec(rows.trim().replace(/\$/g, '')) : [];
+    const c = cols.trim().replace(/\$/g, '') ? /^([A-Za-z]{1,3})(?::([A-Za-z]{1,3}))?$/.exec(cols.trim().replace(/\$/g, '')) : [];
+    if (!r) return 'Сквозные строки: укажите номера, например 1:3.';
+    if (!c) return 'Сквозные столбцы: укажите буквы, например A:B.';
+    const r1 = r[1] ? Number(r[1]) : 0, r2 = r[1] ? Number(r[2] ?? r[1]) : 0;
+    const c1 = c[1] ? columnNumber(c[1].toUpperCase()) : 0, c2 = c[1] ? columnNumber((c[2] ?? c[1]).toUpperCase()) : 0;
+    if ((r1 && (r2 < r1 || r2 > 1_048_576)) || (c1 && (c2 < c1 || c2 > 16_384))) return 'Диапазон указан неверно: начало должно быть не больше конца.';
+    try { model.setPrintTitles(grid.sheet, [r1, r2, c1, c2]); } catch (e) { return String(e); }
+    return '';
   },
   showChangeLog: () => showLog(model, { goTo: goToArea }),
   printOptions: () => { try { return fromSaved(model.getPageSetup(grid.sheet)); } catch { return { ...DEFAULT_PRINT }; } },
