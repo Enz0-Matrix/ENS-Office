@@ -353,6 +353,13 @@ pub(crate) enum Diff {
         old_value: Vec<MergedCell>,
         new_value: Vec<MergedCell>,
     },
+    /// ENS-Office: the whole list of conditional formatting rules of a sheet (kept when rows or
+    /// columns are deleted: the deletion can shrink or remove rules and undo must bring them back).
+    SetConditionalFormattingList {
+        sheet: u32,
+        old_value: Vec<crate::cf_types::ConditionalFormatting>,
+        new_value: Vec<crate::cf_types::ConditionalFormatting>,
+    },
     // FIXME: we are missing SetViewDiffs
 }
 

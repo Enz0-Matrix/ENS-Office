@@ -148,6 +148,10 @@ impl<'a> UserModel<'a> {
                 Diff::SetPrintArea { sheet, new_value: _, old_value } => {
                     self.write_print_area(*sheet, *old_value)?;
                 }
+                Diff::SetConditionalFormattingList { sheet, old_value, new_value: _ } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = old_value.clone();
+                    needs_evaluation = true;
+                }
                 Diff::SetOutlineSummary { sheet, new_value: _, old_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *old_value;
                 }
@@ -729,6 +733,10 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetPrintArea { sheet, new_value, old_value: _ } => {
                     self.write_print_area(*sheet, *new_value)?;
+                }
+                Diff::SetConditionalFormattingList { sheet, old_value: _, new_value } => {
+                    self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = new_value.clone();
+                    needs_evaluation = true;
                 }
                 Diff::SetOutlineSummary { sheet, new_value, old_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.ens_summary = *new_value;

@@ -272,6 +272,13 @@ impl UserModel<'_> {
         }
     }
 
+    /// ENS-Office: a step that restores the rules of the sheet after rows or columns were deleted
+    /// (empty if nothing changed).
+    pub(crate) fn cf_list_diff(&self, sheet: u32, old_value: Vec<crate::cf_types::ConditionalFormatting>) -> Result<Vec<Diff>, String> {
+        let new_value = self.model.workbook.worksheet(sheet)?.conditional_formatting.clone();
+        Ok(if new_value == old_value { vec![] } else { vec![Diff::SetConditionalFormattingList { sheet, old_value, new_value }] })
+    }
+
     /// ENS-Office: the default font of a new book (the font of the first cell style).
     pub fn set_default_font(&mut self, name: &str, size: i32) {
         let styles = &mut self.model.workbook.styles;
@@ -893,6 +900,26 @@ mod tests {
         assert!(m.update_range_style(&area, "alignment.text_rotation", "200").is_err());
         m.update_range_style(&area, "alignment.text_rotation", "255").unwrap();
         assert_eq!(m.get_cell_style(0, 1, 1).unwrap().alignment.unwrap().text_rotation, 255);
+    }
+
+    #[test]
+    fn ens_cf_range_shrinks_and_undo_restores() {
+        use crate::cf_types::CfRuleInput;
+        let mut m = model();
+        let rule = CfRuleInput::Blanks { format: Default::default(), stop_if_true: false };
+        m.add_conditional_formatting(0, "A3:A8", rule).unwrap();
+        let range = |m: &UserModel| m.get_conditional_formatting_list(0).unwrap().iter().map(|c| c.range.clone()).collect::<Vec<_>>();
+        assert_eq!(range(&m), ["A3:A8"]);
+        m.delete_rows(0, 5, 2).unwrap(); // inside: shrinks
+        assert_eq!(range(&m), ["A3:A6"]);
+        m.delete_rows(0, 1, 3).unwrap(); // edge: A3:A6 loses A3 and moves up
+        assert_eq!(range(&m), ["A1:A3"]);
+        m.delete_rows(0, 1, 5).unwrap(); // whole range: the rule goes
+        assert!(range(&m).is_empty());
+        m.undo().unwrap();
+        assert_eq!(range(&m), ["A1:A3"]);
+        m.undo().unwrap();
+        assert_eq!(range(&m), ["A3:A6"]);
     }
 
     #[test]

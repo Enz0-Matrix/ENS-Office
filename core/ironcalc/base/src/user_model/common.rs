@@ -1223,9 +1223,11 @@ impl<'a> UserModel<'a> {
         })?;
 
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        let old_cf = self.model.workbook.worksheet(sheet)?.conditional_formatting.clone();
         self.model.delete_rows(sheet, row, row_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.cf_list_diff(sheet, old_cf)?);
         diff_list.extend(link_diffs);
         diff_list.push(Diff::DeleteRows {
             sheet,
@@ -1305,9 +1307,11 @@ impl<'a> UserModel<'a> {
         })?;
 
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
+        let old_cf = self.model.workbook.worksheet(sheet)?.conditional_formatting.clone();
         self.model.delete_columns(sheet, column, column_count)?;
 
         let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(self.cf_list_diff(sheet, old_cf)?);
         diff_list.extend(link_diffs);
         diff_list.push(Diff::DeleteColumns {
             sheet,
