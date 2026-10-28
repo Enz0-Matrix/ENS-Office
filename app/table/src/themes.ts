@@ -123,6 +123,30 @@ export const THEMES: Theme[] = [
       activeBorder: '#ff7aa8', activeBorderInactive: '#f7b7d2', selectionFill: 'rgba(143,211,255,0.20)',
     },
   },
+  {
+    id: 'dark', name: 'Тёмная', note: 'спокойная, для работы', tone: 'dark',
+    grid: {
+      sheetBg: '#1f2023', gridLine: '#34363b', headerBg: '#2b2d31', headerLine: '#3c3f45', headerText: '#b8bcc4',
+      cornerBg: '#232427', cornerLine: '#3c3f45', headerActiveFill: '#33507a', headerActiveText: '#eaf2ff',
+      activeBorder: '#5a9be0', activeBorderInactive: '#5b6270', selectionFill: 'rgba(90,155,224,0.20)', textColor: '#e6e8ec',
+    },
+  },
+  {
+    id: 'finance', name: 'Финансовая', note: 'строгая, для бухгалтерии', tone: 'light',
+    grid: {
+      sheetBg: '#ffffff', gridLine: '#dfe3e0', headerBg: '#eef1ee', headerLine: '#cdd4cf', headerText: '#3d4a42',
+      cornerBg: '#e1e6e2', cornerLine: '#cdd4cf', headerActiveFill: '#d6e7dc', headerActiveText: '#1f4d33',
+      activeBorder: '#1f6b43', activeBorderInactive: '#86b59b', selectionFill: 'rgba(31,107,67,0.12)',
+    },
+  },
+  {
+    id: 'blueprint', name: 'Инженерная', note: 'синяя «синька», белые линии', tone: 'dark',
+    grid: {
+      sheetBg: '#14407a', gridLine: '#2c5b97', headerBg: '#0f3566', headerLine: '#2c5b97', headerText: '#cfe3ff',
+      cornerBg: '#0c2b54', cornerLine: '#2c5b97', headerActiveFill: '#2f6fbf', headerActiveText: '#ffffff',
+      activeBorder: '#ffffff', activeBorderInactive: '#9fc2ee', selectionFill: 'rgba(255,255,255,0.14)', textColor: '#f2f7ff',
+    },
+  },
 ];
 
 // --- Свои темы из файла (без переустановки программы) ---
@@ -167,10 +191,15 @@ export function setCustomThemes(list: CustomTheme[]): void {
   }).join('\n');
 }
 
+/** Какие встроенные темы скрыты из меню (настройка «Скрыть тему»); задаётся из main. */
+let hiddenIds: string[] = [];
+export const setHiddenThemes = (ids: string[]) => { hiddenIds = ids; };
+const hiddenBuiltin = () => hiddenIds;
+
 /** Все темы для меню: встроенные и свои. */
 export function allThemes(): Theme[] {
   return [
-    ...THEMES,
+    ...THEMES.filter((x) => !hiddenBuiltin().includes(x.id)),
     ...custom.map((t) => ({ id: t.id, name: t.name, note: t.note || 'своя тема', tone: t.tone, grid: t.grid as Partial<GridTheme> })),
   ];
 }

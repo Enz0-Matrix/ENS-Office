@@ -11,7 +11,7 @@ import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
 import { conditionalMenu, editRule, initConditional, manageRules, rectRef } from './cfdialog';
 import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
-import { allThemes, applyTheme, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
+import { THEMES, allThemes, applyTheme, setHiddenThemes, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
 import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
 import { copyText, readText } from './platform';
@@ -2641,6 +2641,7 @@ window.addEventListener('keydown', (e) => {
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
 onRibbonDrawn(syncBordersButton);
+setHiddenThemes(settings.hiddenThemes);
 const setTheme = () => applyTheme(settings.theme, grid, settings.themeMotion, settings.themeMotionForced);
 setCustomThemes(settings.customThemes);
 setTheme();
@@ -2666,6 +2667,8 @@ function loadThemeFile(): void {
 }
 
 /** «Вид → Тема»: выбор темы оформления (книга и печать не меняются). */
+const THEMES_BUILTIN = new Set(THEMES.map((t) => t.id));
+
 function themeMenu(): void {
   const b = document.querySelector<HTMLElement>('.btn[data-command="view.theme"]')?.getBoundingClientRect();
   const reduce = systemReducesMotion();
@@ -2685,6 +2688,13 @@ function themeMenu(): void {
           .catch((e) => showToast(String(e)));
       },
     },
+    { label: 'Скрыть выбранную тему из списка', separator: true, disabled: settings.theme === 'classic' || !THEMES_BUILTIN.has(settings.theme), run: () => {
+      settings.hiddenThemes = [...settings.hiddenThemes, settings.theme]; setHiddenThemes(settings.hiddenThemes);
+      settings.theme = 'classic'; saveSettings(); setTheme();
+    } },
+    ...(settings.hiddenThemes.length ? [{ label: `Показать скрытые темы (${settings.hiddenThemes.length})`, run: () => {
+      settings.hiddenThemes = []; setHiddenThemes([]); saveSettings();
+    } }] : []),
     ...mine.map((t, i) => ({
       label: `Удалить свою тему «${t.name}»`, separator: i === 0,
       run: () => {

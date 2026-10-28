@@ -43,6 +43,8 @@ export interface GridTheme {
   headerText: string;
   cornerBg: string;
   cornerLine: string;
+  /** Цвет текста и границ «авто» (в тёмных темах — светлый). */
+  textColor?: string;
 }
 
 /** Классическая тема сетки (нефритовая). */
@@ -1303,7 +1305,7 @@ export class Grid {
     const drawPx = vert === 'superscript' || vert === 'subscript' ? Math.round(px * 0.7) : px;
     const shift = vert === 'superscript' ? -Math.round(px * 0.3) : vert === 'subscript' ? Math.round(px * 0.2) : 0;
     ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${drawPx}px ${fontStack(f?.name)}`;
-    ctx.fillStyle = f?.color ? model.resolveColor(f.color) : '#000';
+    ctx.fillStyle = f?.color ? model.resolveColor(f.color) : this.theme.textColor ?? '#000';
     // Направление текста (Excel textRotation): 1..90 — против часовой стрелки,
     // 91..180 — по часовой (90 + угол), 255 — буквы столбиком.
     const rot = style?.alignment?.text_rotation ?? 0;
@@ -1491,11 +1493,12 @@ export class Grid {
       const st = item.style;
       const width = st === 'thick' ? 3 : st.startsWith('medium') ? 2 : 1;
       ctx.save();
-      const color = item.color ? model.resolveColor(item.color) || '#000' : '#000';
+      const auto = this.theme.textColor ?? '#000';
+      const color = item.color ? model.resolveColor(item.color) || auto : auto;
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       // Тонкие чёрные линии (их ставят другие программы по всей таблице) — мягче, серыми: не давят на данные.
-      if (width === 1 && /^#[0-9a-f]{6}$/i.test(color) && [1, 3, 5].every((i) => parseInt(color.slice(i, i + 2), 16) < 64)) {
+      if (width === 1 && /^#[0-9a-f]{6}$/i.test(color) && [1, 3, 5].every((i) => parseInt(color.slice(i, i + 2), 16) < 64) && !this.theme.textColor) {
         ctx.globalAlpha = st === 'hair' ? 0.35 : 0.5;
       }
       ctx.setLineDash(st === 'dotted' ? [1, 2] : st === 'mediumdashed' ? [5, 2] : st.includes('dashdotdot') ? [5, 2, 1, 2, 1, 2]

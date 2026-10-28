@@ -213,3 +213,27 @@
 [data-theme="bubbles"] .statusbar::before { content: "\25CF\25CF\25CF"; letter-spacing: 1px;
   background: linear-gradient(90deg, #ffd36e, #8fd3ff, #b9f2a1); -webkit-background-clip: text; background-clip: text; color: transparent; }
 @media (prefers-reduced-motion: reduce) { :root:not([data-theme-forced])[data-theme="bubbles"] .btn:hover svg { animation: none; } }
+
+/* --- «Тёмная»: простая, для работы --- */
+:root[data-theme="dark"] {
+  --accent: #4d8fd6; --accent-dark: #3a78bb; --bg: #1a1b1e; --panel: #25272b; --hover: #34363c; --panel-alt: #2c2e33; --border: #3a3d43; --text: #dfe2e7; --muted: #959aa3;
+  --hi: #ffffff; --on-bg: #2e4a6e; --input-bg: #17181a; --sheet: #1f2023; --scroll: #4a4e56;
+  --brand-bg: linear-gradient(100deg, #2b2e34, #343841);
+}
+
+/* --- «Финансовая»: строгая, зелёно-серая --- */
+:root[data-theme="finance"] {
+  --accent: #1f6b43; --accent-dark: #174f32; --bg: #f1f3f1; --panel: #ffffff; --border: #cdd4cf; --text: #1f2a24; --muted: #5a665f;
+  --hover: #e4ebe6; --on-bg: #d6e7dc; --status-bg: #e6ebe7; --scroll: #9db8a8;
+  --brand-bg: linear-gradient(100deg, #174f32 0%, #1f6b43 60%, #2c7d54 100%);
+}
+
+/* --- «Инженерная»: чертёжная синька --- */
+:root[data-theme="blueprint"] {
+  --accent: #5fa8ff; --accent-dark: #3d87e0; --bg: #0b2a52; --panel: #0f3566; --hover: #1a4a86; --panel-alt: #14407a; --border: #2c5b97; --text: #e2eeff; --muted: #9bb9e0;
+  --hi: #ffffff; --on-bg: #245a9e; --input-bg: #0a2447; --sheet: #14407a; --scroll: #3d6fb0;
+  --brand-bg:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.10) 0 1px, transparent 1px 14px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 1px, transparent 1px 14px),
+    linear-gradient(100deg, #0c2f5e, #164a8a);
+}
