@@ -159,7 +159,17 @@ function commitEdit(dRow: number, dCol: number): void {
   const value = activeValue();
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   try {
+    // «1 1/2» — число 1,5 с форматом «Дробный» (# ?/?), как в Excel; в ячейке «Общий» и только такой ввод.
+    const frac = /^(-?)(\d+) +(\d+)\/(\d+)$/.exec(value.trim());
+    if (frac && Number(frac[4]) > 0 && Number(frac[3]) < Number(frac[4]) * 1000 && before.toLowerCase() === 'general') {
+      const num = (Number(frac[2]) + Number(frac[3]) / Number(frac[4])) * (frac[1] ? -1 : 1);
+      const text = String(Math.round(num * 1e12) / 1e12);
+      model.setUserInput(s.sheet, s.row, s.column, settings.decimal === 'comma' ? text.replace('.', ',') : text);
+      const den = frac[4].length;
+      model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'num_fmt', den > 2 ? '# ???/???' : den > 1 ? '# ??/??' : '# ?/?');
+    } else {
     model.setUserInput(s.sheet, s.row, s.column, value);
+    }
     // Текст в несколько строк (Alt+Enter) — сразу с переносом, как в Excel.
     if (!value.startsWith('=') && value.includes('\n') && !model.getCellStyle(s.sheet, s.row, s.column).style.alignment?.wrap_text) {
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
@@ -560,6 +570,7 @@ function formatName(fmt: string): string {
   if (fmt.includes('%')) return 'Процентный';
   if (/[$€₽]/.test(fmt)) return 'Денежный';
   if (fmt === '@') return 'Текстовый';
+  if (/\?\/[?\d]/.test(fmt)) return 'Дробный';
   return fmt === 'general' ? 'Общий' : 'Числовой';
 }
 
