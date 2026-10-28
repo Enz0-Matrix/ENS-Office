@@ -8,6 +8,8 @@ on:
   # Ветки проверяются через pull request; push — только для main.
   push:
     branches: [main]
+    # Тег vX.Y.Z — выпуск: после сборки файлы попадают в GitHub Releases (см. задание release).
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -134,3 +136,29 @@ jobs:
             app/table/redos7-out/*.tar.gz
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Выпуск на GitHub
+    needs: desktop
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Собрать файлы выпуска и контрольные суммы
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*_browser.html' -o -name '*-setup.exe' \) -exec cp {} release/ \;
+          (cd release && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - name: Создать выпуск
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes="docs/releases/${tag}.md"
+          [ -f "$notes" ] || notes=/dev/null
+          gh release create "$tag" release/* --title "ENS-Table ${tag#v}" --notes-file "$notes" --verify-tag
