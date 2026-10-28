@@ -117,13 +117,36 @@ pub(crate) fn get_chart_xml(model: &Model, sheet: u32, chart: &Chart) -> String 
         (r1 + 1..=r2).map(|r| format!("<c:pt idx=\"{}\"><c:v>{}</c:v></c:pt>", r - r1 - 1, escape_xml(&text(r, c1)))).collect::<String>()
     );
     let last_col = if chart.kind == 2 { c1 + 1 } else { c2 };
+    let color = |i: usize| chart.colors.get(i).and_then(|c| c.strip_prefix('#')).filter(|c| c.len() == 6).map(|c| c.to_uppercase());
+    let fill = |i: usize| color(i).map(|c| format!("<a:solidFill><a:srgbClr val=\"{c}\"/></a:solidFill>"));
     let mut series = String::new();
     for (i, c) in (c1 + 1..=last_col).enumerate() {
         let vals: String = (r1 + 1..=r2)
             .filter_map(|r| num(r, c).map(|n| format!("<c:pt idx=\"{}\"><c:v>{n}</c:v></c:pt>", r - r1 - 1)))
             .collect();
+        let sp_pr = match (chart.kind, fill(i)) {
+            (0, Some(f)) => format!("<c:spPr>{f}</c:spPr>"),
+            (1, Some(f)) => format!("<c:spPr><a:ln w=\"28575\" cap=\"rnd\">{f}<a:round/></a:ln></c:spPr>"),
+            _ => String::new(),
+        };
+        let d_pt: String = if chart.kind == 2 {
+            (0..r2 - r1)
+                .filter_map(|k| fill(k as usize).map(|f| format!("<c:dPt><c:idx val=\"{k}\"/><c:bubble3D val=\"0\"/><c:spPr>{f}</c:spPr></c:dPt>")))
+                .collect()
+        } else {
+            String::new()
+        };
+        let d_lbls = if chart.labels {
+            format!(
+                "<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+                u8::from(chart.kind != 2),
+                u8::from(chart.kind == 2)
+            )
+        } else {
+            String::new()
+        };
         series.push_str(&format!(
-            "<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{}</c:v></c:pt></c:strCache></c:strRef></c:tx>{}{cats}\
+            "<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\"><c:v>{}</c:v></c:pt></c:strCache></c:strRef></c:tx>{sp_pr}{}{d_pt}{d_lbls}{cats}\
 <c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>{vals}</c:numCache></c:numRef></c:val>{}</c:ser>",
             range_ref(&name, c, r1, c, r1),
             escape_xml(&text(r1, c)),
@@ -145,8 +168,13 @@ pub(crate) fn get_chart_xml(model: &Model, sheet: u32, chart: &Chart) -> String 
     } else {
         format!("<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>", escape_xml(&chart.title))
     };
+    let legend = match chart.legend {
+        2 => String::new(),
+        1 => "<c:legend><c:legendPos val=\"r\"/></c:legend>".to_string(),
+        _ => "<c:legend><c:legendPos val=\"b\"/></c:legend>".to_string(),
+    };
     format!(
         "{XML_DECLARATION}\n<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-<c:chart>{title}<c:plotArea><c:layout/>{plot}</c:plotArea><c:legend><c:legendPos val=\"r\"/></c:legend><c:plotVisOnly val=\"1\"/></c:chart></c:chartSpace>"
+<c:chart>{title}<c:plotArea><c:layout/>{plot}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/></c:chart></c:chartSpace>"
     )
 }

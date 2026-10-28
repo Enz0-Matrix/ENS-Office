@@ -349,6 +349,15 @@ pub struct Chart {
     pub dy: i32,
     pub width: i32,
     pub height: i32,
+    /// "#RRGGBB" per series (per slice for a pie); empty — the default palette.
+    #[serde(default)]
+    pub colors: Vec<String>,
+    /// 0 — legend below, 1 — right, 2 — none.
+    #[serde(default)]
+    pub legend: u8,
+    /// Values (percents for a pie) written on the chart.
+    #[serde(default)]
+    pub labels: bool,
 }
 
 /// A picture over a sheet: its top left corner is at the top left of the cell (`row`, `column`).

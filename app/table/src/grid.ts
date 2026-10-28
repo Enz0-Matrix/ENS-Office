@@ -1803,7 +1803,7 @@ export class Grid {
         ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
       };
       if (o.kind === 'chart') {
-        try { drawChart(ctx, r, this.charts[o.index].kind, this.charts[o.index].title, this.chartData(this.charts[o.index]), this.theme.textColor ? '#333' : '#333'); } catch { /* диаграмма без данных */ }
+        try { drawChart(ctx, r, this.charts[o.index].kind, this.charts[o.index].title, this.chartData(this.charts[o.index]), this.charts[o.index]); } catch { /* диаграмма без данных */ }
         drawFrame();
         return;
       }

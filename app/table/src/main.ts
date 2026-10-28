@@ -2,7 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { parseRange } from './chart';
+import { CHART_TEMPLATES, parseRange, type ChartLook } from './chart';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
@@ -1163,15 +1163,27 @@ function deleteSelectedObject(): void {
 
 // --- Диаграммы ---
 
-/** Окно диаграммы: тип, заголовок, диапазон данных; для существующей — ещё «Удалить». */
-function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string }): void {
+/** Окно диаграммы: тип, заголовок, диапазон, шаблон оформления (цвета, легенда, подписи); для существующей — ещё «Удалить». */
+function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string; look?: Partial<ChartLook> }): void {
   const overlay = $('recovery');
   const kinds = ['Столбцы', 'Линии', 'Круговая'];
+  const templates = [...CHART_TEMPLATES, ...settings.chartTemplates];
+  const look: ChartLook = {
+    colors: initial.look?.colors?.length ? [...initial.look.colors] : [...CHART_TEMPLATES[0].colors],
+    legend: initial.look?.legend ?? 0,
+    labels: initial.look?.labels ?? false,
+  };
+  const isCustom = !!initial.look?.colors?.length;
   overlay.innerHTML = `<div class="modal"><h2>${existing === null ? 'Новая диаграмма' : 'Диаграмма'}</h2>
     <p>Первая строка диапазона — названия рядов, первый столбец — подписи. Круговая берёт первый ряд.</p>
     <p><label>Тип: <select data-f="kind">${kinds.map((k, i) => `<option value="${i}"${i === initial.kind ? ' selected' : ''}>${k}</option>`).join('')}</select></label></p>
     <p><label>Заголовок: <input data-f="title" style="width:60%"></label></p>
     <p><label>Данные: <input data-f="range" style="width:40%" placeholder="A1:C5"></label></p>
+    <p><label>Шаблон: <select data-f="tpl"><option value="-1">${isCustom ? 'Свои цвета' : 'Классика'}</option>${templates.map((t, i) => `<option value="${i}">${t.name}</option>`).join('')}</select></label>
+      <button data-act="save-tpl" title="Сохранить текущие цвета, легенду и подписи как свой шаблон">Сохранить как шаблон…</button></p>
+    <p>Цвета: <span data-f="swatches"></span></p>
+    <p><label>Легенда: <select data-f="legend"><option value="0">снизу</option><option value="1">справа</option><option value="2">нет</option></select></label>
+      <label style="margin-left:14px"><input type="checkbox" data-f="labels"> Подписи значений</label></p>
     <div class="rec-actions">${existing === null ? '' : '<button data-act="delete" class="danger">Удалить</button>'}
     <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
   overlay.hidden = false;
@@ -1179,16 +1191,47 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
   const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
   f('title').value = initial.title;
   f('range').value = initial.range;
+  const swatches = () => {
+    const rg = parseRange(f('range').value.trim().toUpperCase());
+    const kind = Number(f('kind').value);
+    const count = rg ? Math.min(8, kind === 2 ? rg[2] - rg[0] : rg[3] - rg[1]) : 1;
+    box.querySelector('[data-f="swatches"]')!.innerHTML = Array.from({ length: count }, (_, i) =>
+      `<input type="color" data-color="${i}" value="${look.colors[i] ?? CHART_TEMPLATES[0].colors[i % 8]}" style="width:32px;height:24px;padding:0;border:1px solid #bbb">`).join(' ');
+    f('legend').value = String(look.legend);
+    f('labels').checked = look.labels;
+  };
+  swatches();
+  f('range').addEventListener('change', swatches);
+  f('kind').addEventListener('change', swatches);
+  f('legend').addEventListener('change', () => { look.legend = Number(f('legend').value); });
+  f('labels').addEventListener('change', () => { look.labels = f('labels').checked; });
+  box.addEventListener('input', (e) => {
+    const t = e.target as HTMLInputElement;
+    if (t.dataset.color !== undefined) look.colors[Number(t.dataset.color)] = t.value;
+  });
+  f('tpl').addEventListener('change', () => {
+    const t = templates[Number(f('tpl').value)];
+    if (t) { look.colors = [...t.colors]; look.legend = t.legend; look.labels = t.labels; swatches(); }
+  });
   const close = () => { overlay.hidden = true; focusGrid(); };
   box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
   box.addEventListener('click', (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
+    if (act === 'save-tpl') {
+      const name = prompt('Название шаблона:')?.trim();
+      if (!name) return;
+      const t = { name, colors: [...look.colors], legend: look.legend, labels: look.labels };
+      settings.chartTemplates = [...settings.chartTemplates.filter((x) => x.name !== name), t];
+      saveSettings();
+      showToast(`Шаблон «${name}» сохранён.`);
+      return;
+    }
     try {
       const list = model.getCharts(grid.sheet);
       if (act === 'delete' && existing !== null) model.setCharts(grid.sheet, list.filter((_, k) => k !== existing));
       if (act === 'ok') {
-        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase() };
+        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels };
         if (!parseRange(c.range)) { showToast('Укажите диапазон из двух и более строк и столбцов, например A1:C5.'); return; }
         if (existing === null) {
           const s = grid.sel;
@@ -1215,7 +1258,7 @@ function editSelectedChart(): void {
   const o = grid.objAt(grid.selObj);
   if (o?.kind !== 'chart') { showToast('Выделите диаграмму щелчком мыши.'); return; }
   const c = model.getCharts(grid.sheet)[o.index];
-  chartDialog(o.index, { kind: c.kind, title: c.title, range: c.range });
+  chartDialog(o.index, { kind: c.kind, title: c.title, range: c.range, look: c });
 }
 grid.onObjectDouble = () => { if (grid.objAt(grid.selObj)?.kind === 'chart') editSelectedChart(); };
 

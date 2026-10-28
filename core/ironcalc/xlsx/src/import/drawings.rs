@@ -181,7 +181,38 @@ fn load_chart<R: Read + std::io::Seek>(
     if width <= 0 || height <= 0 {
         (width, height) = (480, 288);
     }
+    let rgb = |n: &XmlNode| {
+        n.descendants()
+            .find(|c| c.has_tag_name("srgbClr"))
+            .and_then(|c| c.attribute("val").map(|v| format!("#{}", v.to_uppercase())))
+    };
+    let colors: Vec<String> = if kind == 2 {
+        let mut by_idx: Vec<(usize, String)> = first
+            .children()
+            .filter(|n| n.has_tag_name("dPt"))
+            .filter_map(|d| Some((d.children().find(|n| n.has_tag_name("idx"))?.attribute("val")?.parse().ok()?, rgb(d)?)))
+            .collect();
+        by_idx.sort();
+        // A palette is kept only when every slice has its colour.
+        if by_idx.iter().enumerate().all(|(i, (k, _))| i == *k) { by_idx.into_iter().map(|(_, c)| c).collect() } else { vec![] }
+    } else {
+        let cs: Vec<Option<String>> = sers.iter().map(|x| x.children().find(|n| n.has_tag_name("spPr")).and_then(&rgb)).collect();
+        if cs.iter().all(Option::is_some) { cs.into_iter().flatten().collect() } else { vec![] }
+    };
+    let legend = doc
+        .descendants()
+        .find(|n| n.has_tag_name("legend"))
+        .map_or(2, |l| match l.children().find(|n| n.has_tag_name("legendPos")).and_then(|p| p.attribute("val")) {
+            Some("r") | Some("l") | Some("tr") => 1,
+            _ => 0,
+        });
+    let labels = chart.descendants().filter(|n| n.has_tag_name("dLbls")).any(|d| {
+        d.children().any(|n| matches!(n.tag_name(), "showVal" | "showPercent") && n.attribute("val").is_some_and(|v| v == "1" || v == "true"))
+    });
     Some(Chart {
+        colors,
+        legend,
+        labels,
         kind,
         title,
         range: format!(

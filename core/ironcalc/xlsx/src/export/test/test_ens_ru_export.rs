@@ -353,8 +353,8 @@ fn test_ens_charts_export() {
             model.set_user_input(0, r as i32 + 1, c as i32 + 1, v).unwrap();
         }
     }
-    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250 };
-    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250 };
+    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250, colors: vec!["#112233".to_string(), "#AABBCC".to_string()], legend: 1, labels: true };
+    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250, colors: vec!["#010203".to_string(), "#040506".to_string(), "#070809".to_string()], legend: 2, labels: true };
     assert!(model.set_charts(0, vec![Chart { range: "A1".to_string(), ..bar.clone() }]).is_err());
     model.set_charts(0, vec![bar.clone()]).unwrap();
     model.set_charts(0, vec![bar.clone(), pie.clone()]).unwrap();
@@ -378,8 +378,8 @@ fn test_ens_charts_export() {
     let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
     std::fs::remove_file(name).unwrap();
     assert!(chart1.contains("<c:barChart>") && chart1.contains("<c:f>Sheet1!$B$2:$B$4</c:f>") && chart1.contains("План &amp; факт"), "{chart1}");
-    assert!(chart1.contains("<c:v>12</c:v>"), "{chart1}");
-    assert!(chart2.contains("<c:pieChart>") && !chart2.contains("$C$"), "{chart2}");
+    assert!(chart1.contains("<c:v>12</c:v>") && chart1.contains("<a:srgbClr val=\"AABBCC\"/>") && chart1.contains("<c:legendPos val=\"r\"/>") && chart1.contains("<c:showVal val=\"1\"/>"), "{chart1}");
+    assert!(chart2.contains("<c:pieChart>") && !chart2.contains("$C$") && chart2.contains("<c:dPt><c:idx val=\"2\"/>") && !chart2.contains("<c:legend>") && chart2.contains("<c:showPercent val=\"1\"/>"), "{chart2}");
     assert!(drawing.contains("<xdr:graphicFrame") && types.contains("/xl/charts/chart2.xml"), "{drawing}");
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie]);
