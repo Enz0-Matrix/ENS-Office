@@ -110,6 +110,7 @@ writeFileSync(join(docs, 'not.docx'), 'просто текст, а не архи
 
 await test('открытие файла с диска и сохранение на место (атомарно, без временных файлов)', async () => {
   const path = join(docs, 'sample.docx');
+  const original = readFileSync(path);
   const p = await openApp(inst, `open=${encodeURIComponent(path)}`);
   await p.waitForFunction(() => window.ens.view.state.doc.textContent.includes('Заголовок первого уровня'));
   ok(await p.evaluate(() => document.title.includes('sample')), 'имя файла в заголовке');
@@ -120,7 +121,28 @@ await test('открытие файла с диска и сохранение н
   await p.waitForFunction(() => !window.ens.isDirty());
   ok((await readDocx(p, path)).includes('ПРАВКА '), 'правка записана в файл');
   eq(readdirSync(docs).filter((n) => n.includes('.tmp') || n.startsWith('.ens')), [], 'временные файлы остались');
+  // Защита от потерь: прежнее содержимое — в «Копиях на диске», история версий — внутри файла.
+  const bdir = join(dataHome, 'ens-text', 'history', 'backup');
+  const copies = readdirSync(bdir).filter((n) => n.endsWith('__sample.docx'));
+  eq(copies.length, 1, 'копия перед перезаписью');
+  ok(readFileSync(join(bdir, copies[0])).equals(original), 'копия — это прежнее содержимое файла');
+  const kinds = await p.evaluate((arr) => window.ens.V.parse(window.ens.importDocx(new Uint8Array(arr)).history).versions.map((v) => v.kind), [...readFileSync(path)]);
+  ok(kinds.includes('save'), `в файле есть версия «Сохранение»: ${kinds}`);
+  await p.keyboard.type('ещё правка ');
+  await p.keyboard.press('Control+KeyS');
+  await p.waitForFunction(() => !window.ens.isDirty());
+  eq(readdirSync(bdir).filter((n) => n.endsWith('__sample.docx')).length, 2, 'вторая копия');
   await p.context().close();
+});
+
+await test('копии на диске: закрытое без сохранения хранится и выдаётся списком (HTTP-интерфейс помощника)', async () => {
+  const hdr = { 'x-ens-token': inst.token, 'content-type': 'application/octet-stream', kind: 'discarded', name: encodeURIComponent('Черновик договора.docx') };
+  const stored = await fetch(`http://127.0.0.1:${inst.port}/api/history_store`, { method: 'POST', headers: hdr, body: Buffer.from('PKфиктивный') });
+  ok(stored.ok, `history_store: ${await stored.text()}`);
+  const list = await (await fetch(`http://127.0.0.1:${inst.port}/api/history_list`, { method: 'POST', headers: { 'x-ens-token': inst.token, 'content-type': 'application/json' }, body: '{}' })).json();
+  ok(list.some((e) => e.kind === 'discarded' && e.name === 'Черновик договора.docx'), JSON.stringify(list).slice(0, 300));
+  const bad = await fetch(`http://127.0.0.1:${inst.port}/api/history_store`, { method: 'POST', headers: { ...hdr, kind: '../etc' }, body: Buffer.from('x') });
+  ok(!bad.ok, 'чужой вид копии должен отклоняться');
 });
 
 await test('файл не docx: понятное объяснение, документ остаётся пустым', async () => {

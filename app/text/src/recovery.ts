@@ -10,6 +10,8 @@ export interface RecoveryRecord {
   /** Документ ProseMirror в виде JSON. */
   doc: Record<string, unknown>;
   meta: DocMeta;
+  /** История версий (сжатая строка). */
+  history?: string;
 }
 
 const DB = 'ens-text';

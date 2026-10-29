@@ -2,7 +2,7 @@
 // docx туда и обратно, восстановление, поиск. Запуск: npm test (Playwright должен быть доступен).
 import { spawn, execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -550,6 +550,144 @@ await test('печать: страницы вплотную, колонтиту�
   const third = execSync(`pdftotext -f 3 -l 3 -layout "${pdf}" -`).toString();
   ok(third.includes(`Стр. 3 из ${sheets}`), `нижний колонтитул третьей страницы: ${third.slice(-120)}`);
   await p.evaluate(() => window.ens.printRestore());
+  await p.context().close();
+});
+
+
+// ---- Версии, журнал, защита от потерь ----
+await test('версии: сохранение записывает версию и журнал, история едет внутри docx и читается обратно', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый абзац'), P('Второй абзац')]), E.getMeta(), 'v');
+    const b1 = E.buildDocx('v');
+    const a = E.importDocx(b1);
+    E.loadDoc(a.doc, a.meta, 'v', false, { raw: a.history, key: 'v.docx' });
+    const v1 = E.hist().versions.length;
+    const tr = E.view.state.tr.insertText(' (правка)', 13);
+    E.view.dispatch(tr);
+    const b2 = E.buildDocx('v');
+    const c = E.importDocx(b2);
+    const h = E.V.parse(c.history);
+    return { v1, versions: h.versions.map((x) => x.kind), log: h.log.map((x) => [x.kind, x.ch.changed, x.ch.words]), size: b2.length };
+  });
+  ok(r.v1 >= 1, 'история прочитана из файла');
+  eq(r.versions, ['save', 'save'], 'две версии «Сохранение»');
+  eq(r.log.map((x) => x[0]), ['save', 'save'], 'две записи журнала');
+  eq(r.log[1].slice(1), [1, 1], 'во втором сохранении изменён 1 абзац, +1 слово');
+  await p.context().close();
+});
+
+await test('версии: docx с историей открывают python-docx и LibreOffice (customXml не мешает)', async () => {
+  const p = await page();
+  const bytes = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Текст с историей'))]), E.getMeta(), 'v');
+    return [...E.buildDocx('v')];
+  });
+  const f = join(mkdtempSync(join(tmpdir(), 'ens-hist-')), 'h.docx');
+  writeFileSync(f, Buffer.from(bytes));
+  const out = execSync(`python3 -c "from docx import Document; d=Document('${f}'); print(d.paragraphs[0].text)"`).toString().trim();
+  eq(out, 'Текст с историей', 'python-docx читает файл');
+  await p.context().close();
+});
+
+await test('версии: правка в другой программе замечается при открытии, прежнее состояние остаётся в истории', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [P('Договор, пункт 1'), P('Договор, пункт 2')]), E.getMeta(), 'd');
+    const saved = E.buildDocx('d');
+    const a = E.importDocx(saved);
+    // «Другая программа» поменяла текст, но оставила историю в файле.
+    const edited = s.nodes.doc.create(null, [P('Договор, пункт 1'), P('Договор, пункт 2 — изменён чужой программой')]);
+    const foreign = E.exportDocx(edited, a.meta, 'd', a.history);
+    const b = E.importDocx(foreign);
+    E.loadDoc(b.doc, b.meta, 'd', false, { raw: b.history, key: 'd.docx' });
+    return { kinds: E.hist().versions.map((v) => v.kind), log: E.hist().log.map((l) => l.kind), notice: document.getElementById('notice').textContent };
+  });
+  eq(r.kinds, ['save', 'outside'], 'версии: наше сохранение и состояние при открытии');
+  eq(r.log, ['save', 'outside'], 'в журнале — правка в другой программе');
+  ok(r.notice.includes('в другой программе'), r.notice);
+  // Кнопка «Что изменилось» показывает разницу.
+  await p.click('#notice button:has-text("Что изменилось")');
+  await p.waitForSelector('.history-modal .diff');
+  ok((await p.textContent('.history-modal .diff')).includes('изменён чужой программой'), 'в сравнении видна правка');
+  await p.context().close();
+});
+
+await test('версии: окно истории — сравнение, возврат фрагмента и документа целиком, отмена', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [P('Пункт один'), P('Пункт два'), P('Пункт три')]), E.getMeta(), 'v');
+    E.snap('named', 'Согласовано');
+    const v = E.view, tr = v.state.tr;
+    tr.insertText('ИЗМЕНЕНО ', v.state.doc.child(0).nodeSize + 1);
+    v.dispatch(tr);
+  });
+  await p.waitForTimeout(700); // отдельный шаг отмены, а не продолжение набора
+  await p.keyboard.press('Control+Alt+KeyH');
+  await p.waitForSelector('.history-modal');
+  ok((await p.textContent('.hist-list')).includes('«Согласовано»'), 'именная версия в списке');
+  const diff = await p.textContent('.history-modal .diff');
+  ok(diff.includes('ИЗМЕНЕНО'), 'изменение показано');
+  await p.click('.diff-revert');
+  await p.waitForFunction(() => !document.querySelector('.history-modal'));
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(1).textContent), 'Пункт два', 'фрагмент возвращён');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(1).textContent), 'ИЗМЕНЕНО Пункт два', 'отмена вернула правку');
+  // Возврат всего документа.
+  await p.keyboard.press('Control+Alt+KeyH');
+  await p.waitForSelector('.history-modal');
+  await p.click('.hist-row:has-text("Согласовано")');
+  await p.click('button:has-text("Восстановить документ целиком")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Пункт одинПункт дваПункт три', 'документ возвращён целиком');
+  const kinds = await p.evaluate(() => window.ens.hist().versions.map((v) => v.kind));
+  ok(kinds.includes('before'), `страховочная версия перед возвратом: ${kinds}`);
+  await p.context().close();
+});
+
+await test('версии: «Заменить все» сначала записывает страховочную версию', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('кот и кот');
+  await p.keyboard.press('Control+KeyH');
+  await p.fill('#findbar input[type=text] >> nth=0', 'кот');
+  await p.fill('#findbar input[type=text] >> nth=1', 'пёс');
+  await p.click('#findbar button:has-text("Заменить все")');
+  const v = await p.evaluate(() => window.ens.hist().versions.map((x) => [x.kind, x.label]));
+  eq(v.length, 1, 'одна страховочная версия');
+  eq(v[0][0], 'before', 'вид версии');
+  await p.context().close();
+});
+
+await test('версии: история занимает место только под изменения (дедупликация блоков)', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const paras = Array.from({ length: 600 }, (_, i) => s.nodes.paragraph.create(null, s.text(`Абзац ${i}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(4))));
+    E.loadDoc(s.nodes.doc.create(null, paras), E.getMeta(), 'big');
+    E.snap('save');
+    const one = E.V.serialize(E.hist()).length;
+    for (let i = 0; i < 25; i++) {
+      E.view.dispatch(E.view.state.tr.insertText('+', 3 + i));
+      E.snap('auto');
+    }
+    return { one, many: E.V.serialize(E.hist()).length, versions: E.hist().versions.length };
+  });
+  ok(r.versions >= 20, `версий ${r.versions}`);
+  ok(r.many < r.one * 1.6, `26 версий весят ${r.many}, одна — ${r.one}`);
+  await p.context().close();
+});
+
+await test('защита: «Не сохранено N мин» и напоминание', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Несохранённая работа');
+  ok((await p.textContent('#status-saved')).includes('несохранённые'), await p.textContent('#status-saved'));
+  await p.evaluate(() => { window.ens.run('ver.reminder', '5'); });
+  eq(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-table.settings')).saveReminderMinutes), 5, 'настройка сохранена');
   await p.context().close();
 });
 

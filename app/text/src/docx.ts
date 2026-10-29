@@ -641,7 +641,7 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
   return assemble(entries);
 }
 
-export interface Imported { doc: PMNode; meta: DocMeta }
+export interface Imported { doc: PMNode; meta: DocMeta; /** История версий ENS-Tekst из файла (сжатая строка) или ''. */ history: string }
 
 export function importDocx(bytes: Uint8Array): Imported {
   let files: Record<string, Uint8Array>;
@@ -732,7 +732,21 @@ export function importDocx(bytes: Uint8Array): Imported {
     if (kid(sect, 'cols') && (num(attr(kid(sect, 'cols'), 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
-  return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy } };
+  return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy }, history: readHistoryPart(files) };
+}
+
+const HISTORY_NS = 'urn:ens-office:tekst:history';
+
+/** История версий лежит в customXml: Word такие части при сохранении оставляет. */
+function readHistoryPart(files: Record<string, Uint8Array>): string {
+  for (const [path, bytes] of Object.entries(files)) {
+    if (!/^customXml\/item\d+\.xml$/.test(path) || bytes.length < 40) continue;
+    try {
+      const root = parseXml(strFromU8(bytes)).documentElement;
+      if (root.localName === 'history' && root.namespaceURI === HISTORY_NS) return root.textContent ?? '';
+    } catch { /* чужая часть — пропускаем */ }
+  }
+  return '';
 }
 
 // ---------------------------------------------------------------- экспорт
@@ -1009,7 +1023,7 @@ function stylesXml(meta: DocMeta): string {
     '</w:styles>';
 }
 
-export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
+export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
   const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
   let body = blocksXml(ctx, doc);
   if (body.endsWith('</w:tbl>')) body += '<w:p/>';
@@ -1051,6 +1065,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
     { id: 'rId1', type: `${base}/styles`, target: 'styles.xml', external: false },
     { id: 'rId2', type: `${base}/settings`, target: 'settings.xml', external: false },
     ...(ctx.nums.length ? [{ id: 'rId3', type: `${base}/numbering`, target: 'numbering.xml', external: false }] : []),
+    ...(history ? [{ id: 'rId4', type: `${base}/customXml`, target: '../customXml/item1.xml', external: false }] : []),
   ];
   const relsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     [...fixed, ...ctx.rels].map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${esc(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('') + '</Relationships>';
@@ -1062,6 +1077,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' +
+    (history ? '<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>' : '') +
     parts.map((x) => `<Override PartName="/${x.path}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${x.kind}+xml"/>`).join('') +
     (ctx.nums.length ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : '') +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
@@ -1084,6 +1100,11 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
   };
   if (ctx.nums.length) {
     files['word/numbering.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="${NS.w}">${ctx.nums.map((n) => n.abstract).join('')}${ctx.nums.map((n) => n.num).join('')}</w:numbering>`);
+  }
+  if (history) {
+    files['customXml/item1.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ens:history xmlns:ens="${HISTORY_NS}">${history}</ens:history>`);
+    files['customXml/itemProps1.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ds:datastoreItem ds:itemID="{3B2A4B7E-5C1D-4E8F-9A10-0E15F1CE0001}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs><ds:schemaRef ds:uri="${HISTORY_NS}"/></ds:schemaRefs></ds:datastoreItem>`);
+    files['customXml/_rels/item1.xml.rels'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${base}/customXmlProps" Target="itemProps1.xml"/></Relationships>`);
   }
   for (const x of parts) {
     files[x.path] = strToU8(x.xml);

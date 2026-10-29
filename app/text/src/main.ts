@@ -23,6 +23,10 @@ import {
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type HfDoc, type PageSetup } from './docx';
 import { clearRecovery, listRecovery, saveRecovery, type RecoveryRecord } from './recovery';
 import * as desktop from './desktop';
+import * as V from './versions';
+import { askNamedVersion, fmtWhen, openHistory, type HistoryHost } from './history-ui';
+import { saveSettings, settings } from '../../table/src/settings';
+import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
@@ -47,6 +51,198 @@ function emptyDoc(): PMNode {
 
 const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf);
 const isDirty = () => !view.state.doc.eq(savedDoc) || metaKey() !== savedMeta;
+
+
+// ---------------------------------------------------------------- версии, журнал, защита от потерь
+
+/** История версий и журнал изменений: хранятся в самом файле (customXml), в снимке восстановления и здесь. */
+let hist: V.History = V.emptyHistory();
+let histRev = 0;
+let histCache = { rev: -1, text: '' };
+let osUser = '';
+void osUserName().then((n) => { osUser = n; });
+const me = () => settings.userName.trim() || osUser || 'Пользователь';
+let lastSnapDoc: PMNode | null = null;
+let lastVersionAt = Date.now();
+let dirtySince = 0;
+let lastSavedAt = 0;
+let lastReminder = 0;
+
+const histText = (): string => {
+  if (histCache.rev !== histRev) histCache = { rev: histRev, text: V.serialize(hist) };
+  return histCache.text;
+};
+
+/** Записать версию (если содержимое изменилось с последней). Та же версия получает новый вид (автоверсия → сохранение, именная). */
+function snap(kind: V.VersionKind, label = ''): V.Version | null {
+  const hash = V.docHash(view.state.doc, meta);
+  const last = hist.versions[hist.versions.length - 1];
+  if (last && last.hash === hash) {
+    if (kind === 'named' || kind === 'save') {
+      last.kind = kind === 'save' && last.kind === 'named' ? 'named' : kind;
+      last.t = Date.now();
+      last.u = me();
+      if (label) last.label = label;
+      histRev++;
+      return last;
+    }
+    return null;
+  }
+  const v = V.addVersion(hist, view.state.doc, meta, { u: me(), kind, label });
+  lastSnapDoc = view.state.doc;
+  lastVersionAt = Date.now();
+  V.trim(hist);
+  histRev++;
+  return v;
+}
+
+let saveToken: { versions: V.Version[]; log: V.LogEntry[] } | null = null;
+
+/** Собирает docx для записи на диск: версия «Сохранение», запись в журнале, история внутри файла. Проверяет файл чтением. */
+function buildDocx(name: string): Uint8Array {
+  const plain = exportDocx(view.state.doc, meta, name);
+  const back = importDocx(plain); // проверка: только что собранный файл должен читаться
+  const hash = V.docHash(back.doc, back.meta);
+  saveToken = { versions: hist.versions.map((v) => ({ ...v })), log: [...hist.log] };
+  const prevBase = hist.versions[hist.versions.length - 1];
+  const v = snap('save') ?? hist.versions[hist.versions.length - 1];
+  const idx = hist.versions.indexOf(v);
+  const base = hist.versions[idx - 1] ?? (prevBase !== v ? prevBase : undefined);
+  const ch = V.summarize(hist, base?.blocks ?? [], v.blocks, base?.words ?? 0, v.words);
+  if (base && JSON.stringify(base.meta) !== JSON.stringify(v.meta)) ch.notes.push('изменены параметры страницы или колонтитулы');
+  const last = hist.log[hist.log.length - 1];
+  const changed = ch.added || ch.removed || ch.changed || ch.notes.length;
+  if (changed || !last) V.addLog(hist, { u: me(), t: Date.now(), app: `ENS-Tekst ${APP_VERSION}`, kind: 'save', ch, h: hash });
+  else { last.h = hash; last.t = Date.now(); }
+  histRev++;
+  return exportDocx(view.state.doc, meta, name, histText());
+}
+
+/** Запись на диск не удалась: версия и запись журнала «Сохранение» не должны остаться. */
+function rollbackSave(): void {
+  if (!saveToken) return;
+  hist.versions = saveToken.versions;
+  hist.log = saveToken.log;
+  V.collect(hist);
+  saveToken = null;
+  histRev++;
+}
+
+/** Файл записан: отметка «когда сохранено», «последнее открытие» для вопроса «что изменилось». */
+function afterSaved(key: string): void {
+  saveToken = null;
+  lastSavedAt = Date.now();
+  dirtySince = 0;
+  markOpened(key);
+}
+
+function markOpened(key: string): void {
+  if (!key) return;
+  const all = { ...settings.lastOpened, [key]: Date.now() };
+  const keys = Object.keys(all).sort((a, b) => all[b] - all[a]).slice(0, 200);
+  settings.lastOpened = Object.fromEntries(keys.map((k) => [k, all[k]]));
+  saveSettings();
+}
+
+/** Открыт файл: прочитать историю, заметить правку в другой программе, предложить показать, что изменилось. */
+function adoptHistory(raw: string, info: { key: string; mtime?: number }): { text: string; buttons: { label: string; run: () => void }[] } | null {
+  hist = V.parse(raw);
+  histRev++;
+  lastSnapDoc = view.state.doc;
+  const hash = V.docHash(view.state.doc, meta);
+  const last = hist.log[hist.log.length - 1];
+  const since = settings.lastOpened[info.key] ?? 0;
+  markOpened(info.key);
+  let outside: V.Version | null = null;
+  if (last && last.h !== hash) {
+    const prev = hist.versions[hist.versions.length - 1];
+    outside = snap('outside', 'Состояние файла при открытии') ?? null;
+    const ch = V.summarize(hist, prev?.blocks ?? [], outside?.blocks ?? [], prev?.words ?? 0, outside?.words ?? 0);
+    V.addLog(hist, { u: 'неизвестно', t: info.mtime ?? Date.now(), app: 'другая программа', kind: 'outside', ch, h: hash });
+  } else if (!hist.versions.length) {
+    snap('open', 'Версия при первом открытии');
+  }
+  const fresh = hist.log.filter((e) => e.kind === 'save' && e.t > since && e.u !== me());
+  if (outside) {
+    return {
+      text: 'Файл менялся в другой программе после последнего сохранения в ENS-Tekst. Прежняя версия сохранена в истории.',
+      buttons: [{ label: 'Что изменилось', run: () => showHistory('versions', outside!.id, 'previous') }],
+    };
+  }
+  if (since && fresh.length) {
+    const who = [...new Set(fresh.map((e) => e.u))].join(', ');
+    const base = [...hist.versions].reverse().find((v) => v.t <= since) ?? hist.versions[0];
+    return {
+      text: `С вашего прошлого открытия документ сохраняли: ${who} (${fresh.length}).`,
+      buttons: [{ label: 'Что изменилось', run: () => showHistory('versions', base?.id) }],
+    };
+  }
+  return null;
+}
+
+function showHistory(tab: 'versions' | 'disk' = 'versions', select?: string, against?: 'current' | 'previous'): void {
+  openHistory(historyHost, tab, select, against);
+}
+
+const historyHost: HistoryHost = {
+  history: () => hist,
+  doc: () => view.state.doc,
+  meta: () => meta,
+  user: me,
+  docName: () => docName,
+  saveNamed(label) { snap('named', label); updateUi(); },
+  restore(v) {
+    snap('before', `Перед возвратом к версии от ${fmtWhen(v.t)}`);
+    const d = V.versionDoc(hist, v);
+    view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, d.content));
+    const vm = V.versionMeta(v);
+    meta.page = vm.page;
+    meta.defaults = vm.defaults;
+    meta.hf = vm.hf;
+    hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
+    applyPage();
+    replan(view);
+    updateUi();
+    toast('Документ возвращён к выбранной версии. Отменить можно Ctrl+Z.');
+  },
+  revert(range, nodes) {
+    snap('before', 'Перед возвратом фрагмента');
+    const doc = view.state.doc;
+    const offs: number[] = [];
+    doc.forEach((_n, off) => offs.push(off));
+    const at = (i: number) => (i >= offs.length ? doc.content.size : offs[i]);
+    const insert = nodes.length || range[1] < doc.childCount || range[0] > 0 ? nodes : [schema.nodes.paragraph.create()];
+    view.dispatch(view.state.tr.replaceWith(at(range[0]), at(range[1]), insert));
+  },
+  openCopy: (path) => { void desktop.openCopy(path); },
+};
+
+setInterval(() => {
+  // Автоверсия: раз в N минут, если с последней версии документ менялся.
+  if (view.state.doc !== lastSnapDoc && isDirty() && Date.now() - lastVersionAt >= Math.max(1, settings.autosaveMinutes) * 60_000) { snap('auto'); updateUi(); }
+  // Напоминание: давно не сохраняли.
+  const mins = settings.saveReminderMinutes;
+  if (mins > 0 && dirtySince && Date.now() - dirtySince >= mins * 60_000 && Date.now() - lastReminder >= mins * 60_000 && $('notice').hidden) {
+    lastReminder = Date.now();
+    showNotice(`Документ не сохранялся ${Math.round((Date.now() - dirtySince) / 60_000)} мин.`, [
+      { label: 'Сохранить', run: () => { hideNotice(); run('file.save'); } },
+      { label: 'Напомнить позже', run: hideNotice },
+    ]);
+  }
+  updateSavedStatus();
+}, 20_000);
+
+function updateSavedStatus(): void {
+  const el2 = $('status-saved');
+  if (isDirty()) {
+    const m = dirtySince ? Math.floor((Date.now() - dirtySince) / 60_000) : 0;
+    el2.textContent = m >= 1 ? `Не сохранено ${m} мин` : 'Есть несохранённые изменения';
+    el2.className = m >= Math.max(1, settings.saveReminderMinutes || 10) ? 'warn' : '';
+  } else {
+    el2.textContent = lastSavedAt ? `Сохранено в ${new Date(lastSavedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : '';
+    el2.className = '';
+  }
+}
 
 // ---------------------------------------------------------------- страница
 
@@ -323,6 +519,10 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
+  { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
+  { id: 'ver.named', label: 'Записать именную версию', run: () => askNamedVersion(historyHost) },
+  { id: 'ver.disk', label: 'Копии на диске', run: () => showHistory('disk') },
+  { id: 'ver.reminder', label: 'Напоминать о сохранении', run: (v) => { settings.saveReminderMinutes = Math.max(0, parseInt(v ?? '10', 10) || 0); saveSettings(); lastReminder = 0; } },
   { id: 'hf.editHeader', label: 'Верхний колонтитул', run: () => openHf('header') },
   { id: 'hf.editFooter', label: 'Нижний колонтитул', run: () => openHf('footer') },
   { id: 'hf.close', label: 'Закрыть колонтитулы', run: () => closeHf() },
@@ -334,6 +534,7 @@ register(
   { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
+  { id: 'file.history', label: 'История версий', run: () => showHistory() },
   { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => void printDocument() },
 );
 
@@ -485,6 +686,26 @@ const TABS: RibbonTab[] = [
     ],
   },
   {
+    id: 'versions', label: 'Версии',
+    groups: [
+      {
+        name: 'Версии',
+        items: [
+          { type: 'large', command: 'ver.history', icon: 'history', label: 'История версий' },
+          { type: 'large', command: 'ver.named', icon: 'save_edit', label: 'Записать версию' },
+        ],
+      },
+      { name: 'Копии на диске', items: [{ type: 'large', command: 'ver.disk', icon: 'folder_open', label: 'Копии на диске' }] },
+      {
+        name: 'Защита от потерь',
+        items: [{
+          type: 'select', command: 'ver.reminder', width: 210,
+          options: [{ value: '5', label: 'Напоминать о сохранении: 5 мин' }, { value: '10', label: 'Напоминать: 10 мин' }, { value: '20', label: 'Напоминать: 20 мин' }, { value: '0', label: 'Не напоминать' }],
+        }],
+      },
+    ],
+  },
+  {
     id: 'table', label: 'Таблица',
     groups: [
       {
@@ -538,6 +759,9 @@ const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefor
 function updateUi(): void {
   refreshRibbon();
   const dirty = isDirty();
+  if (dirty && !dirtySince) dirtySince = Date.now();
+  if (!dirty) dirtySince = 0;
+  updateSavedStatus();
   $('doc-name').textContent = `${docName}${dirty ? ' •' : ''} — ENS-Tekst`;
   document.title = `${docName}${dirty ? '*' : ''} — ENS-Tekst`;
   const canUndo = undoDepth(active().state) > 0;
@@ -556,6 +780,7 @@ function updateUi(): void {
   setSelect('para.style', String(currentLevel(active().state)));
   setSelect('para.line', String(paraAttr<number>(active().state, 'line') ?? meta.defaults.line));
   setSelect('page.orientation', meta.page.w > meta.page.h ? 'landscape' : 'portrait');
+  setSelect('ver.reminder', String(settings.saveReminderMinutes));
   setSelect('page.size', sizeKey());
   setSelect('page.margins', marginsKey());
 }
@@ -829,7 +1054,7 @@ function openFind(withReplace: boolean): void {
   if (withReplace) {
     kids.push(r, el('button', { textContent: 'Заменить', onclick: replaceOne }), el('button', {
       textContent: 'Заменить все',
-      onclick: () => { const n = replaceAll(view, r.value); sync(); toast(`Заменено: ${n}`); },
+      onclick: () => { if (findKey.getState(view.state)?.matches.length) snap('before', `Перед «Заменить все» (${q.value} → ${r.value})`); const n = replaceAll(view, r.value); sync(); toast(`Заменено: ${n}`); },
     }));
   }
   kids.push(el('button', { textContent: '✕', title: 'Закрыть (Esc)', onclick: closeFind }));
@@ -859,7 +1084,7 @@ function hideNotice(): void {
   $('notice').hidden = true;
 }
 
-function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false): void {
+function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false, hinfo?: { raw: string; key: string; mtime?: number }): void {
   if (hfSession) { hfSession.close(); hfSession = null; $('sheet').classList.remove('hf-mode'); }
   meta = newMetaValue;
   meta.hf ??= newMeta().hf;
@@ -870,12 +1095,19 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
   hideNotice();
+  dirtySince = 0;
+  lastSavedAt = 0;
+  const hn = hinfo ? adoptHistory(hinfo.raw, hinfo) : (() => { hist = V.emptyHistory(); histRev++; lastSnapDoc = view.state.doc; lastVersionAt = Date.now(); return null; })();
+  const notes: string[] = [];
+  const buttons: { label: string; run: () => void }[] = [{ label: 'Понятно', run: hideNotice }];
   if (meta.lossy.length) {
     const tail = desktop.isDesktop
       ? 'Поверх исходного файла сохранять нельзя — «Сохранить» предложит сохранить копию, в ней этих элементов не будет.'
       : 'Оригинал не изменится: «Сохранить» скачивает новую копию, в ней этих элементов не будет.';
-    showNotice(`В этой версии не перенесено: ${meta.lossy.join('; ')}. ${tail}`, [{ label: 'Понятно', run: hideNotice }]);
+    notes.push(`В этой версии не перенесено: ${meta.lossy.join('; ')}. ${tail}`);
   }
+  if (hn) { notes.push(hn.text); buttons.unshift(...hn.buttons); }
+  if (notes.length) showNotice(notes.join(' '), buttons);
   replan(view);
   updateStats();
   updateUi();
@@ -884,6 +1116,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
 
 function newDocument(): void {
   void clearRecovery(docId);
+  hist = V.emptyHistory();
   loadDoc(emptyDoc(), newMeta(), 'Документ1');
 }
 
@@ -908,9 +1141,9 @@ $('file-input').addEventListener('change', async (e) => {
   input.value = '';
   if (!f) return;
   try {
-    const { doc, meta: m } = importDocx(new Uint8Array(await f.arrayBuffer()));
+    const { doc, meta: m, history } = importDocx(new Uint8Array(await f.arrayBuffer()));
     void clearRecovery(docId);
-    loadDoc(doc, m, f.name.replace(/\.docx$/i, ''));
+    loadDoc(doc, m, f.name.replace(/\.docx$/i, ''), false, { raw: history, key: f.name, mtime: f.lastModified });
   } catch (err) {
     dialog((box, close) => {
       box.append(
@@ -932,8 +1165,7 @@ async function save(asNew = false): Promise<void> {
       if (!entered) return;
       name = entered;
     }
-    const bytes = exportDocx(view.state.doc, meta, name);
-    importDocx(bytes); // проверка: только что собранный файл должен читаться
+    const bytes = buildDocx(name);
     const blob = new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -946,9 +1178,11 @@ async function save(asNew = false): Promise<void> {
     savedDoc = view.state.doc;
     savedMeta = metaKey();
     void clearRecovery(docId);
+    afterSaved(`${name}.docx`);
     updateUi();
     toast(`Сохранено: ${name}.docx`);
   } catch (err) {
+    rollbackSave();
     dialog((box, close) => {
       box.append(
         el('h2', { textContent: 'Не удалось сохранить' }),
@@ -981,7 +1215,7 @@ function fileMenu(): void {
     box.append(
       el('h2', { textContent: 'Файл' }),
       el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('Печать…', 'file.print'),
+        item('Создать', 'file.new'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
     );
   });
@@ -1008,7 +1242,7 @@ function scheduleRecovery(): void {
 function persistRecovery(): void {
   if (desktop.isDesktop) { void desktop.persist(); return; }
   if (!isDirty()) { void clearRecovery(docId); return; }
-  void saveRecovery({ id: docId, name: docName, savedAt: Date.now(), doc: view.state.doc.toJSON(), meta });
+  void saveRecovery({ id: docId, name: docName, savedAt: Date.now(), doc: view.state.doc.toJSON(), meta, history: histText() });
 }
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistRecovery(); });
@@ -1040,6 +1274,7 @@ async function offerRecovery(): Promise<void> {
                 doc.check();
                 close();
                 loadDoc(doc, r.meta, `${r.name} (восстановлено)`, true);
+                if (r.history) { hist = V.parse(r.history); histRev++; }
                 void clearRecovery(r.id);
                 persistRecovery();
               } catch {
@@ -1096,22 +1331,22 @@ if (desktop.isDesktop) {
     name: () => docName,
     isDirty,
     isPristine: () => !isDirty() && view.state.doc.childCount === 1 && view.state.doc.firstChild!.content.size === 0,
-    docxBytes: (name) => {
-      const bytes = exportDocx(view.state.doc, meta, name);
-      importDocx(bytes); // проверка: только что собранный файл должен читаться
-      return bytes;
-    },
-    snapshotJson: () => JSON.stringify({ doc: view.state.doc.toJSON(), meta, name: docName }),
-    openBytes: (bytes, name) => {
-      const { doc, meta: m } = importDocx(bytes);
-      loadDoc(doc, m, name);
+    docxBytes: buildDocx,
+    rollbackSave,
+    afterSaved: (key) => afterSaved(key),
+    copyBytes: () => { snap('auto'); return exportDocx(view.state.doc, meta, docName, histText()); },
+    snapshotJson: () => JSON.stringify({ doc: view.state.doc.toJSON(), meta, name: docName, history: histText() }),
+    openBytes: (bytes, name, info) => {
+      const { doc, meta: m, history } = importDocx(bytes);
+      loadDoc(doc, m, name, false, info ? { raw: history, key: info.key, mtime: info.mtime } : undefined);
       return m.lossy;
     },
     restoreJson: (json, title) => {
-      const r = JSON.parse(json) as { doc: Record<string, unknown>; meta: DocMeta };
+      const r = JSON.parse(json) as { doc: Record<string, unknown>; meta: DocMeta; history?: string };
       const doc = schema.nodeFromJSON(r.doc);
       doc.check();
       loadDoc(doc, r.meta, title, true);
+      if (r.history) { hist = V.parse(r.history); histRev++; }
     },
     markSaved: (name) => {
       docName = name;
@@ -1128,6 +1363,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

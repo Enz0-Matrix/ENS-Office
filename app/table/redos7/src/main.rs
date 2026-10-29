@@ -33,6 +33,9 @@ mod ident {
 
 #[path = "../../src-tauri/src/files.rs"]
 mod files;
+#[path = "../../src-tauri/src/history.rs"]
+#[allow(dead_code)]
+mod history;
 #[path = "../../src-tauri/src/recovery.rs"]
 #[allow(dead_code)]
 mod recovery;
@@ -173,6 +176,7 @@ struct App {
     port: u16,
     browser: String,
     recovery: recovery::Recovery,
+    history: history::History,
     last_request: AtomicU64,
 }
 
@@ -223,6 +227,12 @@ fn api(app: &App, cmd: &str, headers: &[(String, String)], body: Vec<u8>) -> Rep
             let force = header("force").as_deref() == Some("1");
             json_reply(json!(files::save_atomic(Path::new(&path), &body, expected, force)?))
         }
+        "history_store" => {
+            let kind = files::percent_decode(&header("kind").ok_or("нет вида копии")?)?;
+            let name = files::percent_decode(&header("name").ok_or("нет имени")?)?;
+            json_reply(json!(app.history.store(&kind, &name, &body)?))
+        }
+        "history_list" => json_reply(json!(app.history.list()?)),
         "recovery_heartbeat" => json_reply(json!(rec.heartbeat()?)),
         "recovery_set_root" => json_reply(json!(rec.set_root(arg(&j(), "path")?)?)),
         "recovery_root" => json_reply(json!(rec.root_text())),
@@ -374,6 +384,7 @@ fn main() {
         port,
         browser: browser.clone(),
         recovery: recovery::Recovery::new(data_dir().join("recovery")),
+        history: history::History::new(data_dir().join("history")),
         last_request: AtomicU64::new(now_ms()),
     });
     let instance = json!({ "pid": std::process::id(), "port": port, "token": app.token });

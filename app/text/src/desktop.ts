@@ -7,6 +7,7 @@ import {
   setDialogProfile, startupFile, type RecoverableDoc,
 } from '../../table/src/platform';
 import { choose, dialog, el, toast } from './ui';
+import { historyStore } from '../../table/src/platform';
 import { APP_VERSION } from './version';
 
 export { isDesktop, openTarget };
@@ -20,8 +21,14 @@ export interface Host {
   docxBytes(name: string): Uint8Array;
   /** Снимок для восстановления: документ, страница, имя (JSON). */
   snapshotJson(): string;
-  /** Открывает docx в окне; возвращает, что не перенесено. */
-  openBytes(bytes: Uint8Array, name: string): string[];
+  /** Открывает docx в окне; возвращает, что не перенесено. info — откуда (для журнала и вопроса «что изменилось»). */
+  openBytes(bytes: Uint8Array, name: string, info?: { key: string; mtime?: number }): string[];
+  /** Версия и запись журнала при сохранении; null-результата нет: бросает, если файл не читается. */
+  rollbackSave(): void;
+  /** Файл записан на диск. */
+  afterSaved(key: string): void;
+  /** Копия документа для хранения на диске (с историей версий), без записи в журнал. */
+  copyBytes(): Uint8Array;
   /** Открывает снимок восстановления (документ остаётся несохранённым). */
   restoreJson(json: string, title: string): void;
   /** Документ сохранён под этим именем. */
@@ -109,7 +116,7 @@ export async function openPath(path: string): Promise<void> {
     const bytes = await readFile(path);
     await recovery.forget(file.id).catch(() => {});
     tracked = false;
-    const lossy = host.openBytes(bytes, baseName(path));
+    const lossy = host.openBytes(bytes, baseName(path), { key: path, mtime: info.modified_ms });
     file.path = path;
     file.modifiedMs = info.modified_ms;
     file.lossy = lossy;
@@ -130,6 +137,11 @@ export function detach(): void {
   file.lossySource = '';
   file.recoveredFrom = undefined;
   tracked = false;
+}
+
+/** Копия с диска (предыдущее сохранение, закрытое без сохранения) открывается в новом окне. */
+export async function openCopy(path: string): Promise<void> {
+  await openWindow(`open=${encodeURIComponent(path)}`, baseName(path));
 }
 
 // --- Сохранение ---
@@ -161,26 +173,33 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
     return false;
   }
   const expected = isNew ? 0 : file.modifiedMs;
-  try {
-    file.modifiedMs = await saveFile(path, bytes, expected);
-  } catch (e) {
-    if (String(e).includes('CHANGED_ON_DISK')) {
-      const overwrite = await ask(
-        `Файл «${baseName(path)}» изменён другой программой или пользователем после того, как вы его открыли.\n\n` +
-          'Перезаписать его вашей версией? Чтобы сохранить обе версии, выберите «Отмена» и затем «Сохранить как».',
-        'Перезаписать', 'Отмена');
-      if (!overwrite) return false;
-      try {
-        file.modifiedMs = await saveFile(path, bytes, 0, true);
-      } catch (e2) {
-        toast(String(e2));
+  const written = await (async (): Promise<boolean> => {
+    // Страховка: прежнее содержимое файла остаётся в профиле, пока его не затёрли.
+    await backupExisting(path);
+    try {
+      file.modifiedMs = await saveFile(path, bytes, expected);
+    } catch (e) {
+      if (String(e).includes('CHANGED_ON_DISK')) {
+        const overwrite = await ask(
+          `Файл «${baseName(path)}» изменён другой программой или пользователем после того, как вы его открыли.\n\n` +
+            'Перезаписать его вашей версией? Чтобы сохранить обе версии, выберите «Отмена» и затем «Сохранить как».',
+          'Перезаписать', 'Отмена');
+        if (!overwrite) return false;
+        try {
+          file.modifiedMs = await saveFile(path, bytes, 0, true);
+        } catch (e2) {
+          toast(String(e2));
+          return false;
+        }
+      } else {
+        toast(String(e));
         return false;
       }
-    } else {
-      toast(String(e));
-      return false;
     }
-  }
+    return true;
+  })();
+  if (!written) { host.rollbackSave(); return false; }
+  host.afterSaved(path);
   file.path = path;
   if (path !== file.lossySource) { file.lossy = []; file.lossySource = ''; }
   host.markSaved(baseName(path));
@@ -192,6 +211,14 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   await recovery.forget(file.id).catch(() => {});
   tracked = false;
   return true;
+}
+
+/** Прежнее содержимое файла — в «Копии на диске» (10 последних на файл): если перезапись оказалась ошибкой, оно не потеряно. */
+async function backupExisting(path: string): Promise<void> {
+  try {
+    await inspectFile(path); // нет файла — копировать нечего
+    await historyStore('backup', `${baseName(path)}.docx`, await readFile(path));
+  } catch { /* копия — страховка, а не условие сохранения */ }
 }
 
 // --- Восстановление после сбоя ---
@@ -213,7 +240,7 @@ export async function persist(): Promise<void> {
     // Запасная копия в docx: её откроет и другая версия программы (после обновления); не чаще раза в минуту.
     if (Date.now() - lastBackup > 60_000) {
       lastBackup = Date.now();
-      try { await recovery.snapshotXlsx(file.id, host.docxBytes(host.name())); } catch { /* основной снимок уже записан */ }
+      try { await recovery.snapshotXlsx(file.id, host.copyBytes()); } catch { /* основной снимок уже записан */ }
     }
   } catch (e) {
     toast(`Не удалось записать копию для восстановления: ${(e as Error)?.message ?? e}`);
@@ -326,6 +353,8 @@ async function setupClose(): Promise<void> {
         [{ id: 'save', label: 'Сохранить', primary: true }, { id: 'discard', label: 'Не сохранять' }, { id: 'cancel', label: 'Отмена' }]);
       if (c === 'cancel') return;
       if (c === 'save' && !(await save())) return;
+      // «Не сохранять» — частая ошибка: копия документа остаётся в «Копиях на диске» на 14 дней.
+      if (c === 'discard') await historyStore('discarded', `${host.name()}.docx`, host.copyBytes()).catch(() => {});
     }
     await recovery.forget(file.id).catch(() => {});
     if ((await getAllWebviewWindows()).length <= 1) await recovery.endSession().catch(() => {});

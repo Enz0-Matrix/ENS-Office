@@ -175,7 +175,7 @@ pub fn read_file(path: String) -> Result<Response, String> {
 }
 
 #[cfg(feature = "tauri-shell")]
-fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
+pub(crate) fn header(request: &Request<'_>, name: &str) -> Result<String, String> {
     let raw = request
         .headers()
         .get(name)
@@ -204,7 +204,7 @@ pub fn percent_decode(s: &str) -> Result<String, String> {
 }
 
 #[cfg(feature = "tauri-shell")]
-fn body(request: &Request<'_>) -> Result<Vec<u8>, String> {
+pub(crate) fn body(request: &Request<'_>) -> Result<Vec<u8>, String> {
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(bytes.clone()),
         InvokeBody::Json(_) => Err("ожидались байты файла".into()),

@@ -7,6 +7,8 @@ export interface Settings {
   expandEditor: boolean;
   /** Как часто сохранять снимок книги для восстановления после сбоя, минут. */
   autosaveMinutes: number;
+  /** ENS-Tekst: через сколько минут несохранённой работы напоминать о сохранении (0 — не напоминать). */
+  saveReminderMinutes: number;
   /** Распознавать даты при вводе в ячейки «Общий» («22.08» → дата). */
   recognizeDates: boolean;
   /** Сортировка: пустые ячейки в конце (как Excel), в начале или как ноль. */
@@ -48,7 +50,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], pinned: [], userName: '', chartTemplates: [], lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, saveReminderMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], pinned: [], userName: '', chartTemplates: [], lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {

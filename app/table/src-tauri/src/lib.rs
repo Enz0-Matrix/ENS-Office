@@ -3,6 +3,7 @@
 //! (files.rs) и восстановление после сбоя (recovery.rs).
 
 mod files;
+mod history;
 mod recovery;
 
 use std::sync::Mutex;
@@ -53,6 +54,8 @@ pub fn run() {
                 .app_local_data_dir()
                 .map(|p| p.join("recovery"))
                 .unwrap_or_else(|_| std::env::temp_dir().join("ens-office-recovery"));
+            // Копии на диске (предыдущие версии файлов, закрытое без сохранения) — рядом с папкой восстановления.
+            app.manage(history::History::new(root.with_file_name("history")));
             app.manage(recovery::Recovery::new(root));
             let file = std::env::args_os().skip(1).map(std::path::PathBuf::from).find(|p| p.is_file());
             app.manage(StartupFile(Mutex::new(file.map(|p| p.display().to_string()))));
@@ -74,6 +77,8 @@ pub fn run() {
             files::open_target,
             files::read_file,
             files::save_file,
+            history::history_store,
+            history::history_list,
             recovery::recovery_heartbeat,
             recovery::recovery_set_root,
             recovery::recovery_root,

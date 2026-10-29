@@ -105,6 +105,12 @@ export const openTarget = (target: string) => call<void>('open_target', { target
 export const osUserName = () => (isDesktop ? call<string>('user_name').catch(() => '') : Promise.resolve(''));
 export const startupFile = () => (isTauri ? invoke<string | null>('startup_file') : Promise.resolve(null));
 
+/** Копии на диске (только ENS-Tekst): предыдущие версии файлов и документы, закрытые без сохранения. */
+export interface HistoryEntry { kind: 'backup' | 'discarded'; name: string; path: string; ms: number; size: number }
+export const historyStore = (kind: HistoryEntry['kind'], name: string, bytes: Uint8Array) =>
+  call<string>('history_store', bytes, { kind: encodeURIComponent(kind), name: encodeURIComponent(name) });
+export const historyList = () => call<HistoryEntry[]>('history_list');
+
 export const inspectFile = (path: string) => call<FileInfo>('inspect_file', { path });
 
 export async function readFile(path: string): Promise<Uint8Array> {
