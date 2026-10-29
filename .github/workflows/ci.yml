@@ -41,6 +41,8 @@ jobs:
   desktop:
     name: Сборка ${{ matrix.name }}
     needs: engine
+    # Тег text-v* — выпуск ENS-Text: сборки ENS-Table для него не нужны.
+    if: ${{ !startsWith(github.ref, 'refs/tags/text-v') }}
     strategy:
       fail-fast: false
       matrix:
@@ -165,6 +167,11 @@ jobs:
         run: |
           npm i --no-save playwright@1.63.0
           npx playwright install --with-deps chromium
+      - name: Утилиты для проверок (pdfinfo — число страниц PDF, python-docx — чтение сохранённых файлов)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          pip install python-docx
       - name: Проверки в браузере
         working-directory: app/text
         run: npm test
