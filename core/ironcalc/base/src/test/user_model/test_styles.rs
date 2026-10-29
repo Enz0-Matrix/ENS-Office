@@ -538,3 +538,33 @@ fn font_size_errors() {
         Err("Invalid value for font size: '-1'.".to_string())
     );
 }
+
+#[test]
+fn test_ens_style_whole_sheet_is_fast_and_correct() {
+    use crate::constants::{LAST_COLUMN, LAST_ROW};
+    use crate::expressions::types::Area;
+    let mut model = new_empty_user_model();
+    for r in 1..=2000 {
+        for c in 1..=4 {
+            model.set_user_input(0, r, c, "x").unwrap();
+        }
+    }
+    // Строки со своим стилем (после операций над целыми строками): раньше каждая
+    // превращалась в 16 384 ячейки при выделении всего листа.
+    for r in 1..=300 {
+        let row = Area { sheet: 0, row: r, column: 1, width: LAST_COLUMN, height: 1 };
+        model.update_range_style(&row, "font.b", "true").unwrap();
+    }
+    let all = Area { sheet: 0, row: 1, column: 1, width: LAST_COLUMN, height: LAST_ROW };
+    let t = std::time::Instant::now();
+    model.update_range_style(&all, "alignment.vertical", "top").unwrap();
+    assert!(t.elapsed().as_secs() < 20, "слишком долго: {:?}", t.elapsed());
+    for (r, c) in [(1, 1), (300, 4), (301, 2), (2000, 3), (5000, 9), (400, 200)] {
+        let s = model.get_cell_style(0, r, c).unwrap();
+        assert_eq!(s.alignment.map(|a| a.vertical), Some(crate::types::VerticalAlignment::Top), "ячейка {r},{c}");
+    }
+    // Жирность в строках со стилем сохранилась.
+    assert!(model.get_cell_style(0, 10, 100).unwrap().font.b);
+    model.undo().unwrap();
+    assert_ne!(model.get_cell_style(0, 1, 1).unwrap().alignment.map(|a| a.vertical), Some(crate::types::VerticalAlignment::Top));
+}

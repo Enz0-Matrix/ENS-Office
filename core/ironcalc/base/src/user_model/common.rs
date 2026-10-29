@@ -1794,6 +1794,10 @@ impl<'a> UserModel<'a> {
         let mut diff_list = Vec::new();
         if range.row == 1 && range.height == LAST_ROW {
             // Full columns
+            // ENS-Office: «выделить всё» (Ctrl+A) — все столбцы сразу. Строки со своим
+            // стилем не разворачиваем в 16 384 ячеек каждая (это подвешивало программу):
+            // меняем стиль самой строки, а ячейки — только существующие.
+            let whole = range.column == 1 && range.width == LAST_COLUMN;
             let styled_rows = &self.model.workbook.worksheet(sheet)?.rows.clone();
             // We need all the rows in the column to update the style
             // NB: This is too much, this is all the rows that have values
@@ -1815,7 +1819,7 @@ impl<'a> UserModel<'a> {
                 });
 
                 // We need to update the styles in all cells that have a row style
-                for row_s in styled_rows.iter() {
+                for row_s in styled_rows.iter().filter(|_| !whole) {
                     let row = row_s.r;
                     self.update_single_cell_style(
                         sheet,
@@ -1827,6 +1831,9 @@ impl<'a> UserModel<'a> {
                     )?;
                 }
 
+                if whole {
+                    continue;
+                }
                 // Update style in all cells that have different styles
                 // FIXME: We need a better way to transverse of cells in a column
                 for &row in &data_rows {
@@ -1847,6 +1854,40 @@ impl<'a> UserModel<'a> {
                             &mut diff_list,
                         )?;
                     }
+                }
+            }
+            if whole {
+                for &row in &data_rows {
+                    let columns: Vec<i32> = self
+                        .model
+                        .workbook
+                        .worksheet(sheet)?
+                        .sheet_data
+                        .columns_in_row(row);
+                    for column in columns {
+                        self.update_single_cell_style(
+                            sheet,
+                            row,
+                            column,
+                            style_path,
+                            value,
+                            &mut diff_list,
+                        )?;
+                    }
+                }
+                for row_s in styled_rows.iter() {
+                    let row = row_s.r;
+                    let Some(old_style) = self.model.get_row_style(sheet, row)? else {
+                        continue;
+                    };
+                    let style = update_style(&old_style, style_path, value)?;
+                    self.model.set_row_style(sheet, row, &style)?;
+                    diff_list.push(Diff::SetRowStyle {
+                        sheet,
+                        row,
+                        old_value: Box::new(Some(old_style)),
+                        new_value: Box::new(style),
+                    });
                 }
             }
         } else if range.column == 1 && range.width == LAST_COLUMN {
