@@ -1294,13 +1294,21 @@ window.addEventListener('error', (e) => { if (/защищ/.test(e.message)) { e.
 
 
 /** Окно пароля. confirm — ввод дважды (защита), иначе один раз (снятие). Пустой пароль при защите — без пароля. null — отмена. */
-function askPassword(title: string, okLabel: string, confirm: boolean): Promise<string | null> {
+const PERMISSIONS: [string, string][] = [
+  ['formatCells', 'форматирование ячеек'], ['formatColumns', 'форматирование столбцов (ширина, скрытие)'], ['formatRows', 'форматирование строк (высота, скрытие)'],
+  ['insertColumns', 'вставку столбцов'], ['insertRows', 'вставку строк'], ['deleteColumns', 'удаление столбцов'], ['deleteRows', 'удаление строк'], ['sort', 'сортировку'],
+];
+/** Что отметили в окне защиты листа как разрешённое. */
+let chosenPermissions: string[] = [];
+
+function askPassword(title: string, okLabel: string, confirm: boolean, perms = false): Promise<string | null> {
   return new Promise((resolve) => {
     const overlay = $('recovery');
     overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
       ${confirm ? '<p>Пароль можно не задавать: тогда защиту снимет любой. Забытый пароль восстановить нельзя.</p>' : ''}
       <p><label>Пароль: <input type="password" data-f="pw" autocomplete="off" style="width:60%"></label></p>
       ${confirm ? '<p><label>Повторите: <input type="password" data-f="pw2" autocomplete="off" style="width:60%"></label></p>' : ''}
+      ${perms ? `<p>Разрешить всем пользователям листа:</p>${PERMISSIONS.map(([k, t]) => `<label style="display:block;margin-left:8px"><input type="checkbox" data-perm="${k}"> ${t}</label>`).join('')}` : ''}
       <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${okLabel}</button></div></div>`;
     overlay.hidden = false;
     const box = overlay.querySelector<HTMLElement>('.modal')!;
@@ -1309,6 +1317,7 @@ function askPassword(title: string, okLabel: string, confirm: boolean): Promise<
     const done = (v: string | null) => { overlay.hidden = true; focusGrid(); resolve(v); };
     const ok = () => {
       if (confirm && input('pw')!.value !== input('pw2')!.value) { showToast('Пароли не совпадают.'); return; }
+      chosenPermissions = [...box.querySelectorAll<HTMLInputElement>('[data-perm]')].filter((c) => c.checked).map((c) => c.dataset.perm!);
       done(input('pw')!.value);
     };
     box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') done(null); if (e.key === 'Enter') ok(); });
@@ -1330,9 +1339,9 @@ async function toggleSheetProtection(): Promise<void> {
       model.unprotectSheet(grid.sheet, pw);
       showToast('Защита листа снята.');
     } else {
-      const pw = await askPassword('Защитить лист', 'Защитить', true);
+      const pw = await askPassword('Защитить лист', 'Защитить', true, true);
       if (pw === null) return;
-      model.protectSheet(grid.sheet, pw, randomSalt());
+      model.protectSheet(grid.sheet, pw, randomSalt(), chosenPermissions);
       showToast('Лист защищён: менять можно только незащищённые ячейки.');
     }
   } catch (e) { showToast(String(e).replace(/^Error: /, '')); }
@@ -2749,7 +2758,19 @@ function openFormatCells(): void {
     model: () => model,
     sheet: () => grid.sheet,
     active: () => ({ row: s.row, column: s.column }),
-    apply: (code) => style('num_fmt', () => code),
+    apply: (code) => { if (code !== model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt) style('num_fmt', () => code); },
+    protection: {
+      get: () => model.getCellStyle(grid.sheet, s.row, s.column).style.protection ?? { locked: true, hidden: false },
+      set: (p) => {
+        const mark = model.undoMark();
+        try {
+          model.updateRangeStyle(selectionArea(), 'protection.locked', String(p.locked));
+          model.updateRangeStyle(selectionArea(), 'protection.hidden', String(p.hidden));
+        } catch (err) { showToast(String(err).replace(/^Error: /, '')); }
+        model.mergeUndoSince(mark);
+        grid.render();
+      },
+    },
   }, model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt).then(() => focusGrid());
 }
 

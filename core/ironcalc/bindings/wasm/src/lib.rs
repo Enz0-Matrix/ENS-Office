@@ -691,8 +691,8 @@ impl Model {
 
     /// ENS-Office: protects the sheet with a password (empty — none); `salt` — random bytes.
     #[wasm_bindgen(js_name = "protectSheet")]
-    pub fn protect_sheet(&mut self, sheet: u32, password: &str, salt: Vec<u8>) -> Result<(), JsError> {
-        self.model.protect_sheet(sheet, password, &salt).map_err(to_js_error)
+    pub fn protect_sheet(&mut self, sheet: u32, password: &str, salt: Vec<u8>, allowed: Vec<String>) -> Result<(), JsError> {
+        self.model.protect_sheet_with(sheet, password, &salt, &allowed).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = "unprotectSheet")]

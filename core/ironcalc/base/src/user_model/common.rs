@@ -1149,7 +1149,7 @@ impl<'a> UserModel<'a> {
     ///
     /// See also [`Model::insert_rows`].
     pub fn insert_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "insertRows")?;
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_rows(sheet, row, row_count)?;
 
@@ -1183,7 +1183,7 @@ impl<'a> UserModel<'a> {
         column: i32,
         column_count: i32,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "insertColumns")?;
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_columns(sheet, column, column_count)?;
 
@@ -1207,7 +1207,7 @@ impl<'a> UserModel<'a> {
     ///
     /// See also [`Model::delete_rows`].
     pub fn delete_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "deleteRows")?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all rows to be deleted
@@ -1283,7 +1283,7 @@ impl<'a> UserModel<'a> {
         column: i32,
         column_count: i32,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "deleteColumns")?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all columns to be deleted
@@ -1364,7 +1364,7 @@ impl<'a> UserModel<'a> {
         column_count: i32,
         delta: i32,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatColumns")?;
         if delta == 0 || column_count <= 0 {
             return Ok(());
         }
@@ -1409,7 +1409,7 @@ impl<'a> UserModel<'a> {
         row_count: i32,
         delta: i32,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatRows")?;
         if delta == 0 || row_count <= 0 {
             return Ok(());
         }
@@ -1456,7 +1456,7 @@ impl<'a> UserModel<'a> {
         column_end: i32,
         width: f64,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatColumns")?;
         let mut diff_list = Vec::new();
         for column in column_start..=column_end {
             let old_value = self.model.get_column_width(sheet, column)?;
@@ -1483,7 +1483,7 @@ impl<'a> UserModel<'a> {
         column_end: i32,
         hidden: bool,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatColumns")?;
         let mut diff_list = Vec::new();
         for column in column_start..=column_end {
             let old_value = self
@@ -1552,7 +1552,7 @@ impl<'a> UserModel<'a> {
         row_end: i32,
         hidden: bool,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatRows")?;
         let mut diff_list = Vec::new();
         for row in row_start..=row_end {
             let old_value = self.model.workbook.worksheet(sheet)?.is_row_hidden(row)?;
@@ -1610,7 +1610,7 @@ impl<'a> UserModel<'a> {
         row_end: i32,
         height: f64,
     ) -> Result<(), String> {
-        self.guard_sheet(sheet)?;
+        self.guard_perm(sheet, "formatRows")?;
         let mut diff_list = Vec::new();
         for row in row_start..=row_end {
             let old_value = self.model.get_row_height(sheet, row)?;
@@ -1786,7 +1786,9 @@ impl<'a> UserModel<'a> {
         style_path: &str,
         value: &str,
     ) -> Result<(), String> {
-        self.guard_area(range)?;
+        if self.guard_perm(range.sheet, "formatCells").is_err() {
+            self.guard_area(range)?;
+        }
         let sheet = range.sheet;
         let mut diff_list = Vec::new();
         if range.row == 1 && range.height == LAST_ROW {

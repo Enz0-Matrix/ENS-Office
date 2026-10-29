@@ -142,7 +142,8 @@ export interface Model {
   isSheetPasswordProtected(sheet: number): boolean;
   setSheetProtected(sheet: number, on: boolean): void;
   /** Защита листа с паролем (пустой пароль — без пароля); salt — случайные байты. */
-  protectSheet(sheet: number, password: string, salt: Uint8Array): void;
+  /** allowed — что остаётся разрешённым: formatCells, formatColumns, formatRows, insertColumns, insertRows, deleteColumns, deleteRows, sort. */
+  protectSheet(sheet: number, password: string, salt: Uint8Array, allowed: string[]): void;
   /** Снять защиту листа; с паролем — нужен верный пароль (иначе ошибка «Неверный пароль»). */
   unprotectSheet(sheet: number, password: string): void;
   isStructurePasswordProtected(): boolean;

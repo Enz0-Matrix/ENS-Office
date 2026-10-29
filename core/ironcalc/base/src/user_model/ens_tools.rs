@@ -419,7 +419,9 @@ impl UserModel<'_> {
     /// visible rows are reordered among themselves, as Excel does with an
     /// active filter.
     pub fn sort_range_by_rows(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks, skip_hidden: bool) -> Result<(), String> {
-        self.guard_area(area)?;
+        if self.guard_perm(area.sheet, "sort").is_err() {
+            self.guard_area(area)?;
+        }
         let sheet = area.sheet;
         if keys.is_empty() {
             return Ok(());

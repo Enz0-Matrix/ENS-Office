@@ -27,9 +27,18 @@ impl UserModel<'_> {
     /// Protects the sheet; with a non-empty `password` the removal of the protection asks for it
     /// (`salt` — random bytes from the caller); an undoable step.
     pub fn protect_sheet(&mut self, sheet: u32, password: &str, salt: &[u8]) -> Result<(), String> {
+        self.protect_sheet_with(sheet, password, salt, &[])
+    }
+
+    /// As [`Self::protect_sheet`], and `allowed` lists what stays permitted on the protected sheet, from
+    /// [`SHEET_PERMISSIONS`] (`formatCells`, `insertRows`, …).
+    pub fn protect_sheet_with(&mut self, sheet: u32, password: &str, salt: &[u8], allowed: &[String]) -> Result<(), String> {
         let ws = self.model.workbook.worksheet(sheet)?;
         let old_value = (ws.ens_protected, ws.ens_protect_attrs.clone());
-        let attrs = if password.is_empty() { String::new() } else { password_attrs(password, salt) };
+        let mut attrs: String = SHEET_PERMISSIONS.iter().filter(|p| allowed.iter().any(|a| a == *p)).map(|p| format!(" {p}=\"0\"")).collect();
+        if !password.is_empty() {
+            attrs.push_str(&password_attrs(password, salt));
+        }
         let new_value = (true, attrs);
         if old_value == new_value {
             return Ok(());
@@ -51,6 +60,20 @@ impl UserModel<'_> {
         self.write_sheet_protected(sheet, new_value.clone())?;
         self.push_diff_list(vec![Diff::SetSheetProtected { sheet, new_value, old_value }]);
         Ok(())
+    }
+
+    /// What stays permitted on the protected sheet (names from [`SHEET_PERMISSIONS`]).
+    pub fn get_sheet_permissions(&self, sheet: u32) -> Result<Vec<String>, String> {
+        let attrs = &self.model.workbook.worksheet(sheet)?.ens_protect_attrs;
+        Ok(SHEET_PERMISSIONS.iter().filter(|p| attr(attrs, p) == Some("0")).map(|p| p.to_string()).collect())
+    }
+
+    /// Error if the sheet is protected and `permission` is not among the permitted actions.
+    pub(crate) fn guard_perm(&self, sheet: u32, permission: &str) -> Result<(), String> {
+        match self.model.workbook.worksheet(sheet) {
+            Ok(ws) if ws.ens_protected && attr(&ws.ens_protect_attrs, permission) != Some("0") => self.guard_sheet(sheet),
+            _ => Ok(()),
+        }
     }
 
     /// Protects the sheet without a password or removes a protection that has none.
@@ -172,6 +195,10 @@ impl UserModel<'_> {
                 .is_some_and(|p| p.hidden)
     }
 }
+
+/// What a protected sheet can still allow (Excel's names): format cells, columns, rows; insert and delete columns
+/// and rows; sort.
+pub const SHEET_PERMISSIONS: [&str; 8] = ["formatCells", "formatColumns", "formatRows", "insertColumns", "insertRows", "deleteColumns", "deleteRows", "sort"];
 
 const SPIN_COUNT: u32 = 100_000;
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

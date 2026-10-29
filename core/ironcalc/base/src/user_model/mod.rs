@@ -26,4 +26,5 @@ pub use ui::SelectedView;
 pub use clipboard::ClipboardData;
 pub use common::BorderArea;
 pub use scoped_undo::{ScopedResult, UndoScope};
+pub use ens_protect::SHEET_PERMISSIONS;
 pub use ens_tools::{parse_chart_range, parse_filter_range, Blanks, FindOptions, FoundCell, FILTER_DATABASE};

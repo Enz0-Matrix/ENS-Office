@@ -459,3 +459,30 @@ fn test_ens_objects_shift_with_rows_and_columns() {
     assert!(model.get_comment(0, 7, 2).unwrap().is_some());
     assert_eq!(model.get_charts(0).unwrap()[0].column, 5);
 }
+
+// ENS-Office: what a protected sheet still allows (formatting, inserting rows…), round trip.
+#[test]
+fn test_ens_protection_permissions() {
+    use ironcalc_base::expressions::types::Area;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    let a1 = Area { sheet: 0, row: 1, column: 1, width: 1, height: 1 };
+    model.protect_sheet_with(0, "", &[], &["formatCells".to_string(), "insertRows".to_string()]).unwrap();
+    assert_eq!(model.get_sheet_permissions(0).unwrap(), vec!["formatCells", "insertRows"]);
+    assert!(model.update_range_style(&a1, "font.b", "true").is_ok());
+    assert!(model.insert_rows(0, 1, 1).is_ok());
+    assert!(model.delete_rows(0, 1, 1).is_err());
+    assert!(model.set_columns_width(0, 1, 1, 50.0).is_err());
+    assert!(model.set_user_input(0, 2, 1, "y").is_err());
+    let name = "temp_ens_permissions.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains(r#"formatCells="0""#) && sheet.contains(r#"insertRows="0""#), "{sheet}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_sheet_permissions(0).unwrap(), vec!["formatCells", "insertRows"]);
+}
