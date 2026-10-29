@@ -72,9 +72,27 @@ out = os.path.join(os.path.dirname(__file__), 'fixtures')
 os.makedirs(out, exist_ok=True)
 d.save(os.path.join(out, 'sample.docx'))
 
-# Документ с колонтитулом: версия 0.1 колонтитулы не переносит и должна об этом сказать.
+# Документ с колонтитулами: верхний, нижний с номером страницы и числом страниц, особый на первой странице.
+def field(p, instr, cached='1'):
+    f = OxmlElement('w:fldSimple'); f.set(qn('w:instr'), f' {instr} ')
+    r = OxmlElement('w:r'); t = OxmlElement('w:t'); t.text = cached; r.append(t); f.append(r)
+    p._p.append(f)
+
 d2 = Document()
-d2.sections[0].header.paragraphs[0].text = 'Колонтитул документа'
-d2.add_paragraph('Текст с колонтитулом')
+sec2 = d2.sections[0]
+sec2.different_first_page_header_footer = True
+sec2.header.paragraphs[0].text = 'Колонтитул документа'
+sec2.first_page_header.paragraphs[0].text = 'Титульный лист'
+fp = sec2.footer.paragraphs[0]
+fp.text = 'Страница '
+field(fp, 'PAGE'); fp.add_run(' из '); field(fp, 'NUMPAGES', '9')
+fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+d2.add_paragraph('Текст с колонтитулами')
 d2.save(os.path.join(out, 'header.docx'))
+
+# Документ со сноской: версия 0.1 сноски не переносит и должна об этом сказать.
+d3 = Document()
+p3 = d3.add_paragraph('Текст со сноской')
+r3 = OxmlElement('w:r'); fr = OxmlElement('w:footnoteReference'); fr.set(qn('w:id'), '1'); r3.append(fr); p3._p.append(r3)
+d3.save(os.path.join(out, 'lossy.docx'))
 print('ok')

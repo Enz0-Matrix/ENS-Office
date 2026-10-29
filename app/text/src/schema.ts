@@ -123,6 +123,15 @@ const nodes: Record<string, NodeSpec> = {
       return ['img', a];
     },
   },
+  /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
+  field: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { kind: { default: 'page' } },
+    parseDOM: [{ tag: 'span.fld', getAttrs: (d) => ({ kind: (d as HTMLElement).getAttribute('data-kind') === 'pages' ? 'pages' : 'page' }) }],
+    toDOM: (n) => ['span', { class: 'fld', 'data-kind': n.attrs.kind, title: n.attrs.kind === 'pages' ? 'Число страниц' : 'Номер страницы' }, n.attrs.kind === 'pages' ? '‹N›' : '‹№›'],
+  },
   hard_break: {
     inline: true,
     group: 'inline',

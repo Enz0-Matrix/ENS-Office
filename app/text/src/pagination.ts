@@ -16,8 +16,8 @@ import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { PageSetup } from './docx';
 
 export const PX = 4 / 3;
-/** Зазор между листами на экране, px. */
-export const PAGE_GAP = 16;
+/** Зазор между листами на экране, px (при печати 0: страницы вплотную, как на бумаге). */
+export const layout = { gap: 16 };
 
 export interface Geo {
   /** Высота листа, px. */
@@ -34,7 +34,7 @@ export function geometry(p: PageSetup): Geo {
   const H = p.h * PX;
   const top = p.top * PX;
   const bottom = p.bottom * PX;
-  return { H, top, bottom, C: Math.max(40, H - top - bottom), P: H + PAGE_GAP };
+  return { H, top, bottom, C: Math.max(40, H - top - bottom), P: H + layout.gap };
 }
 
 interface Spec { pg: 'pad' | 'split' | 'row'; h: number; key?: string }

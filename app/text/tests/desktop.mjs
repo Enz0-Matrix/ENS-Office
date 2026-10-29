@@ -104,7 +104,7 @@ let inst = await instance();
 await waitUp(inst);
 
 copyFileSync(join(here, 'fixtures', 'sample.docx'), join(docs, 'sample.docx'));
-copyFileSync(join(here, 'fixtures', 'header.docx'), join(docs, 'header.docx'));
+copyFileSync(join(here, 'fixtures', 'lossy.docx'), join(docs, 'lossy.docx'));
 writeFileSync(join(docs, 'книга.docx'), readFileSync(join(here, 'fixtures', 'sample.docx')));
 writeFileSync(join(docs, 'not.docx'), 'просто текст, а не архив');
 
@@ -132,7 +132,7 @@ await test('файл не docx: понятное объяснение, доку�
 });
 
 await test('документ с потерями: «Сохранить» поверх исходного не пишет, «Сохранить как» пишет копию', async () => {
-  const path = join(docs, 'header.docx');
+  const path = join(docs, 'lossy.docx');
   const before = readFileSync(path);
   const p = await openApp(inst, `open=${encodeURIComponent(path)}`);
   await p.waitForSelector('#notice:not([hidden])');

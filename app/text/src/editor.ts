@@ -348,6 +348,14 @@ export function insertImage(src: string, width: number, height: number, alt = ''
   };
 }
 
+/** Поле «номер страницы» / «число страниц» в месте курсора. */
+export function insertField(kind: 'page' | 'pages'): Command {
+  return (state, dispatch) => {
+    if (dispatch) dispatch(state.tr.replaceSelectionWith(schema.nodes.field.create({ kind }), false).scrollIntoView());
+    return true;
+  };
+}
+
 export function setLink(href: string): Command {
   return (state, dispatch) => {
     const type = schema.marks.link;

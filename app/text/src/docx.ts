@@ -1,6 +1,6 @@
 // Чтение и запись .docx (Office Open XML): абзацы, заголовки, начертание, шрифты и цвета,
 // списки, таблицы, изображения, гиперссылки, разрывы страниц, размер страницы и поля.
-// Чего версия 0.1 не умеет (колонтитулы, сноски, примечания, фигуры, формулы, разделы…),
+// Чего версия 0.1 не умеет (сноски, примечания, фигуры, формулы, разделы…),
 // не пропадает молча: список попадает в DocMeta.lossy, и программа не даёт сохранить поверх
 // исходного файла (ADR-005: исходный файл не портим).
 
@@ -11,9 +11,25 @@ import { schema } from './schema';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
+/** Содержимое колонтитула — документ ProseMirror в виде JSON (null — пусто). */
+export type HfDoc = Record<string, unknown> | null;
+export interface HeaderFooter {
+  header: HfDoc;
+  footer: HfDoc;
+  /** Колонтитулы первой страницы (если differentFirst). */
+  firstHeader: HfDoc;
+  firstFooter: HfDoc;
+  differentFirst: boolean;
+  /** Расстояние от края листа до колонтитула, pt. */
+  headerDist: number;
+  footerDist: number;
+}
+export const emptyHf = (): HeaderFooter => ({ header: null, footer: null, firstHeader: null, firstFooter: null, differentFirst: false, headerDist: 35.4, footerDist: 35.4 });
+
 export interface DocMeta {
   page: PageSetup;
   defaults: DocDefaults;
+  hf: HeaderFooter;
   /** Что при открытии не удалось перенести (человекочитаемо, с количеством). */
   lossy: string[];
 }
@@ -23,13 +39,14 @@ export const A4: PageSetup = { w: 595.3, h: 841.9, top: 56.7, bottom: 56.7, left
 export const DEFAULTS: DocDefaults = { font: 'Times New Roman', size: 12, line: 1, before: 0, after: 0 };
 
 export function newMeta(): DocMeta {
-  return { page: { ...A4 }, defaults: { ...DEFAULTS }, lossy: [] };
+  return { page: { ...A4 }, defaults: { ...DEFAULTS }, hf: emptyHf(), lossy: [] };
 }
 
 const NS = {
   w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
   r: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
 };
+const REL_BASE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const REL_HYPERLINK = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 
@@ -152,7 +169,7 @@ interface Ctx {
   /** Форматирование знаков из стиля текущего абзаца: под прямым форматированием прогона. */
   baseR: RFmt;
   /** Стек сложных полей (TOC, PAGE, HYPERLINK…): в какой фазе, и ссылка, если поле — HYPERLINK. */
-  fields: { phase: 'instr' | 'result'; instr: string; href?: string }[];
+  fields: { phase: 'instr' | 'result'; instr: string; href?: string; suppress?: boolean }[];
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -317,8 +334,13 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         else if (t === 'separate' && field) {
           field.phase = 'result';
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
+          const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
           if (m) field.href = m[1];
-          else if (!/^\s*HYPERLINK/i.test(field.instr)) lose(ctx, 'поля (оглавление, номера страниц и т. п. стали обычным текстом)');
+          else if (pg) {
+            // Номер страницы и число страниц остаются полями; сохранённое в файле число отбрасываем.
+            acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marks));
+            field.suppress = true;
+          } else if (!/^\s*HYPERLINK/i.test(field.instr)) lose(ctx, 'поля (оглавление, дата и т. п. стали обычным текстом)');
         } else if (t === 'end') ctx.fields.pop();
         break;
       }
@@ -326,12 +348,12 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         if (field) field.instr += c.textContent ?? '';
         break;
       case 't':
-        if (!field || field.phase === 'result') addText(acc, c.textContent ?? '', field?.href && !href ? marksFor(ctx, fmt, field.href) : marks);
+        if (!field || (field.phase === 'result' && !field.suppress)) addText(acc, c.textContent ?? '', field?.href && !href ? marksFor(ctx, fmt, field.href) : marks);
         break;
       case 'delText':
         break;
       case 'tab':
-        if (!field || field.phase === 'result') addText(acc, '\t', marks);
+        if (!field || (field.phase === 'result' && !field.suppress)) addText(acc, '\t', marks);
         break;
       case 'noBreakHyphen':
         addText(acc, '‑', marks);
@@ -342,12 +364,12 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
           acc.nodes = [];
           acc.breakNext = true;
-        } else if (!field || field.phase === 'result') {
+        } else if (!field || (field.phase === 'result' && !field.suppress)) {
           acc.nodes.push(schema.nodes.hard_break.create(null, null, marks));
         }
         break;
       case 'drawing':
-        if (!field || field.phase === 'result') parseDrawing(ctx, c, acc, marks);
+        if (!field || (field.phase === 'result' && !field.suppress)) parseDrawing(ctx, c, acc, marks);
         break;
       case 'pict':
       case 'object': {
@@ -401,7 +423,13 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
       case 'fldSimple': {
         const instr = attr(c, 'instr') ?? '';
         const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(instr);
-        if (!m) lose(ctx, 'поля (оглавление, номера страниц и т. п. стали обычным текстом)');
+        const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(instr);
+        if (pg) {
+          const run = kid(c, 'r');
+          acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
+          break;
+        }
+        if (!m) lose(ctx, 'поля (оглавление, дата и т. п. стали обычным текстом)');
         walkInline(ctx, c, acc, m ? m[1] : href);
         break;
       }
@@ -639,10 +667,6 @@ export function importDocx(bytes: Uint8Array): Imported {
     lossy: new Map(), baseR: {}, fields: [],
   };
   for (const [, rel] of ctx.rels) {
-    if (/\/(header|footer)\d*$/.test(rel.type) && files[rel.target]) {
-      const text = descendants(parseXml(strFromU8(files[rel.target])).documentElement, 't').map((t) => t.textContent).join('').trim();
-      if (text) lose(ctx, 'колонтитулы');
-    }
     if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
     if (/\/(footnotes|endnotes)$/.test(rel.type)) { /* считаем по ссылкам в тексте */ }
   }
@@ -668,6 +692,7 @@ export function importDocx(bytes: Uint8Array): Imported {
   if (last.type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
 
   const page = { ...A4 };
+  const hf = emptyHf();
   const sect = kid(body, 'sectPr');
   if (sect) {
     const sz = kid(sect, 'pgSz');
@@ -684,13 +709,30 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.bottom = mv('bottom', page.bottom);
     page.left = mv('left', page.left);
     page.right = mv('right', page.right);
-    if (kids(sect, 'headerReference').length || kids(sect, 'footerReference').length) {
-      // Учтено выше только если колонтитул непустой; пустые не считаем потерей.
-    }
+    const dist = (n: string, fallback: number) => { const v = num(attr(mar, n)); return v != null && v >= 0 ? v / 20 : fallback; };
+    hf.headerDist = dist('header', hf.headerDist);
+    hf.footerDist = dist('footer', hf.footerDist);
+    const part = (tag: string, type: string): HfDoc => {
+      const ref = kids(sect, tag).find((r) => (attr(r, 'type') ?? 'default') === type);
+      const rel = ref ? ctx.rels.get(relAttr(ref, 'id') ?? '') : undefined;
+      if (!rel || !files[rel.target]) return null;
+      const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [] };
+      const blocks = walkBlocks(sub, parseXml(strFromU8(files[rel.target])).documentElement);
+      if (!blocks.length) return null;
+      if (blocks[blocks.length - 1].type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
+      const d = schema.nodes.doc.create(null, blocks);
+      return d.childCount === 1 && d.firstChild!.content.size === 0 ? null : (d.toJSON() as HfDoc);
+    };
+    hf.header = part('headerReference', 'default');
+    hf.footer = part('footerReference', 'default');
+    hf.differentFirst = flag(kid(sect, 'titlePg')) === true;
+    hf.firstHeader = part('headerReference', 'first');
+    hf.firstFooter = part('footerReference', 'first');
+    if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
     if (kid(sect, 'cols') && (num(attr(kid(sect, 'cols'), 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
-  return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, lossy } };
+  return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy } };
 }
 
 // ---------------------------------------------------------------- экспорт
@@ -704,7 +746,8 @@ interface ExportCtx {
   media: { name: string; bytes: Uint8Array; ext: string }[];
   nums: { abstract: string; num: string }[];
   nextRel: number;
-  nextDoc: number;
+  /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
+  docIds: { n: number };
   linkIds: Map<string, string>;
 }
 
@@ -755,7 +798,7 @@ function imageXml(ctx: ExportCtx, node: PMNode): string {
   const id = relId(ctx, REL_IMAGE, `media/${name}`);
   const cx = Math.round((node.attrs.width || 200) * 9525);
   const cy = Math.round((node.attrs.height || 150) * 9525);
-  const n = ctx.nextDoc++;
+  const n = ctx.docIds.n++;
   return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>` +
     `<wp:docPr id="${n}" name="Рисунок ${n}" descr="${esc(node.attrs.alt || '')}"/>` +
     '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
@@ -786,7 +829,11 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       }
     }
     const rPr = rPrXml(child.marks, !!link);
-    if (child.type.name === 'text') {
+    if (child.type.name === 'field') {
+      closeLink();
+      const kind = child.attrs.kind === 'pages' ? 'NUMPAGES' : 'PAGE';
+      out += `<w:fldSimple w:instr=" ${kind} "><w:r>${rPr}<w:t>1</w:t></w:r></w:fldSimple>`;
+    } else if (child.type.name === 'text') {
       // Табуляции и переводы строк внутри текста — отдельные элементы.
       let buf = '';
       const flush = () => { if (buf) { out += `<w:r>${rPr}<w:t xml:space="preserve">${esc(buf)}</w:t></w:r>`; buf = ''; } };
@@ -963,12 +1010,37 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, nextDoc: 1, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
   let body = blocksXml(ctx, doc);
   if (body.endsWith('</w:tbl>')) body += '<w:p/>';
   const p = meta.page;
-  const sect = `<w:sectPr><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
-    `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>`;
+  const hf = meta.hf ?? emptyHf();
+  // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
+  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
+  const hfRef = (json: HfDoc, kind: 'header' | 'footer', type: 'default' | 'first'): string => {
+    if (!json) return '';
+    const node = schema.nodeFromJSON(json);
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1 };
+    let inner = blocksXml(sub, node);
+    if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
+    const tag = kind === 'header' ? 'hdr' : 'ftr';
+    const n = parts.filter((x) => x.kind === kind).length + 1;
+    const path = `word/${kind}${n}.xml`;
+    parts.push({
+      path, tag, kind, rels: sub.rels,
+      xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<w:${tag} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+        `${inner}</w:${tag}>`,
+    });
+    const id = relId(ctx, `${REL_BASE}/${kind}`, `${kind}${n}.xml`);
+    return `<w:${kind}Reference w:type="${type}" r:id="${id}"/>`;
+  };
+  const refs = hfRef(hf.header, 'header', 'default') + hfRef(hf.footer, 'footer', 'default') +
+    (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
+  const sect = `<w:sectPr>${refs}<w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
+    `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
+    `${hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
   const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
@@ -990,6 +1062,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' +
+    parts.map((x) => `<Override PartName="/${x.path}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${x.kind}+xml"/>`).join('') +
     (ctx.nums.length ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : '') +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
     '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>';
@@ -1011,6 +1084,13 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = ''): Uint8Array {
   };
   if (ctx.nums.length) {
     files['word/numbering.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="${NS.w}">${ctx.nums.map((n) => n.abstract).join('')}${ctx.nums.map((n) => n.num).join('')}</w:numbering>`);
+  }
+  for (const x of parts) {
+    files[x.path] = strToU8(x.xml);
+    if (x.rels.length) {
+      files[`word/_rels/${x.path.split('/').pop()}.rels`] = strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        x.rels.map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${esc(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('') + '</Relationships>');
+    }
   }
   for (const m of ctx.media) files[`word/media/${m.name}`] = [m.bytes, { level: 0 }];
   return zipSync(files, { level: 6 });

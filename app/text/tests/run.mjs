@@ -179,23 +179,40 @@ await test('docx: образец открывается; сохранение и
   await p.context().close();
 });
 
-await test('docx: колонтитулы не переносятся — программа предупреждает', async () => {
+await test('docx: колонтитулы и поля номера страницы читаются и пишутся, особый колонтитул первой страницы', async () => {
   const p = await page();
-  const lossy = await p.evaluate((arr) => window.ens.importDocx(new Uint8Array(arr)).meta.lossy, fixture('header.docx'));
-  ok(lossy.some((x) => x.includes('колонтитулы')), `lossy: ${JSON.stringify(lossy)}`);
+  const r = await p.evaluate((arr) => {
+    const E = window.ens;
+    const a = E.importDocx(new Uint8Array(arr));
+    const b = E.importDocx(E.exportDocx(a.doc, a.meta, 'x'));
+    return { hf: a.meta.hf, back: b.meta.hf, lossy: a.meta.lossy };
+  }, fixture('header.docx'));
+  eq(r.lossy, [], 'потерь нет');
+  const s = JSON.stringify(r.hf);
+  ok(s.includes('Колонтитул документа') && s.includes('Титульный лист'), 'тексты колонтитулов');
+  ok(s.includes('"kind":"page"') && s.includes('"kind":"pages"'), 'поля номера и числа страниц');
+  eq(r.hf.differentFirst, true, 'особый колонтитул первой страницы');
+  eq(r.back, r.hf, 'колонтитулы после круга docx');
+  await p.context().close();
+});
+
+await test('docx: сноски не переносятся — программа предупреждает', async () => {
+  const p = await page();
+  const lossy = await p.evaluate((arr) => window.ens.importDocx(new Uint8Array(arr)).meta.lossy, fixture('lossy.docx'));
+  ok(lossy.some((x) => x.includes('сноски')), `lossy: ${JSON.stringify(lossy)}`);
   await p.context().close();
 });
 
 await test('открытие через окно «Открыть»; не-docx — понятная ошибка, документ цел', async () => {
   const p = await page();
-  await p.setInputFiles('#file-input', join(here, 'fixtures', 'header.docx'));
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'lossy.docx'));
   await p.waitForSelector('#notice:not([hidden])');
-  ok((await p.textContent('#notice')).includes('колонтитулы'), 'уведомление о потерях');
-  ok((await text(p)).includes('Текст с колонтитулом'), 'текст открыт');
+  ok((await p.textContent('#notice')).includes('сноски'), 'уведомление о потерях');
+  ok((await text(p)).includes('Текст со сноской'), 'текст открыт');
   await p.setInputFiles('#file-input', { name: 'письмо.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('это не zip') });
   await p.waitForSelector('#dialog:not([hidden])');
   ok((await p.textContent('#dialog')).includes('Не удалось открыть файл'), 'сообщение об ошибке');
-  ok((await text(p)).includes('Текст с колонтитулом'), 'прежний документ не тронут');
+  ok((await text(p)).includes('Текст со сноской'), 'прежний документ не тронут');
   await p.context().close();
 });
 
@@ -443,6 +460,96 @@ await test('вёрстка: большой документ (3000 абзацев
   });
   console.log(`      загрузка 3000 абзацев ≈ ${Math.round(ms)} мс, страниц ${await p.evaluate(() => window.ens.pageCount())}, расчёт ≈ ${Math.round(await p.evaluate(() => window.ens.pagStats.ms))} мс, правка ≈ ${Math.round(typing)} мс`);
   ok(typing < 60, `правка в большом документе занимает ${Math.round(typing)} мс`);
+  await p.context().close();
+});
+
+
+// ---- Колонтитулы и печать ----
+await test('колонтитулы: на каждом листе свой номер «Страница N из M», на первом — особый колонтитул', async () => {
+  const p = await page();
+  await p.evaluate(LAYOUT_JS);
+  await p.evaluate((arr) => {
+    const E = window.ens;
+    const x = E.importDocx(new Uint8Array(arr));
+    const s = E.schema;
+    const body = [...x.doc.content.content];
+    for (let i = 0; i < 70; i++) body.push(s.nodes.paragraph.create(null, s.text(`Абзац ${i}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+    E.loadDoc(s.nodes.doc.create(null, body), x.meta, 'hf');
+  }, fixture('header.docx'));
+  await p.waitForTimeout(400);
+  const r = await p.evaluate(() => [...document.querySelectorAll('.paper')].map((el) => ({ h: el.querySelector('.hf-header')?.textContent ?? '', f: el.querySelector('.hf-footer')?.textContent ?? '' })));
+  ok(r.length >= 3, `страниц ${r.length}`);
+  eq(r[0].h, 'Титульный лист', 'первая страница');
+  eq(r[1].h, 'Колонтитул документа', 'вторая страница');
+  eq(r.map((x) => x.f), r.map((_, i) => (i === 0 ? '' : `Страница ${i + 1} из ${r.length}`)), 'номера страниц в нижнем колонтитуле (на первой странице колонтитула нет)');
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей');
+  await p.context().close();
+});
+
+await test('колонтитулы: высокий колонтитул сдвигает текст вниз, как в Word', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  const before = await p.evaluate(() => ({ top: window.ens.effPage().top, pages: window.ens.pageCount() }));
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const m = E.getMeta();
+    m.hf.header = s.nodes.doc.create(null, Array.from({ length: 6 }, (_, i) => P('Строка шапки ' + i))).toJSON();
+    E.loadDoc(E.view.state.doc, m, 'hf');
+  });
+  await p.waitForTimeout(400);
+  const after = await p.evaluate(() => ({ top: window.ens.effPage().top, pages: window.ens.pageCount() }));
+  ok(after.top > before.top + 30, `верхнее поле ${before.top} → ${after.top}`);
+  ok(after.pages >= before.pages, 'страниц не стало меньше');
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей под высоким колонтитулом');
+  await p.context().close();
+});
+
+await test('колонтитулы: правка двойным щелчком по полю листа, номер страницы из ленты, отмена внутри колонтитула', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  const box = await p.evaluate(() => { const r = document.getElementById('sheet').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 20 }; });
+  await p.mouse.dblclick(box.x, box.y);
+  await p.waitForSelector('.hf-edit');
+  await p.keyboard.type('Заголовок страницы');
+  eq(await p.evaluate(() => window.ens.isDirty()), true, 'документ изменён');
+  await p.keyboard.press('Control+KeyB');
+  await p.keyboard.press('Control+KeyZ');
+  await p.keyboard.press('Control+KeyZ');
+  ok((await p.evaluate(() => window.ens.getMeta().hf.header)) === null, 'отмена внутри колонтитула вернула пустоту');
+  await p.keyboard.type('Верх');
+  await p.click('.btn[data-command="hf.close"]');
+  await p.waitForFunction(() => !document.querySelector('.hf-edit'));
+  const first = await p.evaluate(() => document.querySelectorAll('.paper')[0].querySelector('.hf-header')?.textContent);
+  eq(first, 'Верх', 'колонтитул показан на листе');
+  eq(await p.evaluate(() => document.querySelectorAll('.paper')[2].querySelector('.hf-header')?.textContent), 'Верх', 'и на третьем листе');
+  await p.click('.tab:has-text("Вставка")');
+  await p.selectOption('select[data-command="insert.pageNumber"]', 'footer-right');
+  const foot = await p.evaluate(() => { const f = document.querySelectorAll('.paper')[1].querySelector('.hf-footer'); return [f?.textContent, f?.firstElementChild?.style.textAlign]; });
+  eq(foot, ['2', 'right'], 'номер страницы справа внизу');
+  const saved = await p.evaluate(() => { const E = window.ens; const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'x')); return JSON.stringify(b.meta.hf); });
+  ok(saved.includes('Верх') && saved.includes('"kind":"page"'), 'колонтитулы сохранены в docx');
+  await p.context().close();
+});
+
+await test('печать: страницы вплотную, колонтитулы на каждой, число страниц PDF = числу листов', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 75 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, m = E.getMeta();
+    m.hf.footer = s.nodes.doc.create(null, [s.nodes.paragraph.create({ align: 'center' }, [s.text('Стр. '), s.nodes.field.create({ kind: 'page' }), s.text(' из '), s.nodes.field.create({ kind: 'pages' })])]).toJSON();
+    E.loadDoc(E.view.state.doc, m, 'print');
+  });
+  await p.waitForTimeout(300);
+  const sheets = await p.evaluate(() => window.ens.pageCount());
+  await p.evaluate(() => window.ens.printPrepare());
+  const gap = await p.evaluate(() => { const ps = [...document.querySelectorAll('.paper')].map((e) => e.offsetTop); const H = window.ens.geometry().H; return ps.every((t, i) => Math.abs(t - i * H) < 1); });
+  ok(gap, 'листы стоят вплотную');
+  await p.emulateMedia({ media: 'print' });
+  const pdf = join(mkdtempSync(join(tmpdir(), 'ens-pdf-')), 'out.pdf');
+  await p.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
+  const info = execSync(`pdfinfo "${pdf}"`).toString();
+  const n = +/Pages:\s+(\d+)/.exec(info)[1];
+  eq(n, sheets, 'страниц в PDF');
+  const third = execSync(`pdftotext -f 3 -l 3 -layout "${pdf}" -`).toString();
+  ok(third.includes(`Стр. 3 из ${sheets}`), `нижний колонтитул третьей страницы: ${third.slice(-120)}`);
+  await p.evaluate(() => window.ens.printRestore());
   await p.context().close();
 });
 

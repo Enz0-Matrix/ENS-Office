@@ -84,17 +84,23 @@
 .menu-list { display: flex; flex-direction: column; gap: 4px; }
 .menu-list button { text-align: left; padding: 8px 12px !important; }
 
-/* Печать: только страница, поля задаёт @page (см. applyPage). */
+/* Колонтитулы */
+.paper .hf { position: absolute; pointer-events: none; user-select: none; }
+.ProseMirror .fld { background: #e3ecf8; border-radius: 3px; padding: 0 3px; color: #2b579a; font-size: .9em; user-select: all; }
+.sheet > .hf-edit { position: absolute; z-index: 5; background: rgba(255,255,255,.96); outline: 1px dashed var(--accent); outline-offset: 2px; min-height: 1.4em; }
+.hf-edit .ProseMirror { min-height: 1.4em; }
+.hf-label { position: absolute; left: 0; top: -22px; transform: none; background: var(--accent); color: #fff; font: 11px "Segoe UI", sans-serif; padding: 2px 8px; border-radius: 3px 3px 0 0; white-space: nowrap; }
+.hf-edit-footer .hf-label { top: auto; bottom: -22px; border-radius: 0 0 3px 3px; }
+.sheet.hf-mode > .ProseMirror { opacity: .45; }
+
+/* Печать: страницы вплотную (зазор 0), как рассчитала вёрстка, поля — внутри страницы, колонтитулы — на каждом листе. */
 @media print {
   html, body { overflow: visible !important; height: auto !important; background: #fff !important; display: block !important; }
-  .titlebar, .tabs, .ribbon, .notice, .findbar, footer, .toast, .overlay, .palette { display: none !important; }
+  .titlebar, .tabs, .ribbon, .notice, .findbar, footer, .toast, .overlay, .palette, .hf-edit { display: none !important; }
   .desk { overflow: visible !important; margin: 0 !important; padding: 0 !important; border: 0 !important; background: #fff !important; }
-  .sheet-wrap { zoom: 1 !important; display: block !important; width: auto !important; }
-  .sheet { width: auto !important; min-height: 0 !important; }
-  .papers, .pg-split, tr.pg-gap { display: none !important; }
-  .pg-pad { padding-top: 0 !important; }
-  .sheet > .ProseMirror { padding: 0 !important; min-height: 0 !important; }
+  .sheet-wrap { zoom: 1 !important; display: block !important; width: auto !important; min-width: 0 !important; }
+  .sheet { min-height: 0 !important; height: calc(var(--sheet-h) - 1px) !important; overflow: hidden !important; }
+  .paper { box-shadow: none !important; }
   .find-hit { background: none !important; }
-  .ProseMirror [data-page-break] { break-before: page; }
   .ProseMirror tr, .ProseMirror img { break-inside: avoid; }
 }

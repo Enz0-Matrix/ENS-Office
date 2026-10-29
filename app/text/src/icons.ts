@@ -22,8 +22,15 @@ import landscape24 from '@fluentui/svg-icons/icons/document_landscape_24_regular
 import zoomIn24 from '@fluentui/svg-icons/icons/zoom_in_24_regular.svg?raw';
 import highlight20 from '@fluentui/svg-icons/icons/highlight_20_regular.svg?raw';
 import docText24 from '@fluentui/svg-icons/icons/document_text_24_regular.svg?raw';
+import hdr24 from '@fluentui/svg-icons/icons/document_header_24_regular.svg?raw';
+import ftr24 from '@fluentui/svg-icons/icons/document_footer_24_regular.svg?raw';
+import hdrFtr24 from '@fluentui/svg-icons/icons/document_header_footer_24_regular.svg?raw';
+import pgCenter24 from '@fluentui/svg-icons/icons/document_page_bottom_center_24_regular.svg?raw';
+import pgRight24 from '@fluentui/svg-icons/icons/document_page_bottom_right_24_regular.svg?raw';
+import closeCircle24 from '@fluentui/svg-icons/icons/dismiss_circle_24_regular.svg?raw';
 
 Object.assign(ICONS, {
+  header_24: hdr24, footer_24: ftr24, header_footer_24: hdrFtr24, page_number_24: pgCenter24, page_count_24: pgRight24, close_circle_24: closeCircle24,
   text_bullet_list_20: bullets20,
   text_number_list_20: numbers20,
   text_indent_more_20: indentMore20,

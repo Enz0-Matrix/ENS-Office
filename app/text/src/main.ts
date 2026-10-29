@@ -17,41 +17,71 @@ import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
 import { schema } from './schema';
 import {
-  clearFormatting, createState, currentLevel, currentStyle, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
+  clearFormatting, createState, insertField, currentLevel, currentStyle, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
   listKind, markActive, paraAttr, replaceAll, replaceMatch, setLink, setParaAttrs, setStyle, setTextStyle, toggle, toggleList, toggles,
 } from './editor';
-import { A4, exportDocx, importDocx, newMeta, type DocMeta, type PageSetup } from './docx';
+import { A4, exportDocx, importDocx, newMeta, type DocMeta, type HfDoc, type PageSetup } from './docx';
 import { clearRecovery, listRecovery, saveRecovery, type RecoveryRecord } from './recovery';
 import * as desktop from './desktop';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
-import { PAGE_GAP, PX, geometry, pageCount, pagination, replan, stats as pagStats } from './pagination';
+import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
+import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 // ---------------------------------------------------------------- состояние документа
 
 let meta: DocMeta = newMeta();
-let savedMeta = JSON.stringify(meta.page) + JSON.stringify(meta.defaults);
+let savedMeta = JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf);
 let docName = 'Документ1';
 let savedDoc: PMNode = schema.nodes.doc.createAndFill()!;
 const docId = `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 let zoom = 1;
+/** Открытый для правки колонтитул (если есть). Команды форматирования действуют на него, а не на основной текст. */
+let hfSession: HfSession | null = null;
 
 function emptyDoc(): PMNode {
   return schema.nodes.doc.createAndFill()!;
 }
 
-const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults);
+const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf);
 const isDirty = () => !view.state.doc.eq(savedDoc) || metaKey() !== savedMeta;
 
 // ---------------------------------------------------------------- страница
 
+/** Измеренная высота колонтитулов, px: если они выше поля страницы, текст начинается ниже (как в Word). */
+let hfPx = { header: 0, footer: 0 };
+
+/** Страница с учётом колонтитулов: top и bottom — где на самом деле начинается и кончается текст. */
+function effPage(): PageSetup {
+  const p = meta.page;
+  const hf = meta.hf;
+  return {
+    ...p,
+    top: hfPx.header ? Math.max(p.top, hf.headerDist + hfPx.header / PX) : p.top,
+    bottom: hfPx.footer ? Math.max(p.bottom, hf.footerDist + hfPx.footer / PX) : p.bottom,
+  };
+}
+
+/** Колонтитулы изменились: перемерить; если поля текста сдвинулись — пересчитать страницы. */
+function refreshHf(): void {
+  const before = JSON.stringify([effPage().top, effPage().bottom]);
+  hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
+  if (before !== JSON.stringify([effPage().top, effPage().bottom])) {
+    applyPage();
+    replan(view);
+  } else {
+    paintHf();
+  }
+}
+
 function applyPage(): void {
   const p = meta.page;
+  const e = effPage();
   const sheet = $('sheet');
   sheet.style.width = `${p.w}pt`;
-  view.dom.style.padding = `${p.top}pt ${p.right}pt ${p.bottom}pt ${p.left}pt`;
+  view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
   drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;
@@ -60,16 +90,17 @@ function applyPage(): void {
   root.setProperty('--doc-line', d.line === 1 ? 'normal' : String((d.line * 1.15).toFixed(3)));
   root.setProperty('--doc-after', `${d.after}pt`);
   root.setProperty('--doc-before', `${d.before}pt`);
+  // Печать идёт по нашей вёрстке: поля уже внутри страницы, поэтому у листа бумаги полей нет.
   let st = document.getElementById('print-page') as HTMLStyleElement | null;
   if (!st) { st = document.createElement('style'); st.id = 'print-page'; document.head.append(st); }
-  st.textContent = `@page { size: ${p.w}pt ${p.h}pt; margin: ${p.top}pt ${p.right}pt ${p.bottom}pt ${p.left}pt; }`;
+  st.textContent = `@page { size: ${p.w}pt ${p.h}pt; margin: 0; }`;
 }
 
 /** Листы-подложки: по одному на страницу; высота страницы и зазоры — как у расчёта разрывов. */
 function drawPapers(pages: number): void {
-  const g = geometry(meta.page);
+  const g = geometry(effPage());
   const papers = $('papers');
-  if (papers.childElementCount !== pages || papers.dataset.h !== String(g.H)) {
+  if (papers.childElementCount !== pages || papers.dataset.h !== String(g.H) || papers.dataset.gap !== String(layout.gap)) {
     papers.replaceChildren(...Array.from({ length: pages }, (_, i) => {
       const d = document.createElement('div');
       d.className = 'paper';
@@ -77,24 +108,49 @@ function drawPapers(pages: number): void {
       return d;
     }));
     papers.dataset.h = String(g.H);
+    papers.dataset.gap = String(layout.gap);
   }
-  const total = pages * g.H + (pages - 1) * PAGE_GAP;
+  const total = pages * g.H + (pages - 1) * layout.gap;
   $('sheet').style.minHeight = `${total}px`;
+  $('sheet').style.setProperty('--sheet-h', `${total}px`);
   view.dom.style.minHeight = `${total}px`;
-  updatePageStatus();
+  paintHf(pages);
+  updatePageStatus(pages);
 }
 
-/** «Страница X из N» по положению курсора. */
-function updatePageStatus(): void {
-  const n = pageCount(view);
-  let page = 1;
+/** Колонтитулы на листах: свои на каждой странице (номер страницы подставляется). */
+function paintHf(pages = pageCount(view)): void {
+  const papers = $('papers');
+  [...papers.children].forEach((paper, i) => {
+    paper.querySelectorAll('.hf').forEach((e) => e.remove());
+    for (const kind of ['header', 'footer'] as const) {
+      if (hfSession && hfSession.kind === kind && hfSession.pageIndex === i) continue; // здесь идёт правка
+      const e = renderHf(hfFor(meta.hf, kind, i), kind, i + 1, pages);
+      if (!e) continue;
+      e.style.left = `${meta.page.left}pt`;
+      e.style.right = `${meta.page.right}pt`;
+      if (kind === 'header') e.style.top = `${meta.hf.headerDist}pt`;
+      else e.style.bottom = `${meta.hf.footerDist}pt`;
+      paper.append(e);
+    }
+  });
+}
+
+/** Страница (с 1), на которой стоит курсор. */
+function currentPage(n = pageCount(view)): number {
   try {
     const box = view.dom.getBoundingClientRect();
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
     const c = view.coordsAtPos(view.state.selection.head);
-    page = Math.min(n, Math.max(1, Math.floor((((c.top - box.top) / scale) + 1) / geometry(meta.page).P) + 1));
-  } catch { /* вид ещё не готов */ }
-  $('status-page').textContent = `Страница ${page} из ${n}`;
+    return Math.min(n, Math.max(1, Math.floor((((c.top - box.top) / scale) + 1) / geometry(effPage()).P) + 1));
+  } catch {
+    return 1; // вид ещё не готов
+  }
+}
+
+/** «Страница X из N» по положению курсора. */
+function updatePageStatus(pages = pageCount(view)): void {
+  $('status-page').textContent = `Страница ${currentPage(pages)} из ${pages}`;
 }
 
 function setZoom(z: number): void {
@@ -105,10 +161,11 @@ function setZoom(z: number): void {
 
 // ---------------------------------------------------------------- редактор
 
-const paginationPlugin = pagination(() => meta.page, (n) => drawPapers(n));
+const paginationPlugin = pagination(effPage, (n) => drawPapers(n));
 
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin]),
+  editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
     const before = view.state;
@@ -177,9 +234,11 @@ function updateSelStats(): void {
 
 // ---------------------------------------------------------------- команды
 
+const active = (): EditorView => hfSession?.view ?? view;
+
 const dispatchCmd = (cmd: (s: EditorState, d?: typeof view.dispatch) => boolean): void => {
-  cmd(view.state, view.dispatch);
-  view.focus();
+  cmd(active().state, active().dispatch);
+  active().focus();
 };
 
 const ALIGN_LABEL = { left: 'По левому краю', center: 'По центру', right: 'По правому краю', justify: 'По ширине' } as const;
@@ -199,18 +258,18 @@ register({ id: 'format.superscript', label: 'Надстрочный', keys: ['Ct
 register({ id: 'format.subscript', label: 'Подстрочный', keys: ['Ctrl+Equal'], run: () => dispatchCmd(toggle('subscript')), checked: () => markActive(view.state, toggles.subscript) });
 
 register(
-  { id: 'edit.undo', label: 'Отменить', keys: ['Ctrl+KeyZ'], run: () => { undo(view.state, view.dispatch); view.focus(); } },
-  { id: 'edit.redo', label: 'Повторить', keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => { redo(view.state, view.dispatch); view.focus(); } },
+  { id: 'edit.undo', label: 'Отменить', keys: ['Ctrl+KeyZ'], run: () => { undo(active().state, active().dispatch); active().focus(); } },
+  { id: 'edit.redo', label: 'Повторить', keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => { redo(active().state, active().dispatch); active().focus(); } },
   {
     id: 'clipboard.paste', label: 'Вставить (Ctrl+V)',
     run: () => {
-      view.focus();
-      (desktop.isDesktop ? readText() : navigator.clipboard.readText()).then((t) => { if (t) view.dispatch(view.state.tr.insertText(t).scrollIntoView()); })
+      active().focus();
+      (desktop.isDesktop ? readText() : navigator.clipboard.readText()).then((t) => { if (t) active().dispatch(active().state.tr.insertText(t).scrollIntoView()); })
         .catch(() => toast('Браузер не дал доступ к буферу обмена — нажмите Ctrl+V'));
     },
   },
-  { id: 'clipboard.cut', label: 'Вырезать (Ctrl+X)', run: () => { view.focus(); document.execCommand('cut'); } },
-  { id: 'clipboard.copy', label: 'Копировать (Ctrl+C)', run: () => { view.focus(); document.execCommand('copy'); } },
+  { id: 'clipboard.cut', label: 'Вырезать (Ctrl+X)', run: () => { active().focus(); document.execCommand('cut'); } },
+  { id: 'clipboard.copy', label: 'Копировать (Ctrl+C)', run: () => { active().focus(); document.execCommand('copy'); } },
   { id: 'format.fontName', label: 'Шрифт', run: (v) => v && dispatchCmd(setTextStyle({ font: v })) },
   { id: 'format.fontSize', label: 'Размер шрифта', run: (v) => v && dispatchCmd(setTextStyle({ size: parseFloat(v) })) },
   { id: 'format.fontColor', label: 'Цвет текста', run: (v) => dispatchCmd(setTextStyle({ color: v || null })) },
@@ -222,7 +281,7 @@ register(
 
 function stepSize(dir: 1 | -1): void {
   const sizes = FONT_SIZES.map((o) => +o.value);
-  const cur = currentStyle(view.state).size ?? meta.defaults.size;
+  const cur = currentStyle(active().state).size ?? meta.defaults.size;
   const next = dir > 0 ? sizes.find((s) => s > cur) : [...sizes].reverse().find((s) => s < cur);
   if (next) dispatchCmd(setTextStyle({ size: next }));
 }
@@ -231,12 +290,12 @@ for (const a of ['left', 'center', 'right', 'justify'] as const) {
   register({
     id: `align.${a}`, label: ALIGN_LABEL[a], keys: [{ left: 'Ctrl+KeyL', center: 'Ctrl+KeyE', right: 'Ctrl+KeyR', justify: 'Ctrl+KeyJ' }[a]],
     run: () => dispatchCmd(setParaAttrs({ align: a === 'left' ? null : a })),
-    checked: () => (paraAttr<string>(view.state, 'align') ?? 'left') === a,
+    checked: () => (paraAttr<string>(active().state, 'align') ?? 'left') === a,
   });
 }
 register(
-  { id: 'list.bullet', label: 'Маркированный список', keys: ['Ctrl+Shift+KeyL'], run: () => dispatchCmd(toggleList(schema.nodes.bullet_list)), checked: () => listKind(view.state) === 'bullet' },
-  { id: 'list.ordered', label: 'Нумерованный список', run: () => dispatchCmd(toggleList(schema.nodes.ordered_list)), checked: () => listKind(view.state) === 'ordered' },
+  { id: 'list.bullet', label: 'Маркированный список', keys: ['Ctrl+Shift+KeyL'], run: () => dispatchCmd(toggleList(schema.nodes.bullet_list)), checked: () => listKind(active().state) === 'bullet' },
+  { id: 'list.ordered', label: 'Нумерованный список', run: () => dispatchCmd(toggleList(schema.nodes.ordered_list)), checked: () => listKind(active().state) === 'ordered' },
   { id: 'indent.inc', label: 'Увеличить отступ', keys: ['Ctrl+KeyM'], run: () => dispatchCmd(indent(1)) },
   { id: 'indent.dec', label: 'Уменьшить отступ', keys: ['Ctrl+Shift+KeyM'], run: () => dispatchCmd(indent(-1)) },
   { id: 'para.line', label: 'Межстрочный интервал', run: (v) => dispatchCmd(setParaAttrs({ line: v && v !== '1' ? parseFloat(v) : null })) },
@@ -264,11 +323,18 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
+  { id: 'hf.editHeader', label: 'Верхний колонтитул', run: () => openHf('header') },
+  { id: 'hf.editFooter', label: 'Нижний колонтитул', run: () => openHf('footer') },
+  { id: 'hf.close', label: 'Закрыть колонтитулы', run: () => closeHf() },
+  { id: 'hf.page', label: 'Номер страницы (поле)', run: () => dispatchCmd(insertField('page')) },
+  { id: 'hf.pages', label: 'Число страниц (поле)', run: () => dispatchCmd(insertField('pages')) },
+  { id: 'hf.differentFirst', label: 'Особый колонтитул первой страницы', checked: () => meta.hf.differentFirst, run: () => { closeHf(); meta.hf.differentFirst = !meta.hf.differentFirst; refreshHf(); updateUi(); scheduleRecovery(); } },
+  { id: 'insert.pageNumber', label: 'Номер страницы', run: (v) => { if (v) insertPageNumber(v); setSelect('insert.pageNumber', ''); } },
   { id: 'file.new', label: 'Создать', keys: ['Ctrl+KeyN'], run: () => (desktop.isDesktop ? void desktop.newWindow() : void guardUnsaved(newDocument)) },
   { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
-  { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => window.print() },
+  { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => void printDocument() },
 );
 
 // ---------------------------------------------------------------- вкладки ленты
@@ -287,6 +353,12 @@ const LINES = [
 const STYLES = [
   { value: '0', label: 'Обычный' }, { value: '1', label: 'Заголовок 1' }, { value: '2', label: 'Заголовок 2' }, { value: '3', label: 'Заголовок 3' },
   { value: '4', label: 'Заголовок 4' }, { value: '5', label: 'Заголовок 5' }, { value: '6', label: 'Заголовок 6' },
+];
+
+const PAGE_NUMBER_POSITIONS = [
+  { value: '', label: 'Номер страницы…' },
+  { value: 'footer-center', label: 'Внизу, по центру' }, { value: 'footer-right', label: 'Внизу, справа' }, { value: 'footer-left', label: 'Внизу, слева' },
+  { value: 'header-center', label: 'Вверху, по центру' }, { value: 'header-right', label: 'Вверху, справа' }, { value: 'header-left', label: 'Вверху, слева' },
 ];
 
 const TABS: RibbonTab[] = [
@@ -357,6 +429,14 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      {
+        name: 'Колонтитулы',
+        items: [
+          { type: 'large', command: 'hf.editHeader', icon: 'header', label: 'Верхний колонтитул' },
+          { type: 'large', command: 'hf.editFooter', icon: 'footer', label: 'Нижний колонтитул' },
+          { type: 'select', command: 'insert.pageNumber', width: 150, options: PAGE_NUMBER_POSITIONS },
+        ],
+      },
     ],
   },
   {
@@ -373,6 +453,34 @@ const TABS: RibbonTab[] = [
       {
         name: 'Абзац',
         items: [{ type: 'select', command: 'para.after', options: [{ value: '', label: 'После абзаца: как в документе' }, { value: '0', label: 'После: 0 пт' }, { value: '6', label: 'После: 6 пт' }, { value: '8', label: 'После: 8 пт' }, { value: '12', label: 'После: 12 пт' }], width: 210 }],
+      },
+    ],
+  },
+  {
+    id: 'hf', label: 'Колонтитулы',
+    groups: [
+      {
+        name: 'Колонтитулы',
+        items: [
+          { type: 'large', command: 'hf.editHeader', icon: 'header', label: 'Верхний колонтитул' },
+          { type: 'large', command: 'hf.editFooter', icon: 'footer', label: 'Нижний колонтитул' },
+        ],
+      },
+      {
+        name: 'Вставка',
+        items: [
+          { type: 'large', command: 'hf.page', icon: 'page_number', label: 'Номер страницы' },
+          { type: 'large', command: 'hf.pages', icon: 'page_count', label: 'Число страниц' },
+          { type: 'select', command: 'insert.pageNumber', width: 150, options: PAGE_NUMBER_POSITIONS },
+        ],
+      },
+      {
+        name: 'Параметры',
+        items: [{ type: 'large', command: 'hf.differentFirst', icon: 'document_text', label: 'Особый для первой страницы' }],
+      },
+      {
+        name: 'Закрытие',
+        items: [{ type: 'large', command: 'hf.close', icon: 'close_circle', label: 'Закрыть колонтитулы' }],
       },
     ],
   },
@@ -432,21 +540,21 @@ function updateUi(): void {
   const dirty = isDirty();
   $('doc-name').textContent = `${docName}${dirty ? ' •' : ''} — ENS-Tekst`;
   document.title = `${docName}${dirty ? '*' : ''} — ENS-Tekst`;
-  const canUndo = undoDepth(view.state) > 0;
-  const canRedo = redoDepth(view.state) > 0;
+  const canUndo = undoDepth(active().state) > 0;
+  const canRedo = redoDepth(active().state) > 0;
   ($('qa-undo') as HTMLButtonElement).disabled = !canUndo;
   ($('qa-redo') as HTMLButtonElement).disabled = !canRedo;
   document.querySelector('.btn[data-command="edit.undo"]')?.classList.toggle('disabled', !canUndo);
   document.querySelector('.btn[data-command="edit.redo"]')?.classList.toggle('disabled', !canRedo);
-  const inTable = isInTable(view.state);
+  const inTable = isInTable(active().state);
   document.querySelectorAll<HTMLElement>('.btn[data-command]').forEach((b) => {
     if (TABLE_CMDS.has(b.dataset.command!)) b.classList.toggle('disabled', !inTable);
   });
-  const st = currentStyle(view.state);
+  const st = currentStyle(active().state);
   setSelect('format.fontName', st.font ?? meta.defaults.font);
   setSelect('format.fontSize', String(st.size ?? meta.defaults.size));
-  setSelect('para.style', String(currentLevel(view.state)));
-  setSelect('para.line', String(paraAttr<number>(view.state, 'line') ?? meta.defaults.line));
+  setSelect('para.style', String(currentLevel(active().state)));
+  setSelect('para.line', String(paraAttr<number>(active().state, 'line') ?? meta.defaults.line));
   setSelect('page.orientation', meta.page.w > meta.page.h ? 'landscape' : 'portrait');
   setSelect('page.size', sizeKey());
   setSelect('page.margins', marginsKey());
@@ -478,6 +586,7 @@ function marginsKey(): string {
 
 function changePage(next: Partial<PageSetup>): void {
   meta.page = { ...meta.page, ...next };
+  hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   applyPage();
   replan(view);
   updateUi();
@@ -529,7 +638,7 @@ function tableDialog(): void {
 
 function linkDialog(): void {
   dialog((box, close) => {
-    const url = el('input', { type: 'text', value: linkAt(view.state) ?? 'https://', placeholder: 'Адрес ссылки' });
+    const url = el('input', { type: 'text', value: linkAt(active().state) ?? 'https://', placeholder: 'Адрес ссылки' });
     const ok = el('button', { class: 'primary', textContent: 'Применить' });
     const go = () => {
       const v = url.value.trim();
@@ -548,12 +657,12 @@ function linkDialog(): void {
 }
 
 function toggleBorders(): void {
-  const { $from } = view.state.selection;
+  const { $from } = active().state.selection;
   for (let d = $from.depth; d > 0; d--) {
     const n = $from.node(d);
     if (n.type === schema.nodes.table) {
-      view.dispatch(view.state.tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, borders: !n.attrs.borders }));
-      view.focus();
+      active().dispatch(active().state.tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, borders: !n.attrs.borders }));
+      active().focus();
       return;
     }
   }
@@ -586,6 +695,98 @@ $('image-input').addEventListener('change', (e) => {
   input.value = '';
   if (f) void insertImageFile(f);
 });
+
+// ---------------------------------------------------------------- колонтитулы
+
+function openHf(kind: HfKind, pageIndex = currentPage() - 1): void {
+  closeHf();
+  const first = meta.hf.differentFirst && pageIndex === 0;
+  const e = effPage();
+  hfSession = openHfEditor({
+    sheet: $('sheet'), kind, first, pageIndex, pageStep: geometry(e).P, page: e, hf: meta.hf,
+    onChange: () => { refreshHf(); updateUi(); scheduleRecovery(); },
+  });
+  $('sheet').classList.add('hf-mode');
+  view.setProps({ editable: () => !hfSession });
+  paintHf();
+  document.querySelectorAll<HTMLButtonElement>('#tabs .tab').forEach((t) => { if (t.textContent === 'Колонтитулы') t.click(); });
+  updateUi();
+}
+
+function closeHf(): void {
+  if (!hfSession) return;
+  hfSession.close();
+  hfSession = null;
+  $('sheet').classList.remove('hf-mode');
+  view.setProps({ editable: () => !hfSession });
+  refreshHf();
+  document.querySelectorAll<HTMLButtonElement>('#tabs .tab').forEach((t) => { if (t.textContent === 'Главная') t.click(); });
+  view.focus();
+  updateUi();
+}
+
+/** «Вставка → Номер страницы»: абзац с полем в нужном месте листа. */
+function insertPageNumber(pos: string): void {
+  closeHf();
+  const [where, align] = pos.split('-');
+  const kind: HfKind = where === 'header' ? 'header' : 'footer';
+  const para = schema.nodes.paragraph.create({ align: align === 'left' ? null : align }, schema.nodes.field.create({ kind: 'page' }));
+  const cur = kind === 'header' ? meta.hf.header : meta.hf.footer;
+  const old = cur ? schema.nodeFromJSON(cur) : null;
+  const blank = !old || (old.childCount === 1 && old.firstChild!.content.size === 0);
+  const doc = schema.nodes.doc.create(null, blank ? [para] : [...old.content.content, para]);
+  setHf(meta.hf, kind, false, doc.toJSON() as HfDoc);
+  refreshHf();
+  updateUi();
+  scheduleRecovery();
+  toast(`Номер страницы добавлен ${kind === 'header' ? 'в верхний' : 'в нижний'} колонтитул`);
+}
+
+/** Двойной щелчок по верхнему или нижнему полю листа открывает колонтитул; по тексту — закрывает. */
+$('sheet').addEventListener('dblclick', (e) => {
+  const rect = $('sheet').getBoundingClientRect();
+  const scale = rect.width / ($('sheet') as HTMLElement).offsetWidth || 1;
+  const eff = effPage();
+  const g = geometry(eff);
+  const y = (e.clientY - rect.top) / scale;
+  const i = Math.floor(y / g.P);
+  const inPage = y - i * g.P;
+  if (i < 0 || i >= pageCount(view) || inPage > g.H) return;
+  if (hfSession && (e.target as HTMLElement).closest('.hf-edit')) return;
+  if (inPage < eff.top * PX - 4) { e.preventDefault(); openHf('header', i); }
+  else if (inPage > g.H - eff.bottom * PX + 4) { e.preventDefault(); openHf('footer', i); }
+  else if (hfSession) closeHf();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && hfSession && document.getElementById('dialog')!.hidden) closeHf(); });
+
+// ---------------------------------------------------------------- печать
+
+/** Печать по нашей вёрстке: страницы вплотную, поля внутри страницы, колонтитулы на каждом листе — как на экране. */
+async function printPrepare(): Promise<void> {
+  closeHf();
+  layout.gap = 0;
+  replan(view);
+  applyPage();
+  await new Promise((r) => setTimeout(r, pagStats.items > 600 ? 400 : 120));
+}
+
+function printRestore(): void {
+  if (layout.gap === 16) return;
+  layout.gap = 16;
+  replan(view);
+  applyPage();
+}
+
+async function printDocument(): Promise<void> {
+  await printPrepare();
+  window.addEventListener('afterprint', printRestore, { once: true });
+  try {
+    window.print();
+  } finally {
+    // Chromium (в том числе WebView2) возвращается из print() после закрытия окна печати; остальные — по afterprint.
+    if (navigator.userAgent.includes('Chrome')) printRestore();
+  }
+}
 
 // ---------------------------------------------------------------- поиск и замена
 
@@ -659,7 +860,10 @@ function hideNotice(): void {
 }
 
 function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false): void {
+  if (hfSession) { hfSession.close(); hfSession = null; $('sheet').classList.remove('hf-mode'); }
   meta = newMetaValue;
+  meta.hf ??= newMeta().hf;
+  hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
   applyPage();
   view.updateState(createState(doc, [paginationPlugin]));
@@ -924,6 +1128,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(meta.page), PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
