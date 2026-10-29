@@ -1,4 +1,4 @@
-//! ENS-Table для РЕД ОС 7 («Муром», glibc 2.28).
+//! ENS-Table (и ENS-Tekst) для РЕД ОС 7 («Муром», glibc 2.28).
 //!
 //! Настольная версия (Tauri) там не запускается: её окну нужен WebKitGTK 4.1.
 //! Здесь окно рисует установленный Chromium (или Яндекс.Браузер) в режиме
@@ -8,6 +8,28 @@
 //!
 //! Работает только внутри компьютера: сервер слушает 127.0.0.1, каждый запрос
 //! к файлам требует секретный ключ, выданный окну при запуске.
+
+/// Названия и типы файлов приложения. Этот же файл собирает помощник ENS-Tekst
+/// (app/text/redos7, функция `text`): отличаются только названия и фильтры.
+#[cfg(not(feature = "text"))]
+mod ident {
+    pub const NAME: &str = "ENS-Table";
+    /// Папка данных (~/.local/share/<DIR>) и значение, которое возвращает `ping`.
+    pub const DIR: &str = "ens-table";
+    pub const PKG: &str = "ens-table-r7";
+    pub const ZENITY_FILTER: &str = "--file-filter=Книги Excel | *.xlsx *.xlsm *.XLSX";
+    pub const KDE_OPEN: &str = "*.xlsx *.xlsm|Книги Excel";
+    pub const KDE_SAVE: &str = "*.xlsx|Книга Excel";
+}
+#[cfg(feature = "text")]
+mod ident {
+    pub const NAME: &str = "ENS-Tekst";
+    pub const DIR: &str = "ens-text";
+    pub const PKG: &str = "ens-text-r7";
+    pub const ZENITY_FILTER: &str = "--file-filter=Документы Word | *.docx *.DOCX";
+    pub const KDE_OPEN: &str = "*.docx|Документы Word";
+    pub const KDE_SAVE: &str = "*.docx|Документ Word";
+}
 
 #[path = "../../src-tauri/src/files.rs"]
 mod files;
@@ -40,7 +62,7 @@ fn data_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".local/share"))
-        .join("ens-table")
+        .join(ident::DIR)
 }
 
 /// Где лежит интерфейс: рядом с программой (архив) или в /usr/share (RPM).
@@ -49,7 +71,7 @@ fn ui_dir() -> PathBuf {
         return PathBuf::from(p);
     }
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
-    for c in [exe_dir.join("ui"), exe_dir.join("../share/ens-table-r7/ui"), PathBuf::from("/usr/share/ens-table-r7/ui")] {
+    for c in [exe_dir.join("ui"), exe_dir.join(format!("../share/{}/ui", ident::PKG)), PathBuf::from(format!("/usr/share/{}/ui", ident::PKG))] {
         if c.join("index.html").exists() {
             return c;
         }
@@ -91,15 +113,15 @@ fn find_browser() -> Option<String> {
         .map(|p| p.to_string())
 }
 
-/// Окно ENS-Table: браузер в режиме приложения со своим профилем.
+/// Окно программы: браузер в режиме приложения со своим профилем.
 fn open_app_window(browser: &str, url: &str) -> std::io::Result<Child> {
     let profile = data_dir().join("browser");
     Command::new(browser)
         .arg(format!("--app={url}"))
         .arg(format!("--user-data-dir={}", profile.display()))
+        .arg(format!("--class={}", ident::NAME))
+        .arg(format!("--name={}", ident::NAME))
         .args([
-            "--class=ENS-Table",
-            "--name=ENS-Table",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-sync",
@@ -115,13 +137,13 @@ fn open_app_window(browser: &str, url: &str) -> std::io::Result<Child> {
 }
 
 fn message(text: &str) {
-    eprintln!("ENS-Table: {text}");
-    let _ = Command::new("zenity").args(["--error", "--no-wrap", "--title=ENS-Table", &format!("--text={text}")]).status();
+    eprintln!("{}: {text}", ident::NAME);
+    let _ = Command::new("zenity").args(["--error", "--no-wrap", &format!("--title={}", ident::NAME), &format!("--text={text}")]).status();
 }
 
 /// Окна выбора файлов: zenity (MATE/GNOME), иначе kdialog (KDE).
 fn file_dialog(kind: &str, title: &str, name: &str) -> Result<Option<String>, String> {
-    let filters = ["--file-filter=Книги Excel | *.xlsx *.xlsm *.XLSX", "--file-filter=Все файлы | *"];
+    let filters = [ident::ZENITY_FILTER, "--file-filter=Все файлы | *"];
     let mut z = Command::new("zenity");
     z.current_dir(home()).arg("--file-selection").arg(format!("--title={title}"));
     match kind {
@@ -135,8 +157,8 @@ fn file_dialog(kind: &str, title: &str, name: &str) -> Result<Option<String>, St
             let mut k = Command::new("kdialog");
             k.current_dir(home()).arg(format!("--title={title}"));
             match kind {
-                "open" => { k.args(["--getopenfilename", ".", "*.xlsx *.xlsm|Книги Excel"]); }
-                "save" => { k.args(["--getsavefilename"]).arg(name).arg("*.xlsx|Книга Excel"); }
+                "open" => { k.args(["--getopenfilename", ".", ident::KDE_OPEN]); }
+                "save" => { k.args(["--getsavefilename"]).arg(name).arg(ident::KDE_SAVE); }
                 _ => { k.args(["--getexistingdirectory", "."]); }
             }
             k.output().map_err(|_| "Не найдено окно выбора файлов: установите пакет zenity".to_string())?
@@ -234,7 +256,7 @@ fn api(app: &App, cmd: &str, headers: &[(String, String)], body: Vec<u8>) -> Rep
             }
             json_reply(json!(null))
         }
-        "ping" => json_reply(json!("ens-table")),
+        "ping" => json_reply(json!(ident::DIR)),
         _ => Err(format!("неизвестная команда {cmd}")),
     }
 }
@@ -328,7 +350,7 @@ fn main() {
         .map(|p| format!("open={}", encode(&p.display().to_string())))
         .unwrap_or_default();
     let Some(browser) = find_browser() else {
-        message("Не найден браузер Chromium или Яндекс.Браузер — ENS-Table открывает окно с его помощью. Попросите администратора установить пакет chromium.");
+        message(&format!("Не найден браузер Chromium или Яндекс.Браузер — {} открывает окно с его помощью. Попросите администратора установить пакет chromium.", ident::NAME));
         std::process::exit(2);
     };
     if let Some((port, token)) = existing_instance() {
@@ -341,7 +363,7 @@ fn main() {
     let server = match Server::http("127.0.0.1:0") {
         Ok(s) => s,
         Err(e) => {
-            message(&format!("Не удалось запустить ENS-Table: {e}"));
+            message(&format!("Не удалось запустить {}: {e}", ident::NAME));
             std::process::exit(1);
         }
     };

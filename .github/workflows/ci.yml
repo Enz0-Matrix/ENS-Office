@@ -2,6 +2,7 @@
 # Готовые сборки — во вкладке Actions → запуск → Artifacts:
 #   ens-table-linux   — AppImage (без установки), rpm (РЕД ОС, Альт, Fedora), deb
 #   ens-table-windows — установщик NSIS и exe
+#   ens-text-linux / ens-text-windows — то же для ENS-Tekst (плюс ens-text-r7 для РЕД ОС 7)
 name: CI
 
 on:
@@ -167,6 +168,107 @@ jobs:
       - name: Проверки в браузере
         working-directory: app/text
         run: npm test
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app/text/redos7 -> target
+            app/table/redos7 -> target
+      - name: "Помощник РЕД ОС 7 (ENS-Table и ENS-Tekst) собирается"
+        run: |
+          (cd app/table/redos7 && cargo check)
+          (cd app/text/redos7 && cargo check)
+      - name: Настоящие файлы и восстановление (помощник РЕД ОС 7 + интерфейс в Chromium)
+        working-directory: app/text
+        run: npm run test:desktop
+
+  desktop-text:
+    name: Сборка ENS-Tekst ${{ matrix.name }}
+    needs: text
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            bundles: appimage,rpm,deb
+          - name: windows
+            os: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки Linux для окна (WebKitGTK)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/text/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/table/package-lock.json
+            app/text/package-lock.json
+      - name: Зависимости интерфейса (общий код лежит в app/table)
+        shell: bash
+        run: |
+          (cd app/table && npm ci)
+          (cd app/text && npm ci)
+      - name: Проверка типов
+        working-directory: app/text
+        run: npm run check
+      - name: Тесты оболочки (общий код файлов и восстановления)
+        working-directory: app/text/src-tauri
+        run: cargo test --release
+      - name: Сборка приложения
+        working-directory: app/text
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+      - name: Инструменты сборки под старую glibc (РЕД ОС 7)
+        if: matrix.name == 'linux'
+        run: |
+          pip install ziglang
+          sudo apt-get install -y rpm
+      - uses: taiki-e/install-action@v2
+        if: matrix.name == 'linux'
+        with:
+          tool: cargo-zigbuild
+      - name: ENS-Tekst для РЕД ОС 7 (glibc 2.17+, окно Chromium)
+        if: matrix.name == 'linux'
+        working-directory: app/text
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          (cd redos7 && cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17)
+          bin=redos7/target/x86_64-unknown-linux-gnu/release/ens-text-r7
+          echo "Самая новая нужная версия glibc:"; objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          root="$RUNNER_TEMP/ENS-Tekst-redos7"
+          mkdir -p "$root"
+          cp "$bin" "$root/"
+          cp -r dist "$root/ui"
+          cp redos7/packaging/ens-text-r7.desktop redos7/packaging/install-user.sh "$root/"
+          cp src-tauri/icons/128x128.png "$root/ens-text-r7.png"
+          mkdir -p redos7-out
+          tar -C "$RUNNER_TEMP" -czf "redos7-out/ENS-Tekst_${ver}_redos7.tar.gz" ENS-Tekst-redos7
+          rpmbuild -bb redos7/packaging/ens-text-r7.spec --define "_ensroot $root" --define "ens_version $ver" --define "_rpmdir $PWD/redos7-out" --define "_build_id_links none"
+          find redos7-out -name '*.rpm' -exec mv {} redos7-out/ \;
+          ls -la redos7-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ens-text-${{ matrix.name }}
+          path: |
+            app/text/src-tauri/target/release/bundle/**/*.AppImage
+            app/text/src-tauri/target/release/bundle/**/*.rpm
+            app/text/src-tauri/target/release/bundle/**/*.deb
+            app/text/src-tauri/target/release/bundle/**/*.exe
+            app/text/src-tauri/target/release/ens-text.exe
+            app/text/redos7-out/*.rpm
+            app/text/redos7-out/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
 
   release:
     name: Выпуск на GitHub

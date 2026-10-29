@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ENS-Tekst
+GenericName=Текстовый редактор
+Comment=Текстовый редактор ENS-Office (документы Word, docx)
+Exec=ens-text-r7 %f
+Icon=ens-text-r7
+Terminal=false
+Categories=Office;WordProcessor;
+MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;
+StartupWMClass=ENS-Tekst
+Keywords=word;docx;документ;текст;

@@ -72,24 +72,30 @@ const XLSX_FILTER = [
   { name: 'Все файлы', extensions: ['*'] },
 ];
 
+/** Названия окон и типы файлов приложения. ENS-Tekst задаёт свои через setDialogProfile. */
+let profile = { app: 'ENS-Table', open: 'Открыть книгу', filters: XLSX_FILTER };
+export function setDialogProfile(p: { app: string; open: string; filters: { name: string; extensions: string[] }[] }): void {
+  profile = p;
+}
+
 /** Окно выбора книги; dir — папка, с которой оно начинается. */
 export async function pickOpen(dir?: string): Promise<string | null> {
-  if (isLocalApp) return call<string | null>('pick_open', { title: 'Открыть книгу', dir: dir ?? null });
+  if (isLocalApp) return call<string | null>('pick_open', { title: profile.open, dir: dir ?? null });
   const { open } = await import('@tauri-apps/plugin-dialog');
-  const path = await open({ multiple: false, directory: false, filters: XLSX_FILTER, title: 'Открыть книгу', defaultPath: dir });
+  const path = await open({ multiple: false, directory: false, filters: profile.filters, title: profile.open, defaultPath: dir });
   return typeof path === 'string' ? path : null;
 }
 
 export async function pickSave(defaultName: string): Promise<string | null> {
   if (isLocalApp) return call<string | null>('pick_save', { title: 'Сохранить как', name: defaultName });
   const { save } = await import('@tauri-apps/plugin-dialog');
-  return save({ defaultPath: defaultName, filters: XLSX_FILTER.slice(0, 1), title: 'Сохранить как' });
+  return save({ defaultPath: defaultName, filters: profile.filters.slice(0, 1), title: 'Сохранить как' });
 }
 
 export async function ask(message: string, ok: string, cancel: string): Promise<boolean> {
   if (isLocalApp) return confirm(message);
   const { ask: dialogAsk } = await import('@tauri-apps/plugin-dialog');
-  return dialogAsk(message, { title: 'ENS-Table', okLabel: ok, cancelLabel: cancel, kind: 'warning' });
+  return dialogAsk(message, { title: profile.app, okLabel: ok, cancelLabel: cancel, kind: 'warning' });
 }
 
 /** Файл, с которым запустили программу («Открыть с помощью»). */

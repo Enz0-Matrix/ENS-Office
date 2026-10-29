@@ -1,0 +1,30 @@
+[package]
+name = "ens-text-redos7"
+version = "0.1.0"
+description = "ENS-Tekst для РЕД ОС 7: окно Chromium в режиме приложения и помощник для файлов и восстановления"
+edition = "2021"
+publish = false
+
+# Тот же помощник, что у ENS-Table (app/table/redos7/src/main.rs), с названиями и фильтрами файлов
+# ENS-Tekst (возможность `text`). Файлы и восстановление — общий код src-tauri/src/files.rs и recovery.rs.
+
+[[bin]]
+name = "ens-text-r7"
+path = "../../table/redos7/src/main.rs"
+
+[features]
+default = ["text"]
+text = []
+# Объявлена только для общего кода files.rs/recovery.rs; здесь всегда выключена.
+tauri-shell = []
+
+[dependencies]
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

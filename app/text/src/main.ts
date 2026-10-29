@@ -22,6 +22,9 @@ import {
 } from './editor';
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type PageSetup } from './docx';
 import { clearRecovery, listRecovery, saveRecovery, type RecoveryRecord } from './recovery';
+import * as desktop from './desktop';
+import { readText } from '../../table/src/platform';
+import { dialog, el, setRestoreFocus, toast } from './ui';
 import { PAGE_GAP, PX, geometry, pageCount, pagination, replan, stats as pagStats } from './pagination';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -41,14 +44,6 @@ function emptyDoc(): PMNode {
 
 const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults);
 const isDirty = () => !view.state.doc.eq(savedDoc) || metaKey() !== savedMeta;
-
-function toast(text: string): void {
-  const t = $('toast');
-  t.textContent = text;
-  t.hidden = false;
-  clearTimeout((toast as unknown as { h?: number }).h);
-  (toast as unknown as { h?: number }).h = window.setTimeout(() => { t.hidden = true; }, 3500);
-}
 
 // ---------------------------------------------------------------- страница
 
@@ -137,6 +132,10 @@ const view = new EditorView($('sheet'), {
     const $pos = v.state.doc.resolve(pos);
     const link = schema.marks.link.isInSet($pos.marks());
     if (!link) return false;
+    if (desktop.isDesktop) {
+      desktop.openTarget(link.attrs.href).catch((e) => toast(String((e as Error)?.message ?? e)));
+      return true;
+    }
     const a = document.createElement('a');
     a.href = link.attrs.href;
     a.target = '_blank';
@@ -206,7 +205,7 @@ register(
     id: 'clipboard.paste', label: 'Вставить (Ctrl+V)',
     run: () => {
       view.focus();
-      navigator.clipboard.readText().then((t) => { if (t) view.dispatch(view.state.tr.insertText(t).scrollIntoView()); })
+      (desktop.isDesktop ? readText() : navigator.clipboard.readText()).then((t) => { if (t) view.dispatch(view.state.tr.insertText(t).scrollIntoView()); })
         .catch(() => toast('Браузер не дал доступ к буферу обмена — нажмите Ctrl+V'));
     },
   },
@@ -265,8 +264,8 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
-  { id: 'file.new', label: 'Создать', run: () => void guardUnsaved(newDocument) },
-  { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => void guardUnsaved(() => $('file-input').click()) },
+  { id: 'file.new', label: 'Создать', keys: ['Ctrl+KeyN'], run: () => (desktop.isDesktop ? void desktop.newWindow() : void guardUnsaved(newDocument)) },
+  { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
   { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => window.print() },
@@ -504,28 +503,6 @@ function setMargins(key: string): void {
 
 // ---------------------------------------------------------------- окна
 
-function dialog(build: (box: HTMLElement, close: () => void) => void, small = true): void {
-  const ov = $('dialog');
-  const box = document.createElement('div');
-  box.className = `modal${small ? ' small' : ''}`;
-  const close = () => { ov.hidden = true; ov.replaceChildren(); document.removeEventListener('keydown', onKey, true); view.focus(); };
-  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  document.addEventListener('keydown', onKey, true);
-  build(box, close);
-  ov.replaceChildren(box);
-  ov.hidden = false;
-  box.querySelector<HTMLElement>('input,button.primary')?.focus();
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> & { class?: string } = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  const { class: cls, ...rest } = props as Record<string, unknown>;
-  if (cls) e.className = cls as string;
-  Object.assign(e, rest);
-  e.append(...kids);
-  return e;
-}
-
 function tableDialog(): void {
   dialog((box, close) => {
     const rows = el('input', { type: 'number', value: '3', min: '1', max: '100' });
@@ -690,7 +667,10 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   savedMeta = dirty ? '' : metaKey();
   hideNotice();
   if (meta.lossy.length) {
-    showNotice(`В этой версии не перенесено: ${meta.lossy.join('; ')}. Оригинал не изменится: «Сохранить» скачивает новую копию, в ней этих элементов не будет.`, [{ label: 'Понятно', run: hideNotice }]);
+    const tail = desktop.isDesktop
+      ? 'Поверх исходного файла сохранять нельзя — «Сохранить» предложит сохранить копию, в ней этих элементов не будет.'
+      : 'Оригинал не изменится: «Сохранить» скачивает новую копию, в ней этих элементов не будет.';
+    showNotice(`В этой версии не перенесено: ${meta.lossy.join('; ')}. ${tail}`, [{ label: 'Понятно', run: hideNotice }]);
   }
   replan(view);
   updateStats();
@@ -740,6 +720,7 @@ $('file-input').addEventListener('change', async (e) => {
 
 /** Сохранение: .docx собирается целиком и проверяется чтением, прежде чем отдаётся пользователю. */
 async function save(asNew = false): Promise<void> {
+  if (desktop.isDesktop) { await desktop.save(asNew); return; }
   try {
     let name = docName;
     if (asNew || docName === 'Документ1') {
@@ -821,14 +802,18 @@ function scheduleRecovery(): void {
 }
 
 function persistRecovery(): void {
+  if (desktop.isDesktop) { void desktop.persist(); return; }
   if (!isDirty()) { void clearRecovery(docId); return; }
   void saveRecovery({ id: docId, name: docName, savedAt: Date.now(), doc: view.state.doc.toJSON(), meta });
 }
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistRecovery(); });
-window.addEventListener('beforeunload', (e) => {
-  if (isDirty()) { persistRecovery(); e.preventDefault(); e.returnValue = ''; }
-});
+// В настольной версии вопрос о сохранении и копию для восстановления ведёт desktop.ts.
+if (!desktop.isDesktop) {
+  window.addEventListener('beforeunload', (e) => {
+    if (isDirty()) { persistRecovery(); e.preventDefault(); e.returnValue = ''; }
+  });
+}
 
 async function offerRecovery(): Promise<void> {
   let list: RecoveryRecord[] = [];
@@ -901,10 +886,43 @@ updateUi();
 
 await loadFonts();
 applyPage();
-void offerRecovery();
+setRestoreFocus(() => view.focus());
+if (desktop.isDesktop) {
+  await desktop.start({
+    name: () => docName,
+    isDirty,
+    isPristine: () => !isDirty() && view.state.doc.childCount === 1 && view.state.doc.firstChild!.content.size === 0,
+    docxBytes: (name) => {
+      const bytes = exportDocx(view.state.doc, meta, name);
+      importDocx(bytes); // проверка: только что собранный файл должен читаться
+      return bytes;
+    },
+    snapshotJson: () => JSON.stringify({ doc: view.state.doc.toJSON(), meta, name: docName }),
+    openBytes: (bytes, name) => {
+      const { doc, meta: m } = importDocx(bytes);
+      loadDoc(doc, m, name);
+      return m.lossy;
+    },
+    restoreJson: (json, title) => {
+      const r = JSON.parse(json) as { doc: Record<string, unknown>; meta: DocMeta };
+      const doc = schema.nodeFromJSON(r.doc);
+      doc.check();
+      loadDoc(doc, r.meta, title, true);
+    },
+    markSaved: (name) => {
+      docName = name;
+      savedDoc = view.state.doc;
+      savedMeta = metaKey();
+      updateUi();
+      toast(`Сохранено: ${name}.docx`);
+    },
+  });
+} else {
+  void offerRecovery();
+}
 
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
     view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(meta.page), PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
