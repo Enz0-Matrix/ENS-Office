@@ -5,7 +5,7 @@
 
 import { columnName, type BorderItem, type CellBorder, type CellStyle, type Chart, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun } from './engine';
 import { fontStack } from './fonts';
-import { drawChart, parseRange, type ChartData } from './chart';
+import { drawChart, readChartData, type ChartData } from './chart';
 import { PALETTE } from './numfmt';
 
 export interface Selection {
@@ -1758,21 +1758,7 @@ export class Grid {
     return o ? { kind: o.kind, index: o.index } : null;
   }
 
-  private chartData(c: Chart): ChartData {
-    const empty: ChartData = { cats: [], names: [], series: [] };
-    const rg = parseRange(c.range);
-    if (!rg) return empty;
-    const [r1, c1, r2, c2] = rg, m = this.model();
-    const cats: string[] = [];
-    for (let r = r1 + 1; r <= r2; r++) cats.push(m.getFormattedCellValue(this.sheet, r, c1));
-    const names: string[] = [], series: number[][] = [];
-    const cols = c.kind === 2 ? 1 : c2 - c1;
-    for (let k = 1; k <= cols; k++) {
-      names.push(m.getFormattedCellValue(this.sheet, r1, c1 + k));
-      series.push(Array.from(m.getRangeNumbers(this.sheet, r1 + 1, c1 + k, r2, c1 + k)));
-    }
-    return { cats, names, series };
-  }
+  private chartData(c: Chart): ChartData { return readChartData(this.model(), this.sheet, c); }
 
   private imageRect(i: number): { x: number; y: number; w: number; h: number } {
     if (this.imgDrag?.i === i) return this.imgDrag.cur;

@@ -76,7 +76,7 @@ export function customSort(columns: { column: number; title: string }[], initial
     ${canExpand ? `<label class="sort-row">Что переставлять
       <select data-f="expand"><option value="1" ${initial.expand ? 'selected' : ''}>строки целиком (вся таблица)</option>
       <option value="0" ${initial.expand ? '' : 'selected'}>только выделенные столбцы</option></select></label>` : ''}
-    <div class="rec-actions"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>`);
+    <div class="rec-actions"><button data-act="ok" class="primary">Сортировать</button><button data-act="cancel">Отмена</button></div>`);
   const box = m.querySelector<HTMLElement>('.sort-levels')!;
   const render = () => {
     box.innerHTML = levels.map((l, i) => `

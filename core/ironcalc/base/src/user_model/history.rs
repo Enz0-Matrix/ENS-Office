@@ -148,13 +148,14 @@ pub(crate) enum Diff {
     /// ENS-Office: a sheet is protected / unprotected.
     SetSheetProtected {
         sheet: u32,
-        new_value: bool,
-        old_value: bool,
+        /// (protected, password hash attributes)
+        new_value: (bool, String),
+        old_value: (bool, String),
     },
     /// ENS-Office: the book structure is locked / unlocked.
     SetStructureLocked {
-        new_value: bool,
-        old_value: bool,
+        new_value: (bool, String),
+        old_value: (bool, String),
     },
     /// ENS-Office: a cell comment (note) set, changed or deleted (`None` — no comment).
     SetComment {
@@ -163,6 +164,12 @@ pub(crate) enum Diff {
         column: i32,
         new_value: Option<crate::types::Comment>,
         old_value: Option<crate::types::Comment>,
+    },
+    /// ENS-Office: all comments of a sheet (after rows or columns were inserted or deleted).
+    SetComments {
+        sheet: u32,
+        new_value: Vec<crate::types::Comment>,
+        old_value: Vec<crate::types::Comment>,
     },
     /// ENS-Office: manual page breaks of a sheet, (after rows, after columns).
     SetPageBreaks {

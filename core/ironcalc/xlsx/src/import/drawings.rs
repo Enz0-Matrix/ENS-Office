@@ -209,7 +209,43 @@ fn load_chart<R: Read + std::io::Seek>(
     let labels = chart.descendants().filter(|n| n.has_tag_name("dLbls")).any(|d| {
         d.children().any(|n| matches!(n.tag_name(), "showVal" | "showPercent") && n.attribute("val").is_some_and(|v| v == "1" || v == "true"))
     });
+    let axis = |tag: &str| plot.children().find(|n| n.has_tag_name(tag));
+    let title_of = |ax: Option<&XmlNode>| -> String {
+        ax.and_then(|a| a.children().find(|n| n.has_tag_name("title")))
+            .map(|t| t.descendants().filter(|n| n.has_tag_name("t")).filter_map(|n| n.text()).collect())
+            .unwrap_or_default()
+    };
+    let (cat_ax, val_ax) = (axis("catAx"), axis("valAx"));
+    let limit = |name: &str| {
+        val_ax
+            .and_then(|a| a.children().find(|n| n.has_tag_name("scaling")))
+            .and_then(|s| s.children().find(|n| n.has_tag_name(name)))
+            .and_then(|n| n.attribute("val"))
+            .and_then(|v| v.parse::<f64>().ok())
+    };
+    let on = |n: &XmlNode, a: &str| n.attribute(a).map_or(true, |v| v == "1" || v == "true");
+    let no_markers = kind == 1
+        && sers
+            .iter()
+            .all(|x| x.children().find(|n| n.has_tag_name("marker")).and_then(|m| m.children().find(|n| n.has_tag_name("symbol"))).is_some_and(|s| s.attribute("val") == Some("none")));
+    let smooth = kind == 1 && sers.iter().any(|x| x.children().find(|n| n.has_tag_name("smooth")).is_some_and(|n| on(n, "val")));
+    let thick = kind == 1
+        && sers.iter().any(|x| {
+            x.children()
+                .find(|n| n.has_tag_name("spPr"))
+                .and_then(|p| p.children().find(|n| n.has_tag_name("ln")))
+                .and_then(|l| l.attribute("w").and_then(|w| w.parse::<i64>().ok()))
+                .is_some_and(|w| w >= 45_000)
+        });
     Some(Chart {
+        x_title: title_of(cat_ax),
+        y_title: title_of(val_ax),
+        y_min: limit("min"),
+        y_max: limit("max"),
+        no_grid: kind != 2 && val_ax.is_some_and(|a| !a.children().any(|n| n.has_tag_name("majorGridlines"))),
+        no_markers,
+        smooth,
+        thick,
         colors,
         legend,
         labels,

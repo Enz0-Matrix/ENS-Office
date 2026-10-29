@@ -419,7 +419,9 @@ impl UserModel<'_> {
     /// visible rows are reordered among themselves, as Excel does with an
     /// active filter.
     pub fn sort_range_by_rows(&mut self, area: &Area, keys: &[(i32, bool)], blanks: Blanks, skip_hidden: bool) -> Result<(), String> {
-        self.guard_area(area)?;
+        if self.guard_perm(area.sheet, "sort").is_err() {
+            self.guard_area(area)?;
+        }
         let sheet = area.sheet;
         if keys.is_empty() {
             return Ok(());
@@ -813,6 +815,66 @@ impl UserModel<'_> {
         self.model.evaluate();
         self.push_diff_list(vec![Diff::SetRichText { sheet, row, column, new_value, old_value, new_text, old_text }]);
         Ok(())
+    }
+
+    /// ENS-Office: after rows (`is_row`) or columns were inserted (`delta` > 0) or deleted (`delta` < 0) at `at`:
+    /// moves the pictures, charts, comments and page breaks of the sheet with their cells. A picture or chart whose
+    /// corner was in a deleted line moves to the first line after it; comments and breaks there are removed.
+    /// Returns the steps for the undo history.
+    pub(crate) fn shift_objects(&mut self, sheet: u32, is_row: bool, at: i32, delta: i32) -> Result<Vec<Diff>, String> {
+        let map = |v: i32| -> Option<i32> {
+            if delta > 0 {
+                Some(if v >= at { v + delta } else { v })
+            } else if v >= at - delta {
+                Some(v + delta)
+            } else if v >= at {
+                None
+            } else {
+                Some(v)
+            }
+        };
+        let clamp = |v: i32| map(v).unwrap_or(at).max(1);
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let mut diffs = Vec::new();
+        let (old_images, old_charts, old_comments, old_breaks) =
+            (ws.ens_images.clone(), ws.ens_charts.clone(), ws.comments.clone(), (ws.ens_row_breaks.clone(), ws.ens_col_breaks.clone()));
+        let mut images = old_images.clone();
+        for im in &mut images {
+            if is_row { im.row = clamp(im.row) } else { im.column = clamp(im.column) }
+        }
+        let mut charts = old_charts.clone();
+        for c in &mut charts {
+            if is_row { c.row = clamp(c.row) } else { c.column = clamp(c.column) }
+        }
+        let mut comments = Vec::new();
+        for c in &old_comments {
+            let Some(r) = crate::expressions::utils::parse_reference_a1(&c.cell_ref) else { continue };
+            let (row, column) = if is_row { (map(r.row), Some(r.column)) } else { (Some(r.row), map(r.column)) };
+            if let (Some(row), Some(column)) = (row, column) {
+                comments.push(crate::types::Comment { cell_ref: comment_ref(row, column)?, ..c.clone() });
+            }
+        }
+        let shift_breaks = |list: &[i32]| -> Vec<i32> { list.iter().filter_map(|b| map(*b)).collect() };
+        let mut breaks = old_breaks.clone();
+        if is_row { breaks.0 = shift_breaks(&breaks.0) } else { breaks.1 = shift_breaks(&breaks.1) }
+        let ws = self.model.workbook.worksheet_mut(sheet)?;
+        if images != old_images {
+            ws.ens_images = images.clone();
+            diffs.push(Diff::SetImages { sheet, new_value: images, old_value: old_images });
+        }
+        if charts != old_charts {
+            ws.ens_charts = charts.clone();
+            diffs.push(Diff::SetCharts { sheet, new_value: charts, old_value: old_charts });
+        }
+        if comments != old_comments {
+            ws.comments = comments.clone();
+            diffs.push(Diff::SetComments { sheet, new_value: comments, old_value: old_comments });
+        }
+        if breaks != old_breaks {
+            (ws.ens_row_breaks, ws.ens_col_breaks) = breaks.clone();
+            diffs.push(Diff::SetPageBreaks { sheet, new_value: breaks, old_value: old_breaks });
+        }
+        Ok(diffs)
     }
 
     /// ENS-Office: the charts of the sheet.

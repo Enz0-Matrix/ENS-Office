@@ -2,7 +2,8 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { CHART_TEMPLATES, parseRange, type ChartLook } from './chart';
+import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
+import { addRangePicker, initRangePicker } from './rangepick';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
@@ -1164,7 +1165,7 @@ function deleteSelectedObject(): void {
 // --- Диаграммы ---
 
 /** Окно диаграммы: тип, заголовок, диапазон, шаблон оформления (цвета, легенда, подписи); для существующей — ещё «Удалить». */
-function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string; look?: Partial<ChartLook> }): void {
+function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string; look?: Partial<ChartLook> & ChartAxes }): void {
   const overlay = $('recovery');
   const kinds = ['Столбцы', 'Линии', 'Круговая'];
   const templates = [...CHART_TEMPLATES, ...settings.chartTemplates];
@@ -1184,13 +1185,31 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
     <p>Цвета: <span data-f="swatches"></span></p>
     <p><label>Легенда: <select data-f="legend"><option value="0">снизу</option><option value="1">справа</option><option value="2">нет</option></select></label>
       <label style="margin-left:14px"><input type="checkbox" data-f="labels"> Подписи значений</label></p>
+    <details data-f="axes" ${initial.look && (initial.look.x_title || initial.look.y_title || initial.look.y_min != null || initial.look.y_max != null || initial.look.no_grid || initial.look.no_markers || initial.look.smooth || initial.look.thick) ? 'open' : ''}>
+      <summary>Оси и линии</summary>
+      <p><label>Подпись оси X: <input data-f="xt" style="width:55%"></label></p>
+      <p><label>Подпись оси Y: <input data-f="yt" style="width:55%"></label></p>
+      <p>Шкала значений: <label>от <input data-f="ymin" size="6" placeholder="авто"></label> <label>до <input data-f="ymax" size="6" placeholder="авто"></label></p>
+      <p><label><input type="checkbox" data-f="grid"> Линии сетки</label></p>
+      <p data-f="linebox"><label><input type="checkbox" data-f="markers"> Маркеры точек</label>
+        <label style="margin-left:12px"><input type="checkbox" data-f="smooth"> Сглаженные линии</label>
+        <label style="margin-left:12px"><input type="checkbox" data-f="thick"> Толстые линии</label></p>
+    </details>
     <div class="rec-actions">${existing === null ? '' : '<button data-act="delete" class="danger">Удалить</button>'}
-    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+    <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${existing === null ? 'Создать' : 'Применить'}</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
   const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
   f('title').value = initial.title;
   f('range').value = initial.range;
+  addRangePicker(f('range'));
+  const lk = initial.look ?? {};
+  f('xt').value = lk.x_title ?? ''; f('yt').value = lk.y_title ?? '';
+  f('ymin').value = lk.y_min == null ? '' : String(lk.y_min); f('ymax').value = lk.y_max == null ? '' : String(lk.y_max);
+  f('grid').checked = !lk.no_grid; f('markers').checked = !lk.no_markers; f('smooth').checked = !!lk.smooth; f('thick').checked = !!lk.thick;
+  const num = (v: string): number | null => { const n = Number(v.trim().replace(',', '.')); return v.trim() !== '' && Number.isFinite(n) ? n : null; };
+  const showLineOpts = () => { box.querySelector<HTMLElement>('[data-f="linebox"]')!.hidden = Number(f('kind').value) !== 1; };
+  f('kind').addEventListener('change', showLineOpts); showLineOpts();
   const swatches = () => {
     const rg = parseRange(f('range').value.trim().toUpperCase());
     const kind = Number(f('kind').value);
@@ -1231,7 +1250,9 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
       const list = model.getCharts(grid.sheet);
       if (act === 'delete' && existing !== null) model.setCharts(grid.sheet, list.filter((_, k) => k !== existing));
       if (act === 'ok') {
-        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels };
+        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels,
+          x_title: f('xt').value.trim(), y_title: f('yt').value.trim(), y_min: num(f('ymin').value), y_max: num(f('ymax').value),
+          no_grid: !f('grid').checked, no_markers: !f('markers').checked, smooth: f('smooth').checked, thick: f('thick').checked };
         if (!parseRange(c.range)) { showToast('Укажите диапазон из двух и более строк и столбцов, например A1:C5.'); return; }
         if (existing === null) {
           // Новая диаграмма — справа от данных, чтобы не закрывать их.
@@ -1251,7 +1272,9 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
 function insertChart(kind: number): void {
   const s = grid.sel;
   const single = s.r1 === s.r2 && s.c1 === s.c2;
-  const [r1, c1, r2, c2] = single ? model.getSheetDimension(grid.sheet) : [s.r1, s.c1, s.r2, s.c2];
+  // Выделены целые строки или столбцы — берём занятую часть листа, как в Excel.
+  const [dr1, dc1, dr2, dc2] = model.getSheetDimension(grid.sheet);
+  const [r1, c1, r2, c2] = single ? [dr1, dc1, dr2, dc2] : [s.r1, s.c1, Math.min(s.r2, Math.max(dr2, s.r1)), Math.min(s.c2, Math.max(dc2, s.c1))];
   chartDialog(null, { kind, title: '', range: `${columnName(c1)}${r1}:${columnName(c2)}${r2}` });
 }
 
@@ -1270,14 +1293,81 @@ window.addEventListener('unhandledrejection', (e) => { if (/защищ/.test(Str
 window.addEventListener('error', (e) => { if (/защищ/.test(e.message)) { e.preventDefault(); showToast(e.message.replace(/^(Uncaught )?Error: /, '')); } });
 
 
-function toggleSheetProtection(): void {
+/** Окно пароля. confirm — ввод дважды (защита), иначе один раз (снятие). Пустой пароль при защите — без пароля. null — отмена. */
+const PERMISSIONS: [string, string][] = [
+  ['formatCells', 'форматирование ячеек'], ['formatColumns', 'форматирование столбцов (ширина, скрытие)'], ['formatRows', 'форматирование строк (высота, скрытие)'],
+  ['insertColumns', 'вставку столбцов'], ['insertRows', 'вставку строк'], ['deleteColumns', 'удаление столбцов'], ['deleteRows', 'удаление строк'], ['sort', 'сортировку'],
+];
+/** Что отметили в окне защиты листа как разрешённое. */
+let chosenPermissions: string[] = [];
+
+function askPassword(title: string, okLabel: string, confirm: boolean, perms = false): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = $('recovery');
+    overlay.innerHTML = `<div class="modal"><h2>${title}</h2>
+      ${confirm ? '<p>Пароль можно не задавать: тогда защиту снимет любой. Забытый пароль восстановить нельзя.</p>' : ''}
+      <p><label>Пароль: <input type="password" data-f="pw" autocomplete="off" style="width:60%"></label></p>
+      ${confirm ? '<p><label>Повторите: <input type="password" data-f="pw2" autocomplete="off" style="width:60%"></label></p>' : ''}
+      ${perms ? `<p>Разрешить всем пользователям листа:</p>${PERMISSIONS.map(([k, t]) => `<label style="display:block;margin-left:8px"><input type="checkbox" data-perm="${k}"> ${t}</label>`).join('')}` : ''}
+      <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${okLabel}</button></div></div>`;
+    overlay.hidden = false;
+    const box = overlay.querySelector<HTMLElement>('.modal')!;
+    const input = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`);
+    input('pw')!.focus();
+    const done = (v: string | null) => { overlay.hidden = true; focusGrid(); resolve(v); };
+    const ok = () => {
+      if (confirm && input('pw')!.value !== input('pw2')!.value) { showToast('Пароли не совпадают.'); return; }
+      chosenPermissions = [...box.querySelectorAll<HTMLInputElement>('[data-perm]')].filter((c) => c.checked).map((c) => c.dataset.perm!);
+      done(input('pw')!.value);
+    };
+    box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') done(null); if (e.key === 'Enter') ok(); });
+    box.addEventListener('click', (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (act === 'ok') ok(); else if (act === 'cancel') done(null);
+    });
+  });
+}
+
+const randomSalt = () => crypto.getRandomValues(new Uint8Array(16));
+
+async function toggleSheetProtection(): Promise<void> {
   if (editing) commitEdit(0, 0);
-  const on = !model.isSheetProtected(grid.sheet);
   try {
-    model.setSheetProtected(grid.sheet, on);
-    showToast(on ? 'Лист защищён: менять можно только незащищённые ячейки.' : 'Защита листа снята.');
-  } catch (e) { showToast(String(e)); }
+    if (model.isSheetProtected(grid.sheet)) {
+      const pw = await askPasswordIf(model.isSheetPasswordProtected(grid.sheet), 'Снять защиту листа', 'Снять защиту');
+      if (pw === null) return;
+      model.unprotectSheet(grid.sheet, pw);
+      showToast('Защита листа снята.');
+    } else {
+      const pw = await askPassword('Защитить лист', 'Защитить', true, true);
+      if (pw === null) return;
+      model.protectSheet(grid.sheet, pw, randomSalt(), chosenPermissions);
+      showToast('Лист защищён: менять можно только незащищённые ячейки.');
+    }
+  } catch (e) { showToast(String(e).replace(/^Error: /, '')); }
   grid.invalidateLayout(); updateFormulaBar(); refreshRibbon();
+}
+
+/** Пароль нужен — спрашиваем; не нужен — пустой пароль без вопросов. */
+async function askPasswordIf(needed: boolean, title: string, okLabel: string): Promise<string | null> {
+  return needed ? askPassword(title, okLabel, false) : '';
+}
+
+async function toggleBookProtection(): Promise<void> {
+  try {
+    if (model.isStructureLocked()) {
+      const pw = await askPasswordIf(model.isStructurePasswordProtected(), 'Снять защиту структуры книги', 'Снять защиту');
+      if (pw === null) return;
+      model.unlockStructure(pw);
+      showToast('Защита структуры снята.');
+    } else {
+      const pw = await askPassword('Защитить структуру книги', 'Защитить', true);
+      if (pw === null) return;
+      model.lockStructure(pw, randomSalt());
+      showToast('Структура книги защищена.');
+    }
+  } catch (e) { showToast(String(e).replace(/^Error: /, '')); }
+  renderSheetTabs(); refreshRibbon();
 }
 
 /** Окно «Защита ячеек»: защищаемая ячейка, скрыть формулы (действует после защиты листа). */
@@ -1290,7 +1380,7 @@ function cellProtectionDialog(): void {
     <p><label><input type="checkbox" data-f="locked"${cur.locked ? ' checked' : ''}> Защищаемая ячейка</label></p>
     <p><label><input type="checkbox" data-f="hidden"${cur.hidden ? ' checked' : ''}> Скрыть формулы</label></p>
     <p>Параметры начинают действовать после защиты листа (Рецензирование → Защитить лист).</p>
-    <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">ОК</button></div></div>`;
+    <div class="rec-actions"><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
   const close = () => { overlay.hidden = true; focusGrid(); };
@@ -2007,6 +2097,19 @@ function openConditionalMenu(): void {
 // После текущего щелчка: иначе тот же mousedown сразу закрыл бы окно.
 grid.onFilterButton = (row, column, x, y) => setTimeout(() => openFilterPopup(row, column, x, y));
 
+initRangePicker({
+  selection: (format) => {
+    const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
+    const plain = s.r1 === s.r2 && s.c1 === s.c2 ? cell(s.r1, s.c1) : `${cell(s.r1, s.c1)}:${cell(s.r2, s.c2)}`;
+    if (format === 'plain') return plain;
+    const name = model.getWorksheetsProperties()[grid.sheet].name;
+    const q = /^[\p{L}_][\p{L}\p{N}_.]*$/u.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+    const abs = (r: number, c: number) => `$${columnName(c)}$${r}`;
+    return `${q}!${abs(s.r1, s.c1)}${s.r1 === s.r2 && s.c1 === s.c2 ? '' : `:${abs(s.r2, s.c2)}`}`;
+  },
+  focusGrid,
+});
+
 initNames({
   model: () => model,
   sheet: () => grid.sheet,
@@ -2655,7 +2758,19 @@ function openFormatCells(): void {
     model: () => model,
     sheet: () => grid.sheet,
     active: () => ({ row: s.row, column: s.column }),
-    apply: (code) => style('num_fmt', () => code),
+    apply: (code) => { if (code !== model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt) style('num_fmt', () => code); },
+    protection: {
+      get: () => model.getCellStyle(grid.sheet, s.row, s.column).style.protection ?? { locked: true, hidden: false },
+      set: (p) => {
+        const mark = model.undoMark();
+        try {
+          model.updateRangeStyle(selectionArea(), 'protection.locked', String(p.locked));
+          model.updateRangeStyle(selectionArea(), 'protection.hidden', String(p.hidden));
+        } catch (err) { showToast(String(err).replace(/^Error: /, '')); }
+        model.mergeUndoSince(mark);
+        grid.render();
+      },
+    },
   }, model.getCellStyle(grid.sheet, s.row, s.column).style.num_fmt).then(() => focusGrid());
 }
 
@@ -2725,12 +2840,9 @@ register(
   { id: 'insert.image', label: 'Вставить рисунок', keywords: ['picture', 'image', 'рисунок', 'картинка', 'изображение', 'фото'],
     run: () => imageInput.click() },
   { id: 'protect.sheet', label: 'Защитить лист / снять защиту', keywords: ['protect sheet', 'защита листа', 'защитить', 'блокировка'],
-    checked: () => model.isSheetProtected(grid.sheet), run: () => toggleSheetProtection() },
+    checked: () => model.isSheetProtected(grid.sheet), run: () => void toggleSheetProtection() },
   { id: 'protect.book', label: 'Защитить структуру книги / снять защиту', keywords: ['protect workbook', 'защита книги', 'структура книги'],
-    checked: () => model.isStructureLocked(), run: () => {
-      try { model.setStructureLocked(!model.isStructureLocked()); showToast(model.isStructureLocked() ? 'Структура книги защищена.' : 'Защита структуры снята.'); } catch (e) { showToast(String(e)); }
-      renderSheetTabs(); refreshRibbon();
-    } },
+    checked: () => model.isStructureLocked(), run: () => void toggleBookProtection() },
   { id: 'protect.cells', label: 'Защита ячеек…', keywords: ['locked', 'hidden', 'скрыть формулы', 'защищаемая ячейка'],
     run: () => cellProtectionDialog() },
   { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
@@ -3235,6 +3347,7 @@ initBackstage({
     model.setRecognizeDates(settings.recognizeDates);
     newBookFont.name = settings.defaultFont;
     newBookFont.size = settings.defaultFontSize;
+    showScope(); syncUndoState();
     grid.render(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat();
   },
   recoveryFolder: () => desk.recoveryFolder(),

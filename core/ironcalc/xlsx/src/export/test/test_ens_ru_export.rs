@@ -353,14 +353,17 @@ fn test_ens_charts_export() {
             model.set_user_input(0, r as i32 + 1, c as i32 + 1, v).unwrap();
         }
     }
-    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250, colors: vec!["#112233".to_string(), "#AABBCC".to_string()], legend: 1, labels: true };
-    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250, colors: vec!["#010203".to_string(), "#040506".to_string(), "#070809".to_string()], legend: 2, labels: true };
+    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250, colors: vec!["#112233".to_string(), "#AABBCC".to_string()], legend: 1, labels: true, x_title: "Квартал".to_string(), y_title: "Сумма & итог".to_string(), y_min: Some(5.0), y_max: Some(50.0), no_grid: true, no_markers: false, smooth: false, thick: false };
+    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250, colors: vec!["#010203".to_string(), "#040506".to_string(), "#070809".to_string()], legend: 2, labels: true, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: false, smooth: false, thick: false };
     assert!(model.set_charts(0, vec![Chart { range: "A1".to_string(), ..bar.clone() }]).is_err());
     model.set_charts(0, vec![bar.clone()]).unwrap();
+    let line = Chart { kind: 1, title: String::new(), range: "A1:C4".to_string(), row: 12, column: 2, dx: 0, dy: 0, width: 300, height: 200, colors: vec![], legend: 0, labels: false, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: true, smooth: true, thick: true };
     model.set_charts(0, vec![bar.clone(), pie.clone()]).unwrap();
+    let _ = &line;
     model.undo().unwrap();
     assert_eq!(model.get_charts(0).unwrap(), vec![bar.clone()]);
     model.redo().unwrap();
+    model.set_charts(0, vec![bar.clone(), pie.clone(), line.clone()]).unwrap();
     assert_eq!(model.get_range_numbers(0, 2, 2, 2, 3).unwrap(), vec![10.0, 12.0]);
     let name = "temp_ens_charts.xlsx";
     save_to_xlsx(model.get_model(), name).unwrap();
@@ -378,9 +381,108 @@ fn test_ens_charts_export() {
     let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
     std::fs::remove_file(name).unwrap();
     assert!(chart1.contains("<c:barChart>") && chart1.contains("<c:f>Sheet1!$B$2:$B$4</c:f>") && chart1.contains("План &amp; факт"), "{chart1}");
-    assert!(chart1.contains("<c:v>12</c:v>") && chart1.contains("<a:srgbClr val=\"AABBCC\"/>") && chart1.contains("<c:legendPos val=\"r\"/>") && chart1.contains("<c:showVal val=\"1\"/>"), "{chart1}");
+    assert!(chart1.contains("<c:v>12</c:v>") && chart1.contains("<a:srgbClr val=\"AABBCC\"/>") && chart1.contains("<c:legendPos val=\"r\"/>") && chart1.contains("<c:showVal val=\"1\"/>") && chart1.contains("Сумма &amp; итог") && chart1.contains("<c:max val=\"50\"/><c:min val=\"5\"/>") && !chart1.contains("<c:majorGridlines/>"), "{chart1}");
     assert!(chart2.contains("<c:pieChart>") && !chart2.contains("$C$") && chart2.contains("<c:dPt><c:idx val=\"2\"/>") && !chart2.contains("<c:legend>") && chart2.contains("<c:showPercent val=\"1\"/>"), "{chart2}");
     assert!(drawing.contains("<xdr:graphicFrame") && types.contains("/xl/charts/chart2.xml"), "{drawing}");
     let back = ironcalc_base::UserModel::from_model(back);
-    assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie]);
+    assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie, line]);
+}
+
+// ENS-Office: passwords of the sheet and of the book structure (agile SHA-512 hash), round trip and undo.
+#[test]
+fn test_ens_protection_password() {
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.protect_sheet(0, "секрет", b"0123456789abcdef").unwrap();
+    model.lock_structure("книга", b"fedcba9876543210").unwrap();
+    assert!(model.is_sheet_password_protected(0).unwrap() && model.is_structure_password_protected());
+    assert!(model.set_user_input(0, 1, 1, "y").is_err());
+    assert_eq!(model.unprotect_sheet(0, "не то"), Err("Неверный пароль.".to_string()));
+    assert_eq!(model.unlock_structure(""), Err("Неверный пароль.".to_string()));
+    let name = "temp_ens_password.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let mut book = String::new();
+    zip.by_name("xl/workbook.xml").unwrap().read_to_string(&mut book).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains(r#"algorithmName="SHA-512" hashValue=""#) && sheet.contains(r#"spinCount="100000""#), "{sheet}");
+    assert!(book.contains("workbookHashValue=") && book.contains(r#"lockStructure="1""#), "{book}");
+    let mut back = ironcalc_base::UserModel::from_model(back);
+    assert!(back.is_sheet_protected(0).unwrap());
+    assert!(back.unprotect_sheet(0, "секрет2").is_err());
+    back.unprotect_sheet(0, "секрет").unwrap();
+    back.set_user_input(0, 1, 1, "z").unwrap();
+    back.undo().unwrap();
+    back.undo().unwrap();
+    assert!(back.is_sheet_protected(0).unwrap());
+    assert!(back.unlock_structure("книга").is_ok() && !back.is_structure_locked());
+}
+
+// ENS-Office: pictures, charts, comments and page breaks follow their cells when rows / columns are inserted or deleted.
+#[test]
+fn test_ens_objects_shift_with_rows_and_columns() {
+    use ironcalc_base::types::{Chart, Image};
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    model.set_comment(0, 5, 2, "n", "A").unwrap(); // B5
+    model.set_comment(0, 2, 2, "m", "A").unwrap(); // B2
+    model.add_image(0, Image { name: String::new(), row: 4, column: 3, dx: 0, dy: 0, width: 10, height: 10, ext: "png".to_string(), data: vec![1] }).unwrap();
+    model.set_charts(0, vec![Chart { kind: 0, title: String::new(), range: "A1:B3".to_string(), row: 6, column: 5, dx: 0, dy: 0, width: 100, height: 100, colors: vec![], legend: 0, labels: false, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: false, smooth: false, thick: false }]).unwrap();
+    model.set_page_break(0, true, 4, true).unwrap();
+    model.insert_rows(0, 3, 2).unwrap();
+    assert!(model.get_comment(0, 7, 2).unwrap().is_some() && model.get_comment(0, 2, 2).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].row, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 8);
+    assert_eq!(model.get_page_breaks(0).unwrap().0, vec![6]);
+    model.undo().unwrap();
+    assert!(model.get_comment(0, 5, 2).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].row, 4);
+    assert_eq!(model.get_page_breaks(0).unwrap().0, vec![4]);
+    model.redo().unwrap();
+    model.delete_rows(0, 6, 2).unwrap();
+    // The comment on B7 was in the deleted rows 6-7; the picture on row 6 and chart on row 8 move up.
+    assert_eq!(model.get_comments(0).unwrap().len(), 1);
+    assert_eq!(model.get_images(0).unwrap()[0].row, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 6);
+    model.undo().unwrap();
+    assert_eq!(model.get_comments(0).unwrap().len(), 2);
+    assert_eq!(model.get_charts(0).unwrap()[0].row, 8);
+    model.insert_columns(0, 2, 3).unwrap();
+    assert!(model.get_comment(0, 7, 5).unwrap().is_some());
+    assert_eq!(model.get_images(0).unwrap()[0].column, 6);
+    assert_eq!(model.get_charts(0).unwrap()[0].column, 8);
+    model.undo().unwrap();
+    assert!(model.get_comment(0, 7, 2).unwrap().is_some());
+    assert_eq!(model.get_charts(0).unwrap()[0].column, 5);
+}
+
+// ENS-Office: what a protected sheet still allows (formatting, inserting rows…), round trip.
+#[test]
+fn test_ens_protection_permissions() {
+    use ironcalc_base::expressions::types::Area;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    let a1 = Area { sheet: 0, row: 1, column: 1, width: 1, height: 1 };
+    model.protect_sheet_with(0, "", &[], &["formatCells".to_string(), "insertRows".to_string()]).unwrap();
+    assert_eq!(model.get_sheet_permissions(0).unwrap(), vec!["formatCells", "insertRows"]);
+    assert!(model.update_range_style(&a1, "font.b", "true").is_ok());
+    assert!(model.insert_rows(0, 1, 1).is_ok());
+    assert!(model.delete_rows(0, 1, 1).is_err());
+    assert!(model.set_columns_width(0, 1, 1, 50.0).is_err());
+    assert!(model.set_user_input(0, 2, 1, "y").is_err());
+    let name = "temp_ens_permissions.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains(r#"formatCells="0""#) && sheet.contains(r#"insertRows="0""#), "{sheet}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_sheet_permissions(0).unwrap(), vec!["formatCells", "insertRows"]);
 }

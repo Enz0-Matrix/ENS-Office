@@ -112,7 +112,18 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
 
     let sheets = sheets_str.join("");
     let defined_names = defined_names_str.join("");
-    let workbook_protection = if workbook.ens_structure_locked { "<workbookProtection lockStructure=\"1\"/>" } else { "" };
+    let workbook_protection = if workbook.ens_structure_locked {
+        let attrs = workbook
+            .ens_structure_attrs
+            .replace(" password=", " workbookPassword=")
+            .replace(" algorithmName=", " workbookAlgorithmName=")
+            .replace(" hashValue=", " workbookHashValue=")
+            .replace(" saltValue=", " workbookSaltValue=")
+            .replace(" spinCount=", " workbookSpinCount=");
+        format!("<workbookProtection{attrs} lockStructure=\"1\"/>")
+    } else {
+        String::new()
+    };
     format!("{XML_DECLARATION}\n\
     <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
     {workbook_protection}\

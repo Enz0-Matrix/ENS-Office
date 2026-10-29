@@ -689,6 +689,32 @@ impl Model {
         self.model.set_sheet_protected(sheet, on).map_err(to_js_error)
     }
 
+    /// ENS-Office: protects the sheet with a password (empty — none); `salt` — random bytes.
+    #[wasm_bindgen(js_name = "protectSheet")]
+    pub fn protect_sheet(&mut self, sheet: u32, password: &str, salt: Vec<u8>, allowed: Vec<String>) -> Result<(), JsError> {
+        self.model.protect_sheet_with(sheet, password, &salt, &allowed).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "unprotectSheet")]
+    pub fn unprotect_sheet(&mut self, sheet: u32, password: &str) -> Result<(), JsError> {
+        self.model.unprotect_sheet(sheet, password).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "isStructurePasswordProtected")]
+    pub fn is_structure_password_protected(&self) -> bool {
+        self.model.is_structure_password_protected()
+    }
+
+    #[wasm_bindgen(js_name = "lockStructure")]
+    pub fn lock_structure(&mut self, password: &str, salt: Vec<u8>) -> Result<(), JsError> {
+        self.model.lock_structure(password, &salt).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "unlockStructure")]
+    pub fn unlock_structure(&mut self, password: &str) -> Result<(), JsError> {
+        self.model.unlock_structure(password).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = "isStructureLocked")]
     pub fn is_structure_locked(&self) -> bool {
         self.model.is_structure_locked()

@@ -14,6 +14,8 @@ export interface NamesHost {
   toast(text: string): void;
 }
 
+import { addRangePicker } from './rangepick';
+
 let host: NamesHost;
 export function initNames(h: NamesHost): void { host = h; }
 
@@ -80,7 +82,7 @@ export function openNameManager(): void {
         <label>Область <select data-f="scope"><option value="">Книга</option>${sheets.map((s, i) => `<option value="${i}">${esc(s)}</option>`).join('')}</select></label>
         <label>Диапазон <input data-f="formula" autocomplete="off" spellcheck="false"></label>
         <div class="names-note"></div>
-        <div class="rec-actions"><button data-act="useSel">Взять из выделения</button><button data-act="save" class="primary">ОК</button><button data-act="back">Отмена</button></div>
+        <div class="rec-actions"><button data-act="useSel">Взять из выделения</button><button data-act="save" class="primary">Сохранить</button><button data-act="back">Отмена</button></div>
       </div>
       <div class="rec-actions names-actions">
         <button data-act="new">Создать…</button><button data-act="edit" ${selected < 0 ? 'disabled' : ''}>Изменить…</button>
@@ -93,6 +95,7 @@ export function openNameManager(): void {
     const form = box.querySelector<HTMLElement>('.names-form')!;
     const f = (k: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${k}"]`)!;
     let editing: { name: string; scope: number | null } | null = null;
+    addRangePicker(f('formula'), 'sheet');
     const openForm = (init?: { name: string; scope: number | null; formula: string }) => {
       editing = init ? { name: init.name, scope: init.scope } : null;
       f('name').value = init?.name ?? '';

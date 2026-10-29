@@ -137,13 +137,16 @@ export interface FormatHost {
   sheet: () => number;
   active: () => { row: number; column: number };
   apply: (code: string) => void;
+  /** Вкладка «Защита»: состояние активной ячейки и запись нового. Нет — вкладки нет. */
+  protection?: { get: () => { locked: boolean; hidden: boolean }; set: (p: { locked: boolean; hidden: boolean }) => void };
 }
 
-type Category = 'general' | 'number' | 'currency' | 'date' | 'time' | 'percent' | 'fraction' | 'scientific' | 'text' | 'custom';
+type Category = 'general' | 'number' | 'currency' | 'date' | 'time' | 'percent' | 'fraction' | 'scientific' | 'text' | 'custom' | 'protection';
 
 const CATEGORIES: [Category, string][] = [
   ['general', 'Общий'], ['number', 'Числовой'], ['currency', 'Денежный'], ['date', 'Дата'], ['time', 'Время'],
   ['percent', 'Процентный'], ['fraction', 'Дробный'], ['scientific', 'Экспоненциальный'], ['text', 'Текстовый'], ['custom', 'Все форматы'],
+  ['protection', 'Защита'],
 ];
 
 const CURRENCIES: [string, string][] = [['₽', '₽ (рубль)'], ['$', '$ (доллар)'], ['€', '€ (евро)'], ['¥', '¥ (юань)'], ['', 'нет']];
@@ -209,24 +212,27 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
   const m = host.model(), sheet = host.sheet(), at = host.active();
   const init = classify(current);
   let cat: Category = init.cat;
+  let fmtCat: Category = init.cat; // последняя вкладка числового формата: «Защита» формат не меняет
   const num = init.num;
   let dateCode = DATE_CODES.includes(current) ? current : DATE_CODES[0];
   let fractionCode = FRACTION_CODES.includes(current) ? current : FRACTION_CODES[0];
   let timeCode = TIME_CODES.includes(current) ? current : TIME_CODES[0];
   let custom = isGeneral(current) ? 'general' : current;
+  const prot0 = host.protection?.get() ?? { locked: true, hidden: false };
+  const prot = { ...prot0 };
 
   const o = document.getElementById('recovery')!;
   o.innerHTML = `<div class="modal fmt-modal">
     <h2>Формат ячеек</h2>
     <div class="fmt-body">
-      <div class="fmt-cats" role="listbox">${CATEGORIES.map(([k, t]) => `<button data-cat="${k}" role="option">${t}</button>`).join('')}</div>
+      <div class="fmt-cats" role="listbox">${CATEGORIES.filter(([k]) => k !== 'protection' || host.protection).map(([k, t]) => `<button data-cat="${k}" role="option">${t}</button>`).join('')}</div>
       <div class="fmt-pane">
         <div class="fmt-sample"><span>Образец</span><b></b></div>
         <div class="fmt-opts"></div>
         <p class="fmt-hint"></p>
       </div>
     </div>
-    <div class="rec-actions"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div>
+    <div class="rec-actions"><button data-act="ok" class="primary">Применить</button><button data-act="cancel">Отмена</button></div>
   </div>`;
   o.hidden = false;
   const md = o.querySelector<HTMLElement>('.modal')!;
@@ -235,7 +241,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
   const sample = md.querySelector<HTMLElement>('.fmt-sample b')!;
 
   const code = (): string => {
-    switch (cat) {
+    switch (cat === 'protection' ? fmtCat : cat) {
       case 'general': return 'general';
       case 'number': return numberCode(num, 'number');
       case 'currency': return numberCode(num, 'currency');
@@ -246,9 +252,11 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       case 'scientific': return `0${num.decimals ? '.' + zeros(num.decimals) : ''}E+00`;
       case 'text': return '@';
       case 'custom': return custom.trim() || 'general';
+      case 'protection': return current;
     }
   };
   const showSample = () => {
+    sample.parentElement!.hidden = cat === 'protection';
     let text = '';
     try { text = m.formatCellValueAs(sheet, at.row, at.column, code()); } catch { text = '—'; }
     sample.textContent = text || '(пустая ячейка)';
@@ -276,6 +284,7 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       fraction: 'Число простой дробью: 1,5 → 1 1/2. ?/? — знаменатель до 9, ??/?? — до 99, ?/8 — восьмые доли.',
       scientific: 'Очень большие и маленькие числа: 1,23E+06 = 1 230 000.',
       text: 'Ячейка — текст, даже если в ней цифры (номера, коды, ИНН). Действует на новый ввод.',
+      protection: 'Действует после защиты листа (Рецензирование → Защитить лист). Защищаемая ячейка не меняется, скрытая формула не видна в строке формул.',
       custom: 'Свой код в записи Excel: 0 — обязательная цифра, # — необязательная, «,» — разряды, «.» — дробная часть, ; — отрицательные, "текст" — надпись.',
     };
     hint.textContent = hints[cat];
@@ -295,6 +304,9 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
       opts.innerHTML = listField('fraction', FRACTION_CODES, fractionCode);
     } else if (cat === 'time') {
       opts.innerHTML = listField('time', TIME_CODES, timeCode);
+    } else if (cat === 'protection') {
+      opts.innerHTML = `<label class="fmt-check"><input type="checkbox" data-f="locked" ${prot.locked ? 'checked' : ''}> Защищаемая ячейка</label>
+        <label class="fmt-check"><input type="checkbox" data-f="hidden" ${prot.hidden ? 'checked' : ''}> Скрыть формулы</label>`;
     } else if (cat === 'custom') {
       opts.innerHTML = `<label class="fmt-row">Код <input data-f="custom" value="${esc(custom)}" spellcheck="false"></label>
         ${listField('customList', CUSTOM_CODES.includes(custom) ? CUSTOM_CODES : [custom, ...CUSTOM_CODES], custom)}`;
@@ -315,6 +327,10 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
     if (s) num.symbol = s.value;
     const c = md.querySelector<HTMLInputElement>('[data-f="custom"]');
     if (c) custom = c.value;
+    const lk = md.querySelector<HTMLInputElement>('[data-f="locked"]');
+    if (lk) prot.locked = lk.checked;
+    const hd = md.querySelector<HTMLInputElement>('[data-f="hidden"]');
+    if (hd) prot.hidden = hd.checked;
     showSample();
   };
   md.addEventListener('input', readInputs);
@@ -323,13 +339,16 @@ export function formatCellsDialog(host: FormatHost, current: string): Promise<vo
   return new Promise((resolve) => {
     const close = (ok: boolean) => {
       o.hidden = true;
-      if (ok) host.apply(code());
+      if (ok) {
+        host.apply(code());
+        if (host.protection && (prot.locked !== prot0.locked || prot.hidden !== prot0.hidden)) host.protection.set(prot);
+      }
       resolve();
     };
     md.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       const c = t.closest<HTMLElement>('[data-cat]');
-      if (c) { cat = c.dataset.cat as Category; if (cat === 'custom' && custom === 'general' && !isGeneral(current)) custom = current; render(); return; }
+      if (c) { cat = c.dataset.cat as Category; if (cat !== 'protection') fmtCat = cat; if (cat === 'custom' && custom === 'general' && !isGeneral(current)) custom = current; render(); return; }
       const item = t.closest<HTMLElement>('[data-code]');
       if (item) {
         const list = item.parentElement!.dataset.f;

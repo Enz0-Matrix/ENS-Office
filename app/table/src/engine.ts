@@ -21,7 +21,9 @@ export interface RichRun { text: string; b?: boolean; i?: boolean; u?: boolean; 
 export interface ImageInfo { row: number; column: number; dx: number; dy: number; width: number; height: number; ext: string; name: string; sig: number }
 
 /** Диаграмма: kind 0 — столбцы, 1 — линии, 2 — круговая; range — «A1:C5» (первая строка — имена рядов, первый столбец — подписи). */
-export interface Chart { kind: number; title: string; range: string; row: number; column: number; dx: number; dy: number; width: number; height: number; colors: string[]; legend: number; labels: boolean }
+export interface Chart { kind: number; title: string; range: string; row: number; column: number; dx: number; dy: number; width: number; height: number; colors: string[]; legend: number; labels: boolean;
+  /** Подписи осей, границы шкалы значений (null — авто), без сетки, линии: без маркеров, сглаженные, толстые. */
+  x_title: string; y_title: string; y_min: number | null; y_max: number | null; no_grid: boolean; no_markers: boolean; smooth: boolean; thick: boolean }
 
 export interface CellStyle {
   num_fmt: string;
@@ -139,6 +141,14 @@ export interface Model {
   /** Защита снабжена паролем (задан в другой программе): снять её здесь нельзя. */
   isSheetPasswordProtected(sheet: number): boolean;
   setSheetProtected(sheet: number, on: boolean): void;
+  /** Защита листа с паролем (пустой пароль — без пароля); salt — случайные байты. */
+  /** allowed — что остаётся разрешённым: formatCells, formatColumns, formatRows, insertColumns, insertRows, deleteColumns, deleteRows, sort. */
+  protectSheet(sheet: number, password: string, salt: Uint8Array, allowed: string[]): void;
+  /** Снять защиту листа; с паролем — нужен верный пароль (иначе ошибка «Неверный пароль»). */
+  unprotectSheet(sheet: number, password: string): void;
+  isStructurePasswordProtected(): boolean;
+  lockStructure(password: string, salt: Uint8Array): void;
+  unlockStructure(password: string): void;
   isStructureLocked(): boolean;
   setStructureLocked(on: boolean): void;
   getPageSetup(sheet: number): string;

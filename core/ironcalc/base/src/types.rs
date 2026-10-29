@@ -137,6 +137,8 @@ pub struct Workbook {
     pub ens_change_log: String,
     /// ENS-Office: the book structure is locked (Excel's `<workbookProtection lockStructure>`).
     pub ens_structure_locked: bool,
+    /// ENS-Office: the password hash of the locked structure, as XML attributes (see `Worksheet::ens_protect_attrs`).
+    pub ens_structure_attrs: String,
     /// ENS-Office: formatted parts of the text of shared strings (Excel's `<r>` runs), by index in
     /// `shared_strings`. Such a string is used by one cell only and is not found by text.
     pub ens_rich: HashMap<i32, Vec<RichRun>>,
@@ -337,7 +339,7 @@ pub struct Worksheet {
 
 /// A chart over a sheet: drawn from the cells of `range` ("A1:C5" on the same sheet; the first row —
 /// names of the series, the first column — categories, the other columns — series).
-#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone)]
 pub struct Chart {
     /// 0 — columns, 1 — lines, 2 — pie.
     pub kind: u8,
@@ -358,6 +360,26 @@ pub struct Chart {
     /// Values (percents for a pie) written on the chart.
     #[serde(default)]
     pub labels: bool,
+    /// Axis titles (the category axis below, the value axis on the left).
+    #[serde(default)]
+    pub x_title: String,
+    #[serde(default)]
+    pub y_title: String,
+    /// Limits of the value axis; `None` — automatic.
+    #[serde(default)]
+    pub y_min: Option<f64>,
+    #[serde(default)]
+    pub y_max: Option<f64>,
+    /// No grid lines (they are on by default).
+    #[serde(default)]
+    pub no_grid: bool,
+    /// Lines: no point markers; smoothed lines; thick lines.
+    #[serde(default)]
+    pub no_markers: bool,
+    #[serde(default)]
+    pub smooth: bool,
+    #[serde(default)]
+    pub thick: bool,
 }
 
 /// A picture over a sheet: its top left corner is at the top left of the cell (`row`, `column`).

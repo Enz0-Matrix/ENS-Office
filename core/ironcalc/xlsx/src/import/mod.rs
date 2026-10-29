@@ -145,7 +145,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         }
     };
     let ens_change_log = load_change_log(&mut archive);
-    let ens_structure_locked = load_structure_locked(&mut archive);
+    let (ens_structure_locked, ens_structure_attrs) = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
     views.insert(
         0,
@@ -171,24 +171,33 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         theme,
         ens_change_log,
         ens_structure_locked,
+        ens_structure_attrs,
         ens_rich,
     })
 }
 
-/// ENS-Office: `<workbookProtection lockStructure>` of `xl/workbook.xml`.
-fn load_structure_locked<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> bool {
+/// ENS-Office: `<workbookProtection lockStructure>` of `xl/workbook.xml`: locked or not, and the password
+/// hash as attributes named as in `<sheetProtection>`.
+fn load_structure_locked<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> (bool, String) {
     let mut text = String::new();
     let read = archive.by_name("xl/workbook.xml").map(|mut f| f.read_to_string(&mut text));
     if !matches!(read, Ok(Ok(_))) {
-        return false;
+        return (false, String::new());
     }
-    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return false };
-    let locked = root
-        .children()
-        .find(|n| n.has_tag_name("workbookProtection"))
-        .and_then(|n| n.attribute("lockStructure").map(|v| v == "1" || v == "true"))
-        .unwrap_or(false);
-    locked
+    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return (false, String::new()) };
+    let Some(n) = root.children().find(|n| n.has_tag_name("workbookProtection")) else { return (false, String::new()) };
+    let locked = n.attribute("lockStructure").is_some_and(|v| v == "1" || v == "true");
+    let attrs = [
+        ("workbookPassword", "password"),
+        ("workbookAlgorithmName", "algorithmName"),
+        ("workbookHashValue", "hashValue"),
+        ("workbookSaltValue", "saltValue"),
+        ("workbookSpinCount", "spinCount"),
+    ]
+    .iter()
+    .filter_map(|(from, to)| n.attribute(from).map(|v| format!(" {to}=\"{}\"", v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;"))))
+    .collect::<String>();
+    (locked, attrs)
 }
 
 /// ENS-Office: the change log from `customXml/item*.xml` (root `<ensChangeLog>`).
