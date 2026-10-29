@@ -287,6 +287,165 @@ await test('разрыв страницы: Ctrl+Enter', async () => {
   await p.context().close();
 });
 
+
+// ---- Постраничная вёрстка ----
+const LAYOUT_JS = `
+  window.__bad = () => {
+    const E = window.ens, v = E.view, g = E.geometry();
+    const box = v.dom.getBoundingClientRect(), scale = box.width / v.dom.offsetWidth;
+    const bad = [];
+    v.state.doc.descendants((node, pos) => {
+      if (!node.isTextblock) return true;
+      const start = pos + 1, end = pos + 1 + node.content.size, step = Math.max(1, Math.floor((end - start) / 60));
+      for (let q = start; q <= end; q += step) {
+        const c = v.coordsAtPos(q, 1), top = (c.top - box.top) / scale, bot = (c.bottom - box.top) / scale, mid = (top + bot) / 2;
+        const p = Math.floor((mid - g.top) / g.P), s = p * g.P + g.top, e = s + g.C;
+        if (top < s - 1 || bot > e + 2) bad.push({ q, p, top: Math.round(top), bot: Math.round(bot), s: Math.round(s), e: Math.round(e) });
+      }
+      return false;
+    });
+    return bad.slice(0, 5);
+  };
+  window.__load = (build) => {
+    const E = window.ens, s = E.schema, P = (t, a) => s.nodes.paragraph.create(a || null, t ? s.text(t) : undefined);
+    E.loadDoc(s.nodes.doc.create(null, build(s, P)), E.getMeta(), 'long');
+  };
+  window.__sig = () => [...document.querySelectorAll('.pg-pad, .pg-split, .pg-gap')].map((e) => e.className + ':' + (e.style.paddingTop || e.style.height || e.firstChild?.style?.height)).join('|');
+`;
+const FILL = 'Съешь ещё этих мягких французских булок, да выпей же чаю. ';
+async function longPage(build) {
+  const p = await page();
+  await p.evaluate(LAYOUT_JS);
+  await p.evaluate(`(${build.toString()})`.replace(/^\(/, 'window.__build = ').replace(/\)$/, ''));
+  await p.evaluate(() => window.__load(window.__build));
+  await p.waitForTimeout(400);
+  return p;
+}
+
+await test('вёрстка: текст всех страниц лежит внутри полей, страниц несколько', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 80 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 9)))));
+  ok(await p.evaluate(() => window.ens.pageCount()) >= 4, 'страниц меньше четырёх');
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей');
+  eq(await p.evaluate(() => document.querySelectorAll('.paper').length), await p.evaluate(() => window.ens.pageCount()), 'подложек столько же, сколько страниц');
+  await p.context().close();
+});
+
+await test('вёрстка: расчёт устойчив, отмена и «грязный» документ не затронуты', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 70 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  const sig = await p.evaluate(() => window.__sig());
+  for (let i = 0; i < 3; i++) { await p.evaluate(() => window.ens.run('view.zoomIn')); await p.waitForTimeout(80); }
+  eq(await p.evaluate(() => window.__sig()), sig, 'распорки после повторных расчётов');
+  eq(await p.evaluate(() => window.ens.isDirty()), false, 'документ не «грязный» от вёрстки');
+  await p.click('.ProseMirror p >> nth=0');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await p.evaluate(() => window.ens.view.state.doc.childCount), 70, 'отмена не съела документ');
+  await p.context().close();
+});
+
+await test('вёрстка: ввод в начале сдвигает текст на следующие страницы, удаление возвращает', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 50 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  const before = await p.evaluate(() => window.ens.pageCount());
+  const sig = await p.evaluate(() => window.__sig());
+  await p.click('.ProseMirror p >> nth=0');
+  await p.keyboard.press('Control+Home');
+  for (let i = 0; i < 40; i++) await p.keyboard.press('Enter');
+  await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.ens.pageCount()) > before, 'число страниц не выросло');
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей после ввода');
+  for (let i = 0; i < 40; i++) await p.keyboard.press('Backspace');
+  await p.waitForTimeout(200);
+  eq(await p.evaluate(() => window.ens.pageCount()), before, 'число страниц вернулось');
+  eq(await p.evaluate(() => window.__sig()), sig, 'распорки вернулись');
+  await p.context().close();
+});
+
+await test('вёрстка: абзацы рвутся минимум по две строки с каждой стороны', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 160 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(2 + (i % 6)))));
+  const res = await p.evaluate(() => {
+    const E = window.ens, v = E.view, out = [];
+    for (const w of document.querySelectorAll('.pg-split')) {
+      const pos = v.posAtDOM(w, 0), $p = v.state.doc.resolve(pos), start = $p.start(), end = $p.end();
+      const tops = (a, b) => { const set = new Set(); for (let q = a; q <= b; q++) set.add(Math.round(v.coordsAtPos(q, 1).top)); return set.size; };
+      out.push([tops(start, pos - 1), tops(pos, end)]);
+    }
+    return out;
+  });
+  ok(res.length >= 2, `рваных абзацев мало: ${res.length}`);
+  for (const [a, b] of res) ok(a >= 2 && b >= 2, `строк до разрыва ${a}, после ${b}`);
+  await p.context().close();
+});
+
+await test('вёрстка: заголовок не остаётся один в конце страницы', async () => {
+  const p = await page();
+  await p.evaluate(LAYOUT_JS);
+  const bad = [];
+  for (let k = 20; k < 52; k++) {
+    const r = await p.evaluate((k) => {
+      window.__load((s, P) => [...Array.from({ length: k }, (_, i) => P('Строка ' + i)), s.nodes.heading.create({ level: 2 }, s.text('Заголовок раздела')), P('Текст после заголовка, первая строка.'), P('Ещё строка.'), P('И ещё.')]);
+      return new Promise((res) => setTimeout(() => {
+        const E = window.ens, v = E.view, g = E.geometry(), box = v.dom.getBoundingClientRect(), sc = box.width / v.dom.offsetWidth;
+        let h, n; v.state.doc.forEach((node, off) => { if (node.type.name === 'heading') { h = off + 1; n = off + node.nodeSize + 1; } });
+        const page = (q) => Math.floor((((v.coordsAtPos(q, 1).top - box.top) / sc) - g.top) / g.P);
+        res([page(h), page(n)]);
+      }, 250));
+    }, k);
+    if (r[0] !== r[1]) bad.push([k, r]);
+  }
+  eq(bad, [], 'заголовок на одной странице, текст на другой');
+  await p.context().close();
+});
+
+await test('вёрстка: разрыв страницы начинает новую страницу, таблица рвётся по строкам', async () => {
+  const p = await longPage((s, P) => {
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const rows = Array.from({ length: 45 }, (_, i) => s.nodes.table_row.create(null, [cell('Строка ' + i), cell('Значение ' + i)]));
+    return [P('До разрыва'), P('После разрыва', { pageBreakBefore: true }), s.nodes.table.create({ borders: true }, rows), P('После таблицы')];
+  });
+  const r = await p.evaluate(() => {
+    const E = window.ens, v = E.view, g = E.geometry(), box = v.dom.getBoundingClientRect(), sc = box.width / v.dom.offsetWidth;
+    const page = (q) => Math.floor((((v.coordsAtPos(q, 1).top - box.top) / sc) - g.top) / g.P);
+    return { first: page(1), second: page(v.state.doc.child(0).nodeSize + 1), pages: E.pageCount(), gaps: document.querySelectorAll('tr.pg-gap').length };
+  });
+  eq([r.first, r.second], [0, 1], 'разрыв страницы');
+  ok(r.pages >= 3 && r.gaps >= 1, `таблица не разбита: страниц ${r.pages}, разрывов ${r.gaps}`);
+  eq(await p.evaluate(() => window.__bad()), [], 'текст таблицы вне полей');
+  await p.context().close();
+});
+
+await test('вёрстка: смена поля и ориентации пересчитывает страницы; в docx страниц столько же', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(3))));
+  const normal = await p.evaluate(() => window.ens.pageCount());
+  await p.click('.tab:has-text("Макет")');
+  await p.selectOption('select[data-command="page.margins"]', 'wide');
+  await p.waitForTimeout(250);
+  const wide = await p.evaluate(() => window.ens.pageCount());
+  ok(wide > normal, `широкие поля: ${wide} страниц, обычные: ${normal}`);
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей при широких полях');
+  await p.selectOption('select[data-command="page.orientation"]', 'landscape');
+  await p.waitForTimeout(250);
+  eq(await p.evaluate(() => window.__bad()), [], 'текст вне полей в альбомной');
+  await p.context().close();
+});
+
+await test('вёрстка: большой документ (3000 абзацев) считается быстро', async () => {
+  const p = await page();
+  await p.evaluate(LAYOUT_JS);
+  const ms = await p.evaluate(() => {
+    const t0 = performance.now();
+    window.__load((s, P) => Array.from({ length: 3000 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 4)))));
+    return new Promise((res) => setTimeout(() => res(performance.now() - t0), 50));
+  });
+  await p.waitForFunction(() => window.ens.pageCount() > 50, null, { timeout: 15000 });
+  const typing = await p.evaluate(async () => {
+    const E = window.ens, v = E.view, t0 = performance.now();
+    for (let i = 0; i < 20; i++) { v.dispatch(v.state.tr.insertText('я', 5)); await new Promise((r) => setTimeout(r, 0)); }
+    return (performance.now() - t0) / 20;
+  });
+  console.log(`      загрузка 3000 абзацев ≈ ${Math.round(ms)} мс, страниц ${await p.evaluate(() => window.ens.pageCount())}, расчёт ≈ ${Math.round(await p.evaluate(() => window.ens.pagStats.ms))} мс, правка ≈ ${Math.round(typing)} мс`);
+  ok(typing < 60, `правка в большом документе занимает ${Math.round(typing)} мс`);
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

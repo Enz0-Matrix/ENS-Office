@@ -425,10 +425,11 @@ class BorderTableView extends TableView {
   }
 }
 
-export function createState(doc: PMNode): EditorState {
+export function createState(doc: PMNode, extra: Plugin[] = []): EditorState {
   return EditorState.create({
     doc,
     plugins: [
+      ...extra,
       history({ newGroupDelay: 600 }),
       keymap({
         Enter: enter,

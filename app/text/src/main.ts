@@ -22,6 +22,7 @@ import {
 } from './editor';
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type PageSetup } from './docx';
 import { clearRecovery, listRecovery, saveRecovery, type RecoveryRecord } from './recovery';
+import { PAGE_GAP, PX, geometry, pageCount, pagination, replan, stats as pagStats } from './pagination';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -55,8 +56,8 @@ function applyPage(): void {
   const p = meta.page;
   const sheet = $('sheet');
   sheet.style.width = `${p.w}pt`;
-  sheet.style.minHeight = `${p.h}pt`;
-  sheet.style.padding = `${p.top}pt ${p.right}pt ${p.bottom}pt ${p.left}pt`;
+  view.dom.style.padding = `${p.top}pt ${p.right}pt ${p.bottom}pt ${p.left}pt`;
+  drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;
   root.setProperty('--doc-font', fontStack(d.font));
@@ -69,6 +70,38 @@ function applyPage(): void {
   st.textContent = `@page { size: ${p.w}pt ${p.h}pt; margin: ${p.top}pt ${p.right}pt ${p.bottom}pt ${p.left}pt; }`;
 }
 
+/** Листы-подложки: по одному на страницу; высота страницы и зазоры — как у расчёта разрывов. */
+function drawPapers(pages: number): void {
+  const g = geometry(meta.page);
+  const papers = $('papers');
+  if (papers.childElementCount !== pages || papers.dataset.h !== String(g.H)) {
+    papers.replaceChildren(...Array.from({ length: pages }, (_, i) => {
+      const d = document.createElement('div');
+      d.className = 'paper';
+      d.style.cssText = `top:${i * g.P}px;height:${g.H}px`;
+      return d;
+    }));
+    papers.dataset.h = String(g.H);
+  }
+  const total = pages * g.H + (pages - 1) * PAGE_GAP;
+  $('sheet').style.minHeight = `${total}px`;
+  view.dom.style.minHeight = `${total}px`;
+  updatePageStatus();
+}
+
+/** «Страница X из N» по положению курсора. */
+function updatePageStatus(): void {
+  const n = pageCount(view);
+  let page = 1;
+  try {
+    const box = view.dom.getBoundingClientRect();
+    const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
+    const c = view.coordsAtPos(view.state.selection.head);
+    page = Math.min(n, Math.max(1, Math.floor((((c.top - box.top) / scale) + 1) / geometry(meta.page).P) + 1));
+  } catch { /* вид ещё не готов */ }
+  $('status-page').textContent = `Страница ${page} из ${n}`;
+}
+
 function setZoom(z: number): void {
   zoom = Math.min(3, Math.max(0.3, Math.round(z * 10) / 10));
   ($('sheet-wrap').style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
@@ -77,8 +110,10 @@ function setZoom(z: number): void {
 
 // ---------------------------------------------------------------- редактор
 
+const paginationPlugin = pagination(() => meta.page, (n) => drawPapers(n));
+
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc()),
+  state: createState(emptyDoc(), [paginationPlugin]),
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
     const before = view.state;
@@ -133,6 +168,7 @@ function updateStats(): void {
 }
 
 function updateSelStats(): void {
+  updatePageStatus();
   const { from, to, empty } = view.state.selection;
   if (empty) { $('status-sel').textContent = ''; return; }
   const text = view.state.doc.textBetween(from, to, '\n', ' ');
@@ -444,6 +480,7 @@ function marginsKey(): string {
 function changePage(next: Partial<PageSetup>): void {
   meta.page = { ...meta.page, ...next };
   applyPage();
+  replan(view);
   updateUi();
   scheduleRecovery();
 }
@@ -648,13 +685,14 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta = newMetaValue;
   docName = name;
   applyPage();
-  view.updateState(createState(doc));
+  view.updateState(createState(doc, [paginationPlugin]));
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
   hideNotice();
   if (meta.lossy.length) {
     showNotice(`В этой версии не перенесено: ${meta.lossy.join('; ')}. Оригинал не изменится: «Сохранить» скачивает новую копию, в ней этих элементов не будет.`, [{ label: 'Понятно', run: hideNotice }]);
   }
+  replan(view);
   updateStats();
   updateUi();
   view.focus();
@@ -769,7 +807,7 @@ function about(): void {
     box.append(
       el('h2', { textContent: `ENS-Tekst ${APP_VERSION}` }),
       el('p', { textContent: 'Текстовый редактор ENS-Office. Работает без интернета. Формат файлов — .docx.' }),
-      el('p', { textContent: 'Версия 0.1 — первый этап: абзацы, заголовки, списки, таблицы, изображения, ссылки, печать. Колонтитулы, сноски, постраничная вёрстка и совместная работа — в планах.' }),
+      el('p', { textContent: 'Версия 0.1 — первый этап: абзацы, заголовки, списки, таблицы, изображения, ссылки, страницы, печать. Колонтитулы, сноски и совместная работа — в планах.' }),
       el('div', { class: 'dlg-actions' }, el('button', { class: 'primary', textContent: 'Закрыть', onclick: close })),
     );
   });
@@ -868,6 +906,6 @@ void offerRecovery();
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(meta.page), PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

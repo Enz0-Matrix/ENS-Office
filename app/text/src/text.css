@@ -29,10 +29,16 @@
 
 .desk { flex: 1; min-height: 0; margin: 6px 8px 0; background: #d9dce1; border: 1px solid var(--border); overflow: auto; padding: 18px 0 40px; }
 .sheet-wrap { width: max-content; min-width: 100%; display: flex; justify-content: center; }
-.sheet { background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.28); flex: none; color: #000; }
+.sheet { position: relative; flex: none; color: #000; }
+.papers { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.paper { position: absolute; left: 0; right: 0; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.28); }
+.sheet > .ProseMirror { position: relative; z-index: 1; box-sizing: border-box; }
+/* Распорки разрыва страниц (pagination.ts) */
+.ProseMirror .pg-split { display: inline-block; width: 100%; vertical-align: top; pointer-events: none; user-select: none; }
+.ProseMirror tr.pg-gap td { border: 0 !important; padding: 0 !important; background: transparent; }
 
 /* Текст страницы */
-.ProseMirror { outline: none; min-height: 100%; font-family: var(--doc-font); font-size: var(--doc-size); line-height: var(--doc-line);
+.ProseMirror { outline: none; font-family: var(--doc-font); font-size: var(--doc-size); line-height: var(--doc-line);
   white-space: pre-wrap; word-wrap: break-word; tab-size: 36pt; color: #000; caret-color: #000; }
 .ProseMirror p, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 { margin: var(--doc-before) 0 var(--doc-after); }
 .ProseMirror h1 { font-size: 18pt; font-weight: 700; margin-top: 12pt; margin-bottom: 6pt; }
@@ -50,8 +56,6 @@
 .ProseMirror a { color: #0563c1; text-decoration: underline; cursor: text; }
 .ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; }
 .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
-.ProseMirror p[data-page-break]::before, .ProseMirror h1[data-page-break]::before, .ProseMirror h2[data-page-break]::before, .ProseMirror h3[data-page-break]::before {
-  content: "Разрыв страницы"; display: block; text-align: center; font: 10px "Segoe UI", sans-serif; color: #888; border-top: 1px dashed #aaa; margin-bottom: 8pt; text-indent: 0; }
 
 /* Таблицы */
 .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; margin: 0; overflow: hidden; }
@@ -86,9 +90,11 @@
   .titlebar, .tabs, .ribbon, .notice, .findbar, footer, .toast, .overlay, .palette { display: none !important; }
   .desk { overflow: visible !important; margin: 0 !important; padding: 0 !important; border: 0 !important; background: #fff !important; }
   .sheet-wrap { zoom: 1 !important; display: block !important; width: auto !important; }
-  .sheet { box-shadow: none !important; width: auto !important; min-height: 0 !important; padding: 0 !important; }
+  .sheet { width: auto !important; min-height: 0 !important; }
+  .papers, .pg-split, tr.pg-gap { display: none !important; }
+  .pg-pad { padding-top: 0 !important; }
+  .sheet > .ProseMirror { padding: 0 !important; min-height: 0 !important; }
   .find-hit { background: none !important; }
-  .ProseMirror p[data-page-break]::before, .ProseMirror h1[data-page-break]::before, .ProseMirror h2[data-page-break]::before, .ProseMirror h3[data-page-break]::before { display: none; }
   .ProseMirror [data-page-break] { break-before: page; }
   .ProseMirror tr, .ProseMirror img { break-inside: avoid; }
 }
