@@ -370,7 +370,8 @@ export const TABS: RibbonTab[] = [
 ];
 
 /** Рисует ленту и строку вкладок. Возвращает функцию обновления состояний кнопок. */
-export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: () => void): () => void {
+/** tabs — свои вкладки (ENS-Tekst); по умолчанию вкладки ENS-Table. */
+export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: () => void, tabs: RibbonTab[] = TABS): () => void {
   let active = 'home';
   const file = document.createElement('button');
   file.className = 'tab file';
@@ -378,7 +379,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
   file.addEventListener('click', onFile);
   tabsEl.append(file);
   const tabButtons = new Map<string, HTMLButtonElement>();
-  for (const tab of TABS) {
+  for (const tab of tabs) {
     const b = document.createElement('button');
     b.className = 'tab';
     b.textContent = tab.label;
@@ -392,7 +393,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
     for (const [id, b] of tabButtons) b.classList.toggle('active', id === active);
     bodyEl.replaceChildren();
     toggles.length = 0;
-    const tab = TABS.find((t) => t.id === active)!;
+    const tab = tabs.find((t) => t.id === active)!;
     for (const group of tab.groups) {
       const g = document.createElement('div');
       g.className = 'group';

@@ -1,0 +1,80 @@
+"""Создаёт tests/fixtures/sample.docx (python-docx): образец для проверки импорта и экспорта.
+Запуск: python3 tests/make_fixtures.py"""
+import io, os
+from docx import Document
+from docx.enum.section import WD_ORIENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor, Cm
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+import struct, zlib
+
+def png(w, h, rgb):
+    raw = b''.join(b'\x00' + bytes(rgb) * w for _ in range(h))
+    def chunk(t, d):
+        c = struct.pack('>I', len(d)) + t + d
+        return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
+d = Document()
+sec = d.sections[0]
+sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+sec.left_margin, sec.right_margin, sec.top_margin, sec.bottom_margin = Cm(3), Cm(1.5), Cm(2), Cm(2)
+
+d.add_heading('Заголовок первого уровня', 1)
+p = d.add_paragraph('Обычный абзац с ')
+r = p.add_run('полужирным'); r.bold = True
+p.add_run(', ')
+r = p.add_run('курсивом'); r.italic = True
+p.add_run(' и ')
+r = p.add_run('подчёркиванием'); r.underline = True
+p.add_run(', а также ')
+r = p.add_run('красным шрифтом Arial 16'); r.font.name = 'Arial'; r.font.size = Pt(16); r.font.color.rgb = RGBColor(0xC0, 0, 0)
+p.add_run('.')
+
+d.add_heading('Заголовок второго уровня', 2)
+c = d.add_paragraph('Абзац по центру'); c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+j = d.add_paragraph('Абзац по ширине. ' * 12); j.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+j.paragraph_format.first_line_indent = Cm(1.25)
+
+d.add_paragraph('Первый маркированный пункт', style='List Bullet')
+d.add_paragraph('Второй маркированный пункт', style='List Bullet')
+d.add_paragraph('Вложенный пункт', style='List Bullet 2')
+d.add_paragraph('Первый нумерованный пункт', style='List Number')
+d.add_paragraph('Второй нумерованный пункт', style='List Number')
+
+t = d.add_table(rows=3, cols=3)
+t.style = 'Table Grid'
+for i in range(3):
+    for k in range(3):
+        t.cell(i, k).text = f'Ячейка {i+1}.{k+1}'
+a = t.cell(0, 0).merge(t.cell(0, 1))
+a.text = 'Объединённая по горизонтали'
+b = t.cell(1, 2).merge(t.cell(2, 2))
+b.text = 'Объединённая по вертикали'
+
+d.add_paragraph('Рисунок ниже:')
+d.add_picture(io.BytesIO(png(120, 60, (30, 120, 200))), width=Cm(4))
+
+# Гиперссылка
+p = d.add_paragraph('Сайт: ')
+rid = d.part.relate_to('https://example.org/', RT.HYPERLINK, is_external=True)
+h = OxmlElement('w:hyperlink'); h.set(qn('r:id'), rid)
+r = OxmlElement('w:r'); t_ = OxmlElement('w:t'); t_.text = 'example.org'; r.append(t_); h.append(r)
+p._p.append(h)
+
+pb = d.add_paragraph('Перед этим абзацем разрыв страницы')
+pb.runs[0].add_break(WD_BREAK.PAGE)
+d.add_paragraph('Текст на второй странице.')
+
+out = os.path.join(os.path.dirname(__file__), 'fixtures')
+os.makedirs(out, exist_ok=True)
+d.save(os.path.join(out, 'sample.docx'))
+
+# Документ с колонтитулом: версия 0.1 колонтитулы не переносит и должна об этом сказать.
+d2 = Document()
+d2.sections[0].header.paragraphs[0].text = 'Колонтитул документа'
+d2.add_paragraph('Текст с колонтитулом')
+d2.save(os.path.join(out, 'header.docx'))
+print('ok')

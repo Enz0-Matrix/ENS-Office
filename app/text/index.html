@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Документ1 — ENS-Tekst</title>
+</head>
+<body>
+  <header class="titlebar">
+    <span class="app-mark">ENS</span>
+    <span class="quick-access">
+      <button id="qa-save" class="qa" title="Сохранить (Ctrl+S)" aria-label="Сохранить"></button>
+      <button id="qa-print" class="qa" title="Печать (Ctrl+P)" aria-label="Печать"></button>
+      <button id="qa-undo" class="qa" title="Отменить (Ctrl+Z)" aria-label="Отменить"></button>
+      <button id="qa-redo" class="qa" title="Повторить (Ctrl+Y)" aria-label="Повторить"></button>
+    </span>
+    <span id="doc-name" class="doc-name"></span>
+  </header>
+  <nav id="tabs" class="tabs"></nav>
+  <section id="ribbon" class="ribbon"></section>
+  <div id="notice" class="notice" hidden></div>
+  <div id="findbar" class="findbar" hidden></div>
+  <main id="desk" class="desk"><div id="sheet-wrap" class="sheet-wrap"><div id="sheet" class="sheet"></div></div></main>
+  <footer>
+    <div class="statusbar"><span id="status-words"></span><span class="status-right"><span id="status-sel"></span>
+      <span class="zoom-box"><button id="zoom-out" title="Уменьшить масштаб" aria-label="Уменьшить масштаб">−</button><button id="zoom-val" title="Масштаб (щелчок — 100%)">100%</button><button id="zoom-in" title="Увеличить масштаб" aria-label="Увеличить масштаб">+</button></span></span></div>
+  </footer>
+  <div id="toast" class="toast" hidden></div>
+  <div id="dialog" class="overlay" hidden></div>
+  <input id="file-input" type="file" accept=".docx" hidden>
+  <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

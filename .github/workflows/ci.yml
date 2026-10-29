@@ -137,6 +137,37 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  text:
+    name: ENS-Tekst (типы, сборка, тесты)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/table/package-lock.json
+            app/text/package-lock.json
+      - name: Зависимости (общий код лежит в app/table)
+        run: |
+          (cd app/table && npm ci)
+          (cd app/text && npm ci)
+      - name: Проверка типов
+        working-directory: app/text
+        run: npm run check
+      - name: Сборка
+        working-directory: app/text
+        run: npm run build
+      - name: Chromium для проверок
+        working-directory: app/text
+        run: |
+          npm i --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Проверки в браузере
+        working-directory: app/text
+        run: npm test
+
   release:
     name: Выпуск на GitHub
     needs: desktop

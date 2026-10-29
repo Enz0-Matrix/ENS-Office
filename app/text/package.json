@@ -1,0 +1,38 @@
+{
+  "name": "ens-text",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ENS-Tekst — текстовый редактор ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "test": "node tests/run.mjs"
+  },
+  "devDependencies": {
+    "@fluentui/svg-icons": "1.1.343",
+    "typescript": "7.0.2",
+    "vite": "8.3.2"
+  },
+  "dependencies": {
+    "@fontsource/arimo": "^5.3.0",
+    "@fontsource/caladea": "^5.3.0",
+    "@fontsource/carlito": "^5.3.0",
+    "@fontsource/cousine": "^5.3.0",
+    "@fontsource/roboto-condensed": "^5.3.0",
+    "@fontsource/tinos": "^5.3.0",
+    "fflate": "^0.8.3",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-dropcursor": "^1.8.2",
+    "prosemirror-gapcursor": "^1.4.0",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-tables": "^1.8.5",
+    "prosemirror-transform": "^1.10.5",
+    "prosemirror-view": "^1.41.3"
+  }
+}
