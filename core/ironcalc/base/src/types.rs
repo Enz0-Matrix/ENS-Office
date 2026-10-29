@@ -342,7 +342,7 @@ pub struct Worksheet {
 }
 
 /// A drop-down list for cells (Excel's `<dataValidation type="list">`).
-#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone, Default)]
 pub struct Validation {
     /// The cells, as in xlsx: ranges separated by spaces ("B2:B10 D4").
     pub sqref: String,
@@ -357,6 +357,25 @@ pub struct Validation {
     /// The message when a value is not in the list (empty — the default one).
     #[serde(default)]
     pub error: String,
+    /// "" or "list" — a drop-down list; "whole", "decimal", "date", "time", "textLength", "custom" (the latter is kept, not checked).
+    #[serde(default)]
+    pub kind: String,
+    /// "between" (also when empty), "notBetween", "equal", "notEqual", "greaterThan", "lessThan", "greaterThanOrEqual", "lessThanOrEqual".
+    #[serde(default)]
+    pub op: String,
+    /// The upper bound for "between" / "notBetween" (`source` is the first bound): a number, a date, or a cell.
+    #[serde(default)]
+    pub source2: String,
+    /// The hint shown when the cell is selected.
+    #[serde(default)]
+    pub prompt_title: String,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub error_title: String,
+    /// 0 — stop (the value is refused), 1 — warning, 2 — information (the user may keep the value).
+    #[serde(default)]
+    pub error_style: u8,
 }
 
 /// A shape or a text box over a sheet; the top left corner of its box is at the cell (`row`, `column`).

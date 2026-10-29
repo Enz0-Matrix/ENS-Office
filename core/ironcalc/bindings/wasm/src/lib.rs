@@ -667,6 +667,18 @@ impl Model {
         self.model.set_validations(sheet, list).map_err(to_js_error)
     }
 
+    /// ENS-Office: for the "warning" and "information" styles — `{style, title, message}` about a value that breaks the rule, or null.
+    #[wasm_bindgen(js_name = "getValidationNotice")]
+    pub fn get_validation_notice(&self, sheet: u32, row: i32, column: i32, value: &str) -> Result<JsValue, JsError> {
+        serde_wasm_bindgen::to_value(&self.model.get_validation_notice(sheet, row, column, value)).map_err(JsError::from)
+    }
+
+    /// ENS-Office: the hint of the cell, `{title, message}`, or null.
+    #[wasm_bindgen(js_name = "getValidationPrompt")]
+    pub fn get_validation_prompt(&self, sheet: u32, row: i32, column: i32) -> Result<JsValue, JsError> {
+        serde_wasm_bindgen::to_value(&self.model.get_validation_prompt(sheet, row, column)).map_err(JsError::from)
+    }
+
     /// ENS-Office: whether the cell shows a drop-down arrow.
     #[wasm_bindgen(js_name = "hasDropdown")]
     pub fn has_dropdown(&self, sheet: u32, row: i32, column: i32) -> bool {

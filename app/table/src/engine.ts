@@ -32,7 +32,11 @@ export interface Shape {
 }
 
 /** Раскрывающийся список: ячейки (как в xlsx, «B2:B10 D4») и источник (`"Да,Нет"` или диапазон `Лист1!$A$1:$A$5`). */
-export interface Validation { sqref: string; source: string; allow_blank: boolean; no_arrow: boolean; error: string }
+export interface Validation {
+  sqref: string; source: string; allow_blank: boolean; no_arrow: boolean; error: string;
+  kind?: string; op?: string; source2?: string; prompt_title?: string; prompt?: string; error_title?: string; error_style?: number;
+}
+export interface ValidationMessage { style: number; title: string; message: string }
 
 export interface CellStyle {
   num_fmt: string;
@@ -145,6 +149,8 @@ export interface Model {
   getValidations(sheet: number): Validation[];
   /** Заменяет все списки листа (одно действие отмены). */
   setValidations(sheet: number, list: Validation[]): void;
+  getValidationNotice(sheet: number, row: number, column: number, value: string): ValidationMessage | null;
+  getValidationPrompt(sheet: number, row: number, column: number): ValidationMessage | null;
   /** У ячейки есть список со стрелкой. */
   hasDropdown(sheet: number, row: number, column: number): boolean;
   getDropdownItems(sheet: number, row: number, column: number): string[];
