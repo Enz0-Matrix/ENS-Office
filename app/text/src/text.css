@@ -25,6 +25,14 @@
 .findbar input[type=text] { height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font: inherit; width: 190px; }
 .findbar button { height: 26px; border: 1px solid var(--border); background: var(--panel-alt); border-radius: 4px; font: inherit; cursor: pointer; padding: 0 10px; }
 .findbar button:hover { background: #ececec; }
+.findbar .fmtbox { flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; }
+.findbar .fmtbox[hidden] { display: none; }
+.findbar .fmtrow { display: flex; gap: 6px; align-items: center; }
+.findbar .fmtrow input[type=text] { width: 130px; }
+.findbar .fmtrow input[type=number] { width: 70px; height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font: inherit; }
+.findbar .fmttitle { color: var(--muted); min-width: 150px; }
+.findbar .fmtflag { font-weight: 600; }
+.findbar button.on { background: var(--accent, #cde); }
 .findbar .count { color: var(--muted); min-width: 80px; }
 
 .desk { flex: 1; min-height: 0; margin: 6px 8px 0; background: #d9dce1; border: 1px solid var(--border); overflow: auto; padding: 18px 0 40px; }
@@ -189,3 +197,32 @@
 .check-row.ok .check-mark { color: #2e9b4b; }
 .check-row.bad .check-mark { color: #d13438; font-weight: 700; }
 .check-detail { font-size: 12px; color: var(--muted); }
+
+/* Окна «по-русски» */
+.ru-out { margin: 8px 0; padding: 8px 10px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; min-height: 22px; user-select: text; }
+.ru-out.bad { color: #b00020; }
+.ru-cases { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.ru-case { display: flex; gap: 10px; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-alt); font: inherit; cursor: pointer; }
+.ru-case:hover { background: #ececec; }
+.ru-case-label { color: var(--muted); min-width: 150px; }
+
+/* Мастер служебных документов и журнал */
+.wiz-form { display: flex; flex-direction: column; gap: 6px; }
+.wiz-form textarea, .modal textarea { font: inherit; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; resize: vertical; flex: 1; min-width: 0; }
+.wiz-num { margin: 6px 0; color: var(--muted); }
+.jr-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow: auto; }
+.jr-row { display: flex; gap: 12px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.jr-no { font-weight: 600; min-width: 90px; }
+.jr-subj { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Совместимость с Word */
+.cmp-verdict { font-weight: 600; margin: 6px 0; }
+.cmp-verdict.warn { color: #b26a00; }
+.cmp-verdict.ok { color: #1b7f3b; }
+.cmp-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.cmp-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.cmp-dot { flex: none; width: 20px; height: 20px; border-radius: 50%; text-align: center; line-height: 20px; font-weight: 700; color: #fff; background: #b26a00; }
+.cmp-row.info .cmp-dot { background: #2b579a; }
+.cmp-text { flex: 1; }
+.cmp-title { font-weight: 600; }
+.cmp-detail { color: var(--muted); }

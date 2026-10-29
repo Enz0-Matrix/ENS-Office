@@ -15,21 +15,52 @@ import { numberingPlugin } from './numbering';
 
 // ---------------------------------------------------------------- поиск
 
-export interface FindState { query: string; matchCase: boolean; matches: { from: number; to: number }[]; current: number }
+/** Условие по оформлению для поиска: только заданные поля; пустое поле — «любое». */
+export interface FindFmt { font?: string; size?: number; strong?: boolean; em?: boolean; underline?: boolean; strike?: boolean }
+export interface FindState { query: string; matchCase: boolean; fmt: FindFmt | null; matches: { from: number; to: number }[]; current: number }
 export const findKey = new PluginKey<FindState>('find');
 
-export function findMatches(doc: PMNode, query: string, matchCase: boolean): { from: number; to: number }[] {
+export const fmtActive = (f: FindFmt | null | undefined): f is FindFmt => !!f && Object.values(f).some((v) => v !== undefined && v !== false && v !== '');
+
+/** Подходит ли узел-текст под условие по оформлению. */
+function fmtMatches(n: PMNode, f: FindFmt): boolean {
+  const ts = n.marks.find((m) => m.type === schema.marks.textStyle);
+  if (f.font && (ts?.attrs.font ?? '').toLowerCase() !== f.font.toLowerCase()) return false;
+  if (f.size && ts?.attrs.size !== f.size) return false;
+  for (const k of ['strong', 'em', 'underline', 'strike'] as const) if (f[k] && !n.marks.some((m) => m.type === schema.marks[k])) return false;
+  return true;
+}
+
+export function findMatches(doc: PMNode, query: string, matchCase: boolean, fmt: FindFmt | null = null): { from: number; to: number }[] {
   const out: { from: number; to: number }[] = [];
-  if (!query) return out;
+  const useFmt = fmtActive(fmt);
+  if (!query && !useFmt) return out;
   const q = matchCase ? query : query.toLowerCase();
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return true;
     // Текст блока с позициями: узлы-не-тексты (картинки) заменяем символом, чтобы смещения совпали.
     let text = '';
-    node.forEach((c) => { text += c.isText ? c.text : '￼'; });
+    const ok: boolean[] = [];
+    node.forEach((c) => {
+      const t = c.isText ? c.text! : '￼';
+      text += t;
+      const good = !useFmt || (c.isText && fmtMatches(c, fmt));
+      for (let i = 0; i < t.length; i++) ok.push(good);
+    });
+    if (!q) {
+      // Только оформление: непрерывные участки с нужным форматом.
+      for (let i = 0; i < ok.length;) {
+        if (!ok[i]) { i++; continue; }
+        let j = i;
+        while (j < ok.length && ok[j]) j++;
+        out.push({ from: pos + 1 + i, to: pos + 1 + j });
+        i = j;
+      }
+      return false;
+    }
     const hay = matchCase ? text : text.toLowerCase();
     for (let i = hay.indexOf(q); i >= 0; i = hay.indexOf(q, i + Math.max(1, q.length))) {
-      out.push({ from: pos + 1 + i, to: pos + 1 + i + q.length });
+      if (ok.slice(i, i + q.length).every(Boolean)) out.push({ from: pos + 1 + i, to: pos + 1 + i + q.length });
     }
     return false;
   });
@@ -39,12 +70,12 @@ export function findMatches(doc: PMNode, query: string, matchCase: boolean): { f
 const findPlugin = new Plugin<FindState>({
   key: findKey,
   state: {
-    init: () => ({ query: '', matchCase: false, matches: [], current: -1 }),
+    init: () => ({ query: '', matchCase: false, fmt: null, matches: [], current: -1 }),
     apply(tr, prev, _old, state) {
       const meta = tr.getMeta(findKey) as Partial<FindState> | undefined;
       if (!meta && !tr.docChanged) return prev;
       const next = { ...prev, ...meta };
-      next.matches = findMatches(state.doc, next.query, next.matchCase);
+      next.matches = findMatches(state.doc, next.query, next.matchCase, next.fmt);
       if (next.current >= next.matches.length) next.current = next.matches.length - 1;
       return next;
     },
@@ -383,19 +414,48 @@ export function linkAt(state: EditorState): string | null {
   return m ? (m.attrs.href as string) : null;
 }
 
-export function replaceMatch(view: EditorView, index: number, text: string): void {
+/** Новое оформление для найденного: заданные поля ставятся, остальное не трогается. */
+export interface ApplyFmt { font?: string; size?: number; strong?: boolean; em?: boolean; underline?: boolean }
+
+function applyFmt(tr: Transaction, from: number, to: number, f: ApplyFmt | null | undefined): void {
+  if (!fmtActive(f)) return;
+  const m = schema.marks;
+  for (const k of ['strong', 'em', 'underline'] as const) if (f[k]) tr.addMark(from, to, m[k].create());
+  if (f.font || f.size) {
+    // textStyle — один слой: сливаем с уже стоящим в каждом куске.
+    tr.doc.nodesBetween(from, to, (n, pos) => {
+      if (!n.isText) return true;
+      const a = Math.max(from, pos), b = Math.min(to, pos + n.nodeSize);
+      const old = n.marks.find((x) => x.type === m.textStyle)?.attrs ?? {};
+      tr.addMark(a, b, m.textStyle.create({ ...old, ...(f.font ? { font: f.font } : {}), ...(f.size ? { size: f.size } : {}) }));
+      return false;
+    });
+  }
+}
+
+export function replaceMatch(view: EditorView, index: number, text: string, fmt?: ApplyFmt | null): void {
   const s = findKey.getState(view.state);
   const m = s?.matches[index];
   if (!m) return;
-  const tr = view.state.tr.insertText(text, m.from, m.to);
+  const tr = view.state.tr;
+  let to = m.to;
+  if (text !== '' || !fmtActive(fmt)) { tr.insertText(text, m.from, m.to); to = m.from + text.length; }
+  applyFmt(tr, m.from, to, fmt);
   view.dispatch(tr);
 }
 
-export function replaceAll(view: EditorView, text: string): number {
+/** Заменить все. Пустой текст при заданном оформлении — менять только оформление. */
+export function replaceAll(view: EditorView, text: string, fmt?: ApplyFmt | null): number {
   const s = findKey.getState(view.state);
   if (!s?.matches.length) return 0;
-  let tr = view.state.tr;
-  for (let i = s.matches.length - 1; i >= 0; i--) tr = tr.insertText(text, s.matches[i].from, s.matches[i].to);
+  const tr = view.state.tr;
+  const onlyFmt = text === '' && fmtActive(fmt);
+  for (let i = s.matches.length - 1; i >= 0; i--) {
+    const m = s.matches[i];
+    let to = m.to;
+    if (!onlyFmt) { tr.insertText(text, m.from, m.to); to = m.from + text.length; }
+    applyFmt(tr, m.from, to, fmt);
+  }
   view.dispatch(tr);
   return s.matches.length;
 }

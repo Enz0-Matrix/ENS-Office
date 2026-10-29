@@ -949,6 +949,135 @@ await test('поиск команд Alt+Q: находит по-русски и �
 });
 
 
+// ---- Поиск и замена по оформлению ----
+await test('поиск по оформлению: шрифт/кегль/Ж, замена только оформления и текста с оформлением', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const ts = (font, size) => s.marks.textStyle.create({ font, size });
+    const P = (...r) => s.nodes.paragraph.create(null, r);
+    E.loadDoc(s.nodes.doc.create(null, [
+      P(s.text('Обычный '), s.text('Арий', [ts('Arial', 14)]), s.text(' и '), s.text('жирный', [s.marks.strong.create()])),
+      P(s.text('Арий', [ts('Arial', 14), s.marks.strong.create()]), s.text(' Арий')),
+    ]), E.getMeta(), 'fmt');
+  });
+  await p.keyboard.press('Control+KeyH');
+  await p.click('.findbar button:has-text("Формат")');
+  const st = () => p.evaluate(() => { const s = window.ens.findState(); return s.matches.length; });
+  await p.fill('.fmtbox .fmtrow:nth-child(1) input[type=text]', 'Arial');
+  await p.waitForTimeout(100);
+  eq(await st(), 2, 'Arial: два участка');
+  await p.fill('.fmtbox .fmtrow:nth-child(1) input[type=number]', '14');
+  await p.check('.fmtbox .fmtrow:nth-child(1) label:has-text("Ж") input');
+  await p.waitForTimeout(100);
+  eq(await st(), 1, 'Arial 14 жирный: один');
+  await p.uncheck('.fmtbox .fmtrow:nth-child(1) label:has-text("Ж") input');
+  await p.fill('.findbar input[placeholder="Найти"]', 'Арий');
+  await p.waitForTimeout(100);
+  eq(await st(), 2, 'текст «Арий» + Arial 14: два');
+  // замена только оформления: Arial 14 → Verdana, жирный
+  await p.fill('.fmtbox .fmtrow:nth-child(2) input[type=text]', 'Verdana');
+  await p.check('.fmtbox .fmtrow:nth-child(2) label:has-text("Ж") input');
+  await p.click('.findbar button:has-text("Заменить все")');
+  await p.waitForTimeout(150);
+  const r = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.isText) out.push([n.text, n.marks.map((m) => m.type.name + (m.attrs.font ? ':' + m.attrs.font : '')).sort().join(',')]); }); return out; });
+  ok(r.filter((x) => x[1].includes('Verdana') && x[1].includes('strong')).map((x) => x[0]).join('|') === 'Арий|Арий', `после замены: ${JSON.stringify(r)}`);
+  ok(r.some((x) => x[0] === ' Арий' && !x[1].includes('strong')), 'не найденное не тронуто');
+});
+
+// ---- По-русски: сумма прописью, ФИО по падежам ----
+await test('сумма прописью и ФИО по падежам: окна вставляют текст', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null)]), E.getMeta(), 'ru'); });
+  await p.evaluate(() => window.ens.run('insert.sumWords'));
+  await p.fill('.modal input[type=text]', '12 345,67');
+  const out = await p.textContent('.ru-out');
+  eq(out, 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'сумма');
+  await p.click('.modal button.primary');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'вставлено');
+  await p.evaluate(() => window.ens.run('insert.nameCases'));
+  await p.fill('input[placeholder="Иванов Иван Иванович"]', 'Петрова Анна Сергеевна');
+  await p.fill('input[placeholder^="Должность"]', 'Генеральный директор');
+  const rows = await p.$$eval('.ru-case', (e) => e.map((x) => x.textContent));
+  ok(rows[2].includes('Генеральному директору Петровой Анне Сергеевне'), `дательный: ${rows[2]}`);
+  await p.click('.ru-case:nth-child(2)');
+  const fin = await p.evaluate(() => window.ens.view.state.doc.textContent);
+  ok(fin.endsWith('Генерального директора Петровой Анны Сергеевны'), `вставлен родительный: ${fin}`);
+});
+
+await test('срок в рабочих днях: расчёт, поправки, вставка даты', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null)]), E.getMeta(), 'dl'); });
+  await p.evaluate(() => window.ens.run('insert.deadline'));
+  await p.fill('.modal input[type=date]', '2026-03-02'); // понедельник
+  await p.fill('.modal input[type=number]', '5');
+  let out = await p.textContent('.ru-out');
+  ok(out.includes('«10» марта 2026 г.') && out.includes('вторник'), `5 рабочих дней с 02.03.2026 (8 марта — воскресенье, выходной переносится на пн 9-е): ${out}`);
+  await p.fill('.modal textarea', '=2026-03-07');
+  out = await p.textContent('.ru-out');
+  ok(out.includes('«07» марта') && out.includes('суббота'), `рабочая суббота 7 марта: ${out}`);
+  await p.click('.modal button.primary');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), '«07» марта 2026 г.', 'вставлена дата');
+});
+
+await test('мастер документов: приказ по ГОСТ, номер из журнала, второй номер растёт', async () => {
+  const p = await page();
+  await p.evaluate(() => localStorage.removeItem('ens-text.journal'));
+  const make = async (subject) => {
+    await p.evaluate(() => window.ens.run('file.wizard'));
+    await p.waitForTimeout(100);
+    const unsaved = await p.$('.modal button.danger'); // «Не сохранять», если в документе есть несохранённое
+    if (unsaved) await unsaved.click();
+    await p.selectOption('.modal select', 'order');
+    await p.fill('.wiz-form textarea >> nth=0', 'ООО «Ромашка»');
+    await p.fill('input[placeholder^="О назначении"]', subject);
+    await p.fill('.wiz-form textarea >> nth=2', 'Назначить Иванова И. И.\nУтвердить инструкцию');
+    await p.fill('input[placeholder="И. И. Иванов"]', 'А. А. Петров');
+    await p.fill('input[placeholder="Директор"]', 'Директор');
+    await p.click('.modal button.primary');
+    await p.waitForTimeout(300);
+  };
+  await make('О назначении ответственного');
+  const r = await p.evaluate(() => { const E = window.ens, d = E.view.state.doc, m = E.getMeta(); return { text: d.textContent, left: m.page.left, size: m.defaults.size, hdr: JSON.stringify(m.hf.header).includes('field'), diff: m.hf.differentFirst, j: JSON.parse(localStorage.getItem('ens-text.journal')).entries.map((e) => e.label) }; });
+  ok(r.text.includes('ПРИКАЗ') && r.text.includes('№ 1') && r.text.includes('1. Назначить Иванова') && r.text.includes('3. Контроль за исполнением') && r.text.includes('ПРИКАЗЫВАЮ'), `текст приказа: ${r.text}`);
+  ok(Math.abs(r.left - 56.7) < 0.1 && r.size === 14 && r.hdr && r.diff, 'поля, шрифт, номер страницы');
+  eq(r.j, ['1'], 'журнал');
+  await make('Второй');
+  eq(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.journal')).entries.map((e) => e.label).join(',')), '1,2', 'номер вырос');
+  // документ проходит проверку по ГОСТ без замечаний к полям и шрифту
+  await p.evaluate(() => window.ens.run('review.check'));
+  await p.waitForSelector('.check-row');
+  await p.selectOption('.check-modal select', 'gost7097');
+  const bad = await p.$$eval('.check-row.bad .check-text > div:first-child', (e) => e.map((x) => x.textContent));
+  ok(!bad.some((x) => /Поля|Шрифт|Номера страниц/.test(x)), `замечания к приказу: ${bad.join(' | ')}`);
+});
+
+await test('совместимость с Word: шрифт без аналога, широкая таблица, дробный кегль, потери', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, m = E.getMeta();
+    const ts = (font, size) => s.marks.textStyle.create({ font, size });
+    const P = (...r) => s.nodes.paragraph.create(null, r);
+    const cell = (w) => s.nodes.table_cell.create({ colwidth: [w] }, P(s.text('x')));
+    const table = s.nodes.table.create(null, [s.nodes.table_row.create(null, [cell(500), cell(500)])]);
+    m.lossy = ['сноски: 2'];
+    E.loadDoc(s.nodes.doc.create(null, [P(s.text('Inter', [ts('Inter', 11.3)])), P(s.text('Arial', [ts('Arial', 12)])), table, P()]), m, 'cmp');
+  });
+  await p.evaluate(() => window.ens.run('review.compat'));
+  await p.waitForSelector('.cmp-row');
+  const titles = await p.$$eval('.cmp-row .cmp-title', (e) => e.map((x) => x.textContent));
+  const has = (re) => titles.some((x) => re.test(x));
+  ok(has(/Шрифт «Inter»/) && !has(/Шрифт «Arial»/), `шрифты: ${titles.join(' | ')}`);
+  ok(has(/Таблица шире/) && has(/Дробный кегль/) && has(/Не перенесено/) && has(/насчитал страниц/), `остальное: ${titles.join(' | ')}`);
+  await p.click('.cmp-row:has-text("Шрифт «Inter»") button');
+  await p.waitForTimeout(100);
+  ok(await p.evaluate(() => document.getElementById('dialog').hidden), 'окно закрылось после «Показать»');
+  // чистый документ — без предупреждений
+  await p.evaluate(() => { const E = window.ens, s = E.schema; const m = E.getMeta(); m.lossy = []; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Просто текст'))]), m, 'clean'); });
+  await p.evaluate(() => window.ens.run('review.compat'));
+  await p.waitForSelector('.cmp-verdict.ok');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
