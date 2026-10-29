@@ -72,10 +72,11 @@ const XLSX_FILTER = [
   { name: 'Все файлы', extensions: ['*'] },
 ];
 
-export async function pickOpen(): Promise<string | null> {
-  if (isLocalApp) return call<string | null>('pick_open', { title: 'Открыть книгу' });
+/** Окно выбора книги; dir — папка, с которой оно начинается. */
+export async function pickOpen(dir?: string): Promise<string | null> {
+  if (isLocalApp) return call<string | null>('pick_open', { title: 'Открыть книгу', dir: dir ?? null });
   const { open } = await import('@tauri-apps/plugin-dialog');
-  const path = await open({ multiple: false, directory: false, filters: XLSX_FILTER, title: 'Открыть книгу' });
+  const path = await open({ multiple: false, directory: false, filters: XLSX_FILTER, title: 'Открыть книгу', defaultPath: dir });
   return typeof path === 'string' ? path : null;
 }
 

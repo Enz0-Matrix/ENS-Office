@@ -1479,16 +1479,25 @@ export class Grid {
         for (const ch of chars) { ctx.fillText(ch, cx, y + lh / 2); y += lh; }
       } else {
         const deg = rot <= 90 ? rot : -(rot - 90);
-        const tw = ctx.measureText(text).width;
         const rad = (-deg * Math.PI) / 180;
-        // Повёрнутая строка: по горизонтали — по выравниванию ячейки, по вертикали — по центру.
-        const span = Math.abs(Math.cos(rad)) * tw;
+        const sin = Math.abs(Math.sin(rad)), cos = Math.abs(Math.cos(rad));
+        // Строки идут вдоль наклонной базовой линии; перенос — по её доступной длине в ячейке.
+        const room = Math.max(20, Math.min(sin > 0.01 ? (cell.h - 6) / sin : Infinity, cos > 0.01 ? (cell.w - 6) / cos : Infinity));
+        const lines = style?.alignment?.wrap_text ? wrapLines(ctx, text, room) : text.split('\n');
+        const lh = Math.round(px * 1.22);
+        const along = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        const across = lines.length * lh;
+        // Занятое блоком место на экране: по горизонтали — по выравниванию ячейки, по вертикали — по центру.
+        const span = cos * along + sin * across;
         const cx = align === 'left' ? cell.x + 3 + span / 2 : align === 'right' ? cell.x + cell.w - 3 - span / 2 : cell.x + cell.w / 2;
         ctx.translate(cx, cell.y + cell.h / 2);
         ctx.rotate(rad);
-        ctx.fillText(text.replace(/\n/g, ' '), 0, 0);
-        if (f?.u) ctx.fillRect(-tw / 2, px / 2 - 1, tw, 1);
-        if (f?.strike) ctx.fillRect(-tw / 2, 0, tw, 1);
+        lines.forEach((line, i) => {
+          const oy = (i - (lines.length - 1) / 2) * lh, tw = ctx.measureText(line).width;
+          ctx.fillText(line, 0, oy);
+          if (f?.u) ctx.fillRect(-tw / 2, oy + px / 2 - 1, tw, 1);
+          if (f?.strike) ctx.fillRect(-tw / 2, oy, tw, 1);
+        });
       }
       ctx.restore();
       return;

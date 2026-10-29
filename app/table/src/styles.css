@@ -442,3 +442,11 @@ footer { display: flex; flex-direction: column; }
 
 /* Логотип в «Файл» */
 .bs-logo { border-radius: 10px; margin-bottom: 6px; }
+
+/* Закреплённые файлы и папки в «Файл → Открыть» */
+.bs-recent-row { display: flex; align-items: stretch; gap: 4px; }
+.bs-recent-row .bs-recent-item { flex: 1; }
+.bs-pin { border: 0; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 10px; color: #b8860b; }
+.bs-pin:hover { background: rgba(0,0,0,.06); border-radius: 4px; }
+.bs-pin-actions { display: flex; gap: 8px; margin: 6px 0 14px; }
+.bs-pin-actions button { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 12px; font: inherit; cursor: pointer; }

@@ -24,7 +24,7 @@ import { openSymbols } from './symbols';
 import { defineFromSelection, initNames, nameFormula, openNameManager } from './names';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
-import { localeId, saveSettings, settings } from './settings';
+import { localeId, refreshShared, saveSettings, settings } from './settings';
 import * as desk from './desktop';
 import { isDesktop, isTauri } from './platform';
 
@@ -1698,9 +1698,11 @@ function rotatedHeight(text: string, st: CellStyle, rot: number): number {
   const px = Math.round((f.sz ?? 11) * 1.33);
   if (rot === 255) return Math.min(409, [...text.replace(/\n/g, '')].length * Math.round(px * 1.1) + 8);
   measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${px}px ${fontStack(f.name)}`;
-  const tw = measure.measureText(text.replace(/\n/g, ' ')).width;
+  // Строки, разделённые Alt+Enter, идут рядом друг с другом поперёк наклонной базовой линии.
+  const lines = text.split('\n');
+  const tw = Math.max(...lines.map((l) => measure.measureText(l).width));
   const rad = ((rot <= 90 ? rot : rot - 90) * Math.PI) / 180;
-  return Math.min(409, Math.ceil(tw * Math.sin(rad) + px * Math.cos(rad) + 8));
+  return Math.min(409, Math.ceil(tw * Math.sin(rad) + lines.length * Math.round(px * 1.22) * Math.cos(rad) + 8));
 }
 
 /** Высота строк с переносом текста — по содержимому, как в Excel; строки с ручной высотой не трогаем. */
@@ -1713,8 +1715,9 @@ function fitRows(r1: number, r2: number): void {
     });
     if (!wrapped) continue;
     const now = Math.round(model.getRowHeight(grid.sheet, r) * 22 / 25);
-    if (!isAutoHeight(r, now)) continue;
     const need = fitRow(r);
+    // Высота не от подгонки (задана вручную или осталась от прежнего оформления): только увеличиваем, если текст не помещается.
+    if (!isAutoHeight(r, now) && need <= now) continue;
     if (need === now) continue;
     setSize('row', r, r, need);
     let rows = autoHeights.get(grid.sheet);
@@ -2882,7 +2885,7 @@ function rotationMenu(x: number, y: number): void {
   showMenu([
     ...ROTATIONS.map(([v, label]) => ({
       label, checked: v === cur,
-      run: () => { style('alignment.text_rotation', () => String(v)); fitRows(grid.sel.r1, grid.sel.r2); },
+      run: () => { style('alignment.text_rotation', () => String(v)); const { r1, r2 } = grid.sel; setTimeout(() => fitRows(r1, r2), 0); },
     })),
     {
       label: 'Свой угол…', separator: true,
@@ -2891,7 +2894,8 @@ function rotationMenu(x: number, y: number): void {
         const n = Math.round(Number(a?.replace(',', '.')));
         if (a === null || !Number.isFinite(n) || n < -90 || n > 90) return;
         style('alignment.text_rotation', () => String(n >= 0 ? n : 90 - n));
-        fitRows(grid.sel.r1, grid.sel.r2);
+        const { r1, r2 } = grid.sel;
+        setTimeout(() => fitRows(r1, r2), 0);
       },
     },
   ], x, y);
@@ -3498,7 +3502,13 @@ async function newBook(): Promise<void> {
 
 initBackstage({
   docInfo: () => ({ title: doc.title, path: doc.path, dirty: doc.dirty }),
-  recent: () => settings.recent,
+  recent: () => { refreshShared(); return settings.recent; },
+  pinned: () => { refreshShared(); return settings.pinned; },
+  pin: desk.pin,
+  unpin: desk.unpin,
+  pinFile: desk.pinFile,
+  pinFolder: desk.pinFolder,
+  openFromFolder: (d) => void desk.openFromFolder(d),
   newBook: () => void newBook(),
   open: () => void desk.openDialog(),
   openPath: (p) => void desk.openPath(p),
