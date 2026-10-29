@@ -450,3 +450,12 @@ footer { display: flex; flex-direction: column; }
 .bs-pin:hover { background: rgba(0,0,0,.06); border-radius: 4px; }
 .bs-pin-actions { display: flex; gap: 8px; margin: 6px 0 14px; }
 .bs-pin-actions button { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 12px; font: inherit; cursor: pointer; }
+
+/* Ползунок «Правила отмены» под кнопками отмены и повтора */
+.undo-scope { flex-basis: 100%; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; width: 112px; }
+.us-caption { font-size: 10px; color: var(--muted); line-height: 1.1; }
+.us-track { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); background: #e4e8ec; border-radius: 11px; padding: 0; height: 22px; }
+.us-thumb { position: absolute; left: 0; top: 0; width: 33.333%; height: 100%; background: var(--accent); border-radius: 11px; transition: transform .18s ease; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.us-stop { position: relative; z-index: 1; border: 0; background: transparent; font: inherit; font-size: 11px; color: #444; cursor: pointer; padding: 0; border-radius: 11px; }
+.us-stop.on { color: #fff; font-weight: 600; }
+.us-rule { font-size: 11px; line-height: 1.15; color: #333; font-weight: 600; min-height: 26px; }

@@ -2017,8 +2017,11 @@ function showScope(): void {
   const label = SCOPES.find(([k]) => k === settings.undoScope)![1];
   qaScope.textContent = settings.undoScope === 'book' ? '▾' : `▾ ${settings.undoScope === 'sheet' ? 'лист' : 'др.'}`;
   qaScope.title = `Что отменяют стрелки: ${label}`;
+  // Ползунок «Правила отмены» на ленте показывает то же правило.
+  document.dispatchEvent(new Event('ens-undo-scope'));
 }
 showScope();
+document.addEventListener('ens-undo-scope-set', () => { showScope(); syncUndoState(); });
 qaScope.addEventListener('mousedown', (e) => e.preventDefault());
 qaScope.addEventListener('click', () => {
   const r = qaScope.getBoundingClientRect();
