@@ -1,7 +1,7 @@
 {
   "name": "ens-table",
   "private": true,
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "ENS-Table — редактор таблиц ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
   "type": "module",
   "scripts": {
