@@ -7,6 +7,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const dir = 'dist-single';
 const version = process.argv[2] ?? JSON.parse(readFileSync('package.json', 'utf8')).version;
@@ -36,9 +37,16 @@ const js = readFileSync(assetPath(jsMatch[1]), 'utf8').replace(/<\/script/gi, '<
 const wasm = readFileSync('src/engine-pkg/engine_bg.wasm').toString('base64');
 
 html = html
-  .replace(cssMatch ? cssMatch[0] : '', `<style>${css}</style>`)
-  .replace(jsMatch[0], `<script>window.__ENS_WASM_B64__="${wasm}";</script>\n<script type="module">${js}</script>`)
-  .replace('<title>', `<meta name="generator" content="ENS-Table ${version} (один файл)">\n  <title>`);
+  // Замена функцией, а не строкой: в коде бывают «$'», «$&» — строка их подставляла бы особо.
+  .replace(cssMatch ? cssMatch[0] : '', () => `<style>${css}</style>`)
+  .replace(jsMatch[0], () => `<script>window.__ENS_WASM_B64__="${wasm}";</script>\n<script type="module">${js}</script>`)
+  .replace('<title>', () => `<meta name="generator" content="ENS-Table ${version} (один файл)">\n  <title>`);
+
+// Страховка: код в файле не должен быть искажён при сборке (раньше «$'» в коде ломал страницу).
+const embedded = html.slice(html.indexOf('<script type="module">') + 22, html.lastIndexOf('</script>'));
+writeFileSync(join(dir, 'check.mjs'), embedded);
+try { execFileSync(process.execPath, ['--check', join(dir, 'check.mjs')], { stdio: 'pipe' }); }
+catch (e) { throw new Error(`код в одном файле искажён: ${e.stderr?.toString().split('\n')[0] ?? e}`); }
 
 const out = join(dir, `ENS-Table_${version}_browser.html`);
 writeFileSync(out, html);
