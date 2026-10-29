@@ -993,7 +993,7 @@ await test('сумма прописью и ФИО по падежам: окна 
   await p.fill('.modal input[type=text]', '12 345,67');
   const out = await p.textContent('.ru-out');
   eq(out, 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'сумма');
-  await p.click('button:has-text("Вставить")');
+  await p.click('.modal button.primary');
   eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'вставлено');
   await p.evaluate(() => window.ens.run('insert.nameCases'));
   await p.fill('input[placeholder="Иванов Иван Иванович"]', 'Петрова Анна Сергеевна');
