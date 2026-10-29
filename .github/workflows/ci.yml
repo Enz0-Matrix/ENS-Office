@@ -180,10 +180,10 @@ jobs:
         run: npm run engine
       - name: Проект Android (tauri android init)
         working-directory: app/table
-        run: npx tauri android init --ci
+        run: npm run tauri -- android init --ci
       - name: Сборка apk (отладочная, arm64)
         working-directory: app/table
-        run: npx tauri android build --debug --apk --target aarch64
+        run: npm run tauri -- android build --debug --apk --target aarch64
       - uses: actions/upload-artifact@v4
         with:
           name: ens-table-android-probe
