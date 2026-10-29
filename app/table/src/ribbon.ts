@@ -215,6 +215,14 @@ export const TABS: RibbonTab[] = [
         { type: 'large', command: 'chart.pie', icon: 'chart_pie', label: 'Круговая' },
         { type: 'large', command: 'chart.edit', icon: 'chart_bar', label: 'Изменить' },
       ] },
+      { name: 'Фигуры', items: [
+        { type: 'large', command: 'shape.textbox', icon: 'text_box', label: 'Надпись' },
+        { type: 'large', command: 'shape.rect', icon: 'shape_rect', label: 'Прямоугольник' },
+        { type: 'large', command: 'shape.round', icon: 'shape_rect', label: 'Скруглённый' },
+        { type: 'large', command: 'shape.ellipse', icon: 'shape_ellipse', label: 'Эллипс' },
+        { type: 'large', command: 'shape.line', icon: 'shape_line', label: 'Линия' },
+        { type: 'large', command: 'shape.arrow', icon: 'shape_arrow', label: 'Стрелка' },
+      ] },
       { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },

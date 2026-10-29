@@ -654,6 +654,19 @@ impl Model {
         self.model.delete_image(sheet, index as usize).map_err(to_js_error)
     }
 
+    /// ENS-Office: shapes and text boxes of the sheet.
+    #[wasm_bindgen(js_name = "getShapes")]
+    pub fn get_shapes(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let list = self.model.get_shapes(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setShapes")]
+    pub fn set_shapes(&mut self, sheet: u32, shapes: JsValue) -> Result<(), JsError> {
+        let shapes: Vec<ironcalc_base::types::Shape> = serde_wasm_bindgen::from_value(shapes).map_err(JsError::from)?;
+        self.model.set_shapes(sheet, shapes).map_err(to_js_error)
+    }
+
     /// ENS-Office: charts of the sheet, `[{kind, title, range, row, column, dx, dy, width, height}]`.
     #[wasm_bindgen(js_name = "getCharts")]
     pub fn get_charts(&self, sheet: u32) -> Result<JsValue, JsError> {

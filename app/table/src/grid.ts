@@ -3,9 +3,10 @@
 //  §1 активная ячейка видна всегда, в неактивном окне — бледнее, но заметно;
 //  §2 «перекрестие» (фокус ячейки) до активной ячейки, настраиваемое.
 
-import { columnName, type BorderItem, type CellBorder, type CellStyle, type Chart, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun } from './engine';
+import { columnName, type BorderItem, type CellBorder, type CellStyle, type Chart, type ExtendedStyle, type ImageInfo, type MergedCell, type Model, type RichRun, type Shape } from './engine';
 import { fontStack } from './fonts';
 import { drawChart, readChartData, type ChartData } from './chart';
+import { drawShape } from './shapes';
 import { PALETTE } from './numfmt';
 
 export interface Selection {
@@ -200,11 +201,12 @@ export class Grid {
   /** Рисунки листа, выбранный рисунок (-1 — нет) и перенос или изменение размера мышью. */
   images: ImageInfo[] = [];
   charts: Chart[] = [];
+  shapes: Shape[] = [];
   selObj = -1;
   private imgCache = new Map<string, HTMLImageElement | null>();
   private imgDrag: { mode: 'move' | 'resize'; i: number; sx: number; sy: number; orig: { x: number; y: number; w: number; h: number }; cur: { x: number; y: number; w: number; h: number } } | null = null;
   /** Рисунок перенесён или изменён: индекс, ячейка левого верхнего угла, сдвиг и размер (px). */
-  onImagePlace: (kind: 'image' | 'chart', index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
+  onImagePlace: (kind: 'image' | 'chart' | 'shape', index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
   onImageSelect: (index: number) => void = () => {};
   /** Двойной щелчок по выбранному рисунку или диаграмме. */
   onObjectDouble: () => void = () => {};
@@ -1745,15 +1747,16 @@ export class Grid {
 
   /** Положение рисунка на экране (в логических пикселях) с учётом переноса мышью. */
   /** Рисунки, затем диаграммы — единый список объектов поверх листа. */
-  private objs(): { kind: 'image' | 'chart'; index: number; row: number; column: number; dx: number; dy: number; width: number; height: number }[] {
+  private objs(): { kind: 'image' | 'chart' | 'shape'; index: number; row: number; column: number; dx: number; dy: number; width: number; height: number }[] {
     return [
       ...this.images.map((o, index) => ({ ...o, kind: 'image' as const, index })),
       ...this.charts.map((o, index) => ({ ...o, kind: 'chart' as const, index })),
+      ...this.shapes.map((o, index) => ({ ...o, kind: 'shape' as const, index })),
     ];
   }
 
   /** Вид объекта по номеру в общем списке (для главного окна). */
-  objAt(i: number): { kind: 'image' | 'chart'; index: number } | null {
+  objAt(i: number): { kind: 'image' | 'chart' | 'shape'; index: number } | null {
     const o = this.objs()[i];
     return o ? { kind: o.kind, index: o.index } : null;
   }
@@ -1768,8 +1771,9 @@ export class Grid {
 
   private imageAt(px: number, py: number): number {
     for (let i = this.objs().length - 1; i >= 0; i--) {
-      const r = this.imageRect(i);
-      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
+      const r = this.imageRect(i), o = this.objs()[i];
+      const pad = o.kind === 'shape' && (this.shapes[o.index].kind === 3 || this.shapes[o.index].kind === 4) ? 6 : 0;
+      if (px >= r.x - pad && px <= r.x + r.w + pad && py >= r.y - pad && py <= r.y + r.h + pad) return i;
     }
     return -1;
   }
@@ -1788,6 +1792,11 @@ export class Grid {
         ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
         ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
       };
+      if (o.kind === 'shape') {
+        drawShape(ctx, r, this.shapes[o.index], this.theme.textColor ? '#000000' : '#000000');
+        drawFrame();
+        return;
+      }
       if (o.kind === 'chart') {
         try { drawChart(ctx, r, this.charts[o.index].kind, this.charts[o.index].title, this.chartData(this.charts[o.index]), this.charts[o.index]); } catch { /* диаграмма без данных */ }
         drawFrame();
@@ -1824,7 +1833,8 @@ export class Grid {
     } catch { this.pageBreaks = [[], []]; }
     try { this.images = model.getImages(this.sheet); } catch { this.images = []; }
     try { this.charts = model.getCharts(this.sheet); } catch { this.charts = []; }
-    if (this.selObj >= this.images.length + this.charts.length) this.selObj = -1;
+    try { this.shapes = model.getShapes(this.sheet); } catch { this.shapes = []; }
+    if (this.selObj >= this.images.length + this.charts.length + this.shapes.length) this.selObj = -1;
   }
 
   /** Значок метки: синий кружок. */

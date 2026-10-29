@@ -4,6 +4,7 @@ import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
+import { newShape, SHAPE_NAMES } from './shapes';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
@@ -1148,6 +1149,7 @@ imageInput.addEventListener('change', async () => {
 grid.onImagePlace = (kind, i, row, column, dx, dy, w, h) => {
   try {
     if (kind === 'image') model.placeImage(grid.sheet, i, row, column, dx, dy, w, h);
+    else if (kind === 'shape') model.setShapes(grid.sheet, model.getShapes(grid.sheet).map((x, k) => (k === i ? { ...x, row, column, dx, dy, width: w, height: x.kind === 3 || x.kind === 4 ? Math.max(0, h) : h } : x)));
     else model.setCharts(grid.sheet, model.getCharts(grid.sheet).map((c, k) => (k === i ? { ...c, row, column, dx, dy, width: w, height: h } : c)));
   } catch (e) { showToast(String(e)); }
   grid.render();
@@ -1157,10 +1159,84 @@ function deleteSelectedObject(): void {
   const o = grid.objAt(grid.selObj);
   try {
     if (o?.kind === 'image') model.deleteImage(grid.sheet, o.index);
+    else if (o?.kind === 'shape') model.setShapes(grid.sheet, model.getShapes(grid.sheet).filter((_, k) => k !== o.index));
     else if (o) model.setCharts(grid.sheet, model.getCharts(grid.sheet).filter((_, k) => k !== o.index));
   } catch (e) { showToast(String(e)); }
   grid.selObj = -1;
   grid.render();
+}
+
+// --- Фигуры и надписи ---
+
+function insertShape(kind: number): void {
+  const s = grid.sel;
+  try {
+    const list = model.getShapes(grid.sheet);
+    model.setShapes(grid.sheet, [...list, newShape(kind, s.row, s.column)]);
+    grid.selObj = grid.images.length + grid.charts.length + list.length;
+    grid.render();
+  } catch (e) { showToast(String(e)); }
+}
+
+/** Окно фигуры: текст, заливка, контур, шрифт; «Удалить». */
+function shapeDialog(index: number): void {
+  const list = model.getShapes(grid.sheet);
+  const sh = list[index];
+  if (!sh) return;
+  const line = sh.kind === 3 || sh.kind === 4;
+  const overlay = $('recovery');
+  const colorRow = (key: string, label: string, value: string) =>
+    `<p><label><input type="checkbox" data-on="${key}"${value ? ' checked' : ''}> ${label}</label> <input type="color" data-c="${key}" value="${value || '#000000'}" style="width:36px;height:24px;padding:0"></p>`;
+  overlay.innerHTML = `<div class="modal"><h2>${SHAPE_NAMES[sh.kind] ?? 'Фигура'}</h2>
+    ${line ? '' : '<p><textarea data-f="text" rows="4" style="width:100%;box-sizing:border-box;font:inherit" placeholder="Текст"></textarea></p>'}
+    ${line ? '' : colorRow('fill', 'Заливка', sh.fill)}
+    ${colorRow('line', line ? 'Цвет линии' : 'Контур', sh.line_color || (line ? '#000000' : ''))}
+    <p><label>Толщина: <input type="number" data-f="lw" min="1" max="20" style="width:60px"> px</label>${line ? '<label style="margin-left:14px"><input type="checkbox" data-f="flip"> Снизу вверх</label>' : ''}</p>
+    ${line ? '' : `${colorRow('text', 'Цвет текста', sh.text_color)}
+    <p><label>Размер шрифта: <input type="number" data-f="fs" min="6" max="96" style="width:60px"></label>
+      <label style="margin-left:14px"><input type="checkbox" data-f="bold"> Жирный</label>
+      <label style="margin-left:14px">Выравнивание: <select data-f="align"><option value="0">слева</option><option value="1">по центру</option><option value="2">справа</option></select></label></p>`}
+    <div class="rec-actions"><button data-act="delete" class="danger">Удалить</button><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement & HTMLTextAreaElement>(`[data-f="${n}"]`);
+  const on = (k: string) => box.querySelector<HTMLInputElement>(`[data-on="${k}"]`);
+  const col = (k: string) => box.querySelector<HTMLInputElement>(`[data-c="${k}"]`);
+  if (f('text')) f('text')!.value = sh.text;
+  f('lw')!.value = String(sh.line_width || 1);
+  if (f('flip')) f('flip')!.checked = sh.flip;
+  if (f('fs')) f('fs')!.value = String(sh.font_size || 11);
+  if (f('bold')) f('bold')!.checked = sh.bold;
+  if (f('align')) f('align')!.value = String(sh.align);
+  f('text')?.focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    try {
+      if (act === 'delete') model.setShapes(grid.sheet, list.filter((_, k) => k !== index));
+      if (act === 'ok') {
+        const pick = (k: string) => (on(k)?.checked ? col(k)!.value.toUpperCase() : '');
+        const next = {
+          ...sh,
+          text: f('text')?.value ?? sh.text,
+          fill: line ? '' : pick('fill'),
+          line_color: line ? (pick('line') || '#000000') : pick('line'),
+          line_width: Math.max(1, Math.min(20, Math.round(Number(f('lw')!.value) || 1))),
+          flip: f('flip') ? f('flip')!.checked : sh.flip,
+          text_color: line ? '' : pick('text'),
+          font_size: f('fs') ? Math.max(0, Math.min(96, Number(f('fs')!.value) || 0)) : sh.font_size,
+          bold: f('bold') ? f('bold')!.checked : sh.bold,
+          align: f('align') ? Number(f('align')!.value) : sh.align,
+        };
+        model.setShapes(grid.sheet, list.map((x, k) => (k === index ? next : x)));
+      }
+      if (act === 'delete') grid.selObj = -1;
+    } catch (err) { showToast(String(err)); }
+    grid.render();
+    close();
+  });
 }
 
 // --- Диаграммы ---
@@ -1285,7 +1361,11 @@ function editSelectedChart(): void {
   const c = model.getCharts(grid.sheet)[o.index];
   chartDialog(o.index, { kind: c.kind, title: c.title, range: c.range, look: c });
 }
-grid.onObjectDouble = () => { if (grid.objAt(grid.selObj)?.kind === 'chart') editSelectedChart(); };
+grid.onObjectDouble = () => {
+  const o = grid.objAt(grid.selObj);
+  if (o?.kind === 'chart') editSelectedChart();
+  else if (o?.kind === 'shape') shapeDialog(o.index);
+};
 
 // --- Защита листа, ячеек и структуры книги ---
 
@@ -2836,6 +2916,12 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
+  { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
+  { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },
+  { id: 'shape.line', label: 'Фигура: линия', keywords: ['line', 'линия'], run: () => insertShape(3) },
+  { id: 'shape.arrow', label: 'Фигура: стрелка', keywords: ['arrow', 'стрелка'], run: () => insertShape(4) },
+  { id: 'shape.textbox', label: 'Надпись', keywords: ['text box', 'textbox', 'надпись', 'текстовое поле'], run: () => insertShape(5) },
   { id: 'chart.bar', label: 'Диаграмма: столбцы', keywords: ['chart', 'column chart', 'диаграмма', 'гистограмма', 'график'], run: () => insertChart(0) },
   { id: 'chart.line', label: 'Диаграмма: линии', keywords: ['line chart', 'график', 'диаграмма'], run: () => insertChart(1) },
   { id: 'chart.pie', label: 'Диаграмма: круговая', keywords: ['pie chart', 'круговая', 'диаграмма'], run: () => insertChart(2) },
