@@ -31,6 +31,8 @@ import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { initThemes, themeDialog } from './themes-ui';
+import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
+import type { CheckHost } from './checks';
 import { applyScheme, continueList, convertManual, currentStart, setListStart } from './listtools';
 import { PRESETS, presetOf, type Scheme } from './numbering';
 import { schemeDialog } from './lists-ui';
@@ -413,6 +415,7 @@ let recoveryTimer = 0;
 
 function afterChange(docChanged: boolean): void {
   updateUi();
+  renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
     clearTimeout(statsTimer);
     statsTimer = window.setTimeout(updateStats, 250);
@@ -572,6 +575,8 @@ register(
     checked: () => !!focusKey.getState(view.state),
     run: () => { view.dispatch(view.state.tr.setMeta(focusKey, !focusKey.getState(view.state))); updateUi(); },
   },
+  { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
+  { id: 'review.inspector', label: 'Рентген форматирования', keywords: ['формат', 'инспектор', 'откуда'], keys: ['Ctrl+Alt+KeyI'], run: () => toggleInspector(inspectorSource, inspectorActions) },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
   { id: 'ver.named', label: 'Записать именную версию', run: () => askNamedVersion(historyHost) },
@@ -613,6 +618,38 @@ function startAtDialog(): void {
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Применить', onclick: go })));
   });
 }
+
+const inspectorSource = () => ({ view: active(), defaults: meta.defaults });
+const inspectorActions = {
+  resetPara: () => { dispatchCmd(setParaAttrs({ align: null, indent: null, first: null, before: null, after: null, line: null })); },
+  resetChars: () => { dispatchCmd(clearFormatting); },
+};
+
+/** Помощник проверки оформления: действия над документом, страницей и колонтитулами. */
+const checkHost: CheckHost = {
+  state: () => view.state,
+  dispatch: (tr) => view.dispatch(tr),
+  meta: () => meta,
+  changePage: (p) => changePage(p),
+  setDefaults: (d) => { Object.assign(meta.defaults, d); applyPage(); replan(view); updateUi(); },
+  pageNumbers: (where, align, skipFirst) => {
+    closeHf();
+    const hasField = (j: HfDoc) => !!j && JSON.stringify(j).includes('"type":"field"');
+    const para = schema.nodes.paragraph.create({ align: align === 'left' ? null : align }, schema.nodes.field.create({ kind: 'page' }));
+    const mk = (): HfDoc => schema.nodes.doc.create(null, [para]).toJSON() as HfDoc;
+    const other = where === 'header' ? 'footer' : 'header';
+    if (!hasField(where === 'header' ? meta.hf.header : meta.hf.footer)) setHf(meta.hf, where, false, mk());
+    void other;
+    if (skipFirst) {
+      meta.hf.differentFirst = true;
+      const first = where === 'header' ? meta.hf.firstHeader : meta.hf.firstFooter;
+      if (hasField(first)) setHf(meta.hf, where, true, null);
+    }
+    refreshHf();
+    updateUi();
+    scheduleRecovery();
+  },
+};
 
 function flagsDialog(): void {
   dialog((box, close) => {
@@ -859,6 +896,13 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'mark.green', icon: 'checkmark', label: 'Готово' },
           { type: 'large', command: 'mark.next', icon: 'arrow_redo', label: 'Следующая' },
           { type: 'large', command: 'mark.list', icon: 'book_open', label: 'Список меток' },
+        ],
+      },
+      {
+        name: 'Оформление',
+        items: [
+          { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
+          { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
         ],
       },
       { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }] },

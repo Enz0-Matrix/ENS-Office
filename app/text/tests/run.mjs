@@ -948,6 +948,58 @@ await test('поиск команд Alt+Q: находит по-русски и �
   await p.context().close();
 });
 
+
+// ---- Проверка оформления и «рентген» ----
+await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, m = E.getMeta();
+    m.page = { ...m.page, left: 28, right: 14, top: 28, bottom: 28 }; // поля по 10 мм и меньше
+    m.defaults = { font: 'Arial', size: 11, line: 1.15, before: 0, after: 0 };
+    const long = 'Это длинный абзац основного текста, который должен соответствовать оформлению: отступ, выравнивание, шрифт и интервал по профилю. ';
+    const P = (t, a) => s.nodes.paragraph.create(a || null, t ? s.text(t) : undefined);
+    E.loadDoc(s.nodes.doc.create(null, [P('    ' + long + 'Он сказал "привет".'), P(long), P(''), P(''), P(''), P(long)]), m, 'gost');
+  });
+  await p.evaluate(() => window.ens.run('review.check'));
+  await p.waitForSelector('.check-row');
+  await p.selectOption('.check-modal select', 'gost7097');
+  const bad = await p.$$eval('.check-row.bad .check-text > div:first-child', (e) => e.map((x) => x.textContent));
+  for (const need of ['Поля, мм', 'Шрифт или размер вне профиля', 'Межстрочный интервал вне профиля', 'Абзацный отступ', 'не выровнен по ширине', 'Номера страниц', 'Отступ абзаца набран пробелами', 'Лишние пустые абзацы', 'Типографика']) ok(bad.some((x) => x.includes(need)), `не найдено замечание «${need}»: ${bad.join(' | ')}`);
+  await p.click('.check-modal button:has-text("Исправить всё")');
+  await p.waitForTimeout(300);
+  const left = await p.$$eval('.check-row.bad .check-text > div:first-child', (e) => e.map((x) => x.textContent));
+  eq(left, [], 'после «Исправить всё» замечаний не осталось');
+  const r = await p.evaluate(() => { const E = window.ens, m = E.getMeta(); const d = E.view.state.doc; return { left: m.page.left, font: m.defaults.font, size: m.defaults.size, line: m.defaults.line, first: d.child(0).attrs.first, align: d.child(0).attrs.align, empties: [...Array(d.childCount).keys()].filter((i) => d.child(i).content.size === 0).length, hdr: JSON.stringify(m.hf.header).includes('"field"'), diff: m.hf.differentFirst, text: d.child(0).textContent, versions: E.hist().versions.map((v) => v.kind) }; });
+  ok(r.left >= 56.6, `левое поле ${r.left}`);
+  eq([r.font, r.size, r.line], ['Times New Roman', 14, 1], 'шрифт и интервал по профилю');
+  ok(Math.abs(r.first - 35.4) < 1 && r.align === 'justify', 'отступ и выравнивание');
+  ok(r.empties <= 1, `пустых абзацев осталось ${r.empties}`);
+  ok(r.hdr && r.diff, 'номер страницы вверху, на первой странице нет');
+  ok(r.text.includes('«привет»') && !r.text.startsWith(' '), `типографика и пробелы: ${r.text.slice(0, 40)}`);
+  ok(r.versions.includes('before'), 'страховочная версия перед исправлением');
+  await p.context().close();
+});
+
+await test('«рентген» форматирования: что задано вручную, сброс формата', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Текст');
+  await p.keyboard.press('Control+KeyA');
+  await p.keyboard.press('Control+KeyB');
+  await p.selectOption('select[data-command="format.fontName"]', 'Arial');
+  await p.keyboard.press('Control+KeyE');
+  await p.keyboard.press('Control+Alt+KeyI');
+  await p.waitForSelector('.inspector .insp-row');
+  const man = await p.$$eval('.inspector .insp-row .man', (e) => e.map((x) => x.textContent));
+  ok(man.includes('по центру') && man.includes('Arial') && man.includes('жирный'), `вручную: ${man}`);
+  await p.click('.inspector button:has-text("Сбросить формат абзаца")');
+  await p.click('.inspector button:has-text("Сбросить формат текста")');
+  const after = await p.evaluate(() => { const n = window.ens.view.state.doc.firstChild; return [n.attrs.align, n.child(0).marks.length]; });
+  eq(after, [null, 0], 'формат сброшен');
+  await p.keyboard.press('Control+Alt+KeyI');
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

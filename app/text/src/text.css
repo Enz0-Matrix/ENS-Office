@@ -172,3 +172,20 @@
 .search-results button.on, .search-results button:hover { background: var(--hover); }
 .search-results .k { color: var(--muted); font-size: 12px; }
 .flag-row { display: block; width: 100%; text-align: left; margin: 2px 0; }
+
+/* Рентген форматирования и проверка оформления */
+.inspector { position: fixed; z-index: 45; right: 16px; top: 128px; width: 300px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); padding: 10px 12px; }
+.insp-head { display: flex; justify-content: space-between; align-items: center; }
+.insp-head button { border: 0; background: none; cursor: pointer; color: inherit; }
+.insp-note { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+.insp-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dotted var(--border); }
+.insp-row span:first-child { color: var(--muted); }
+.insp-row .man { font-weight: 700; color: var(--accent); }
+.insp-actions { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.check-modal { width: min(860px, 96vw) !important; }
+.check-note { font-size: 12px; }
+.check-list { max-height: 50vh; overflow: auto; }
+.check-row { display: grid; grid-template-columns: 24px 1fr auto auto; gap: 8px; align-items: start; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.check-row.ok .check-mark { color: #2e9b4b; }
+.check-row.bad .check-mark { color: #d13438; font-weight: 700; }
+.check-detail { font-size: 12px; color: var(--muted); }
