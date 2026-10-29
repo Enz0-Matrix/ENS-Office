@@ -1020,6 +1020,35 @@ await test('срок в рабочих днях: расчёт, поправки,
   eq(await p.evaluate(() => window.ens.view.state.doc.textContent), '«07» марта 2026 г.', 'вставлена дата');
 });
 
+await test('мастер документов: приказ по ГОСТ, номер из журнала, второй номер растёт', async () => {
+  const p = await page();
+  await p.evaluate(() => localStorage.removeItem('ens-text.journal'));
+  const make = async (subject) => {
+    await p.evaluate(() => window.ens.run('file.wizard'));
+    await p.selectOption('.modal select', 'order');
+    await p.fill('.wiz-form textarea >> nth=0', 'ООО «Ромашка»');
+    await p.fill('input[placeholder^="О назначении"]', subject);
+    await p.fill('.wiz-form textarea >> nth=2', 'Назначить Иванова И. И.\nУтвердить инструкцию');
+    await p.fill('input[placeholder="И. И. Иванов"]', 'А. А. Петров');
+    await p.fill('input[placeholder="Директор"]', 'Директор');
+    await p.click('.modal button.primary');
+    await p.waitForTimeout(300);
+  };
+  await make('О назначении ответственного');
+  const r = await p.evaluate(() => { const E = window.ens, d = E.view.state.doc, m = E.getMeta(); return { text: d.textContent, left: m.page.left, size: m.defaults.size, hdr: JSON.stringify(m.hf.header).includes('field'), diff: m.hf.differentFirst, j: JSON.parse(localStorage.getItem('ens-text.journal')).entries.map((e) => e.label) }; });
+  ok(r.text.includes('ПРИКАЗ') && r.text.includes('№ 1') && r.text.includes('1. Назначить Иванова') && r.text.includes('3. Контроль за исполнением') && r.text.includes('ПРИКАЗЫВАЮ'), `текст приказа: ${r.text}`);
+  ok(Math.abs(r.left - 56.7) < 0.1 && r.size === 14 && r.hdr && r.diff, 'поля, шрифт, номер страницы');
+  eq(r.j, ['1'], 'журнал');
+  await make('Второй');
+  eq(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.journal')).entries.map((e) => e.label).join(',')), '1,2', 'номер вырос');
+  // документ проходит проверку по ГОСТ без замечаний к полям и шрифту
+  await p.evaluate(() => window.ens.run('review.check'));
+  await p.waitForSelector('.check-row');
+  await p.selectOption('.check-modal select', 'gost7097');
+  const bad = await p.$$eval('.check-row.bad .check-text > div:first-child', (e) => e.map((x) => x.textContent));
+  ok(!bad.some((x) => /Поля|Шрифт|Номера страниц/.test(x)), `замечания к приказу: ${bad.join(' | ')}`);
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

@@ -32,6 +32,7 @@ import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
+import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
 import type { CheckHost } from './checks';
@@ -595,6 +596,8 @@ register(
   { id: 'hf.pages', label: 'Число страниц (поле)', run: () => dispatchCmd(insertField('pages')) },
   { id: 'hf.differentFirst', label: 'Особый колонтитул первой страницы', checked: () => meta.hf.differentFirst, run: () => { closeHf(); meta.hf.differentFirst = !meta.hf.differentFirst; refreshHf(); updateUi(); scheduleRecovery(); } },
   { id: 'insert.pageNumber', label: 'Номер страницы', run: (v) => { if (v) insertPageNumber(v); setSelect('insert.pageNumber', ''); } },
+  { id: 'file.wizard', label: 'Служебный документ (мастер)…', keywords: ['письмо', 'приказ', 'акт', 'протокол', 'гост', 'реквизиты', 'бланк'], run: () => void guardUnsaved(() => wizardDialog(newFromWizard)) },
+  { id: 'file.journal', label: 'Журнал регистрации…', keywords: ['номер', 'исходящий', 'регистрация'], run: () => journalDialog() },
   { id: 'file.new', label: 'Создать', keys: ['Ctrl+KeyN'], run: () => (desktop.isDesktop ? void desktop.newWindow() : void guardUnsaved(newDocument)) },
   { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
@@ -1394,6 +1397,12 @@ function newDocument(): void {
   loadDoc(emptyDoc(), newMeta(), 'Документ1');
 }
 
+function newFromWizard(doc: PMNode, newMetaValue: DocMeta, name: string): void {
+  void clearRecovery(docId);
+  hist = V.emptyHistory();
+  loadDoc(doc, newMetaValue, name, true);
+}
+
 /** Если есть несохранённые правки — спрашивает; продолжает, когда можно. */
 async function guardUnsaved(next: () => void): Promise<void> {
   if (!isDirty()) { next(); return; }
@@ -1489,7 +1498,7 @@ function fileMenu(): void {
     box.append(
       el('h2', { textContent: 'Файл' }),
       el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
+        item('Создать', 'file.new'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
     );
   });

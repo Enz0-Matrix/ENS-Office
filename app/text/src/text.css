@@ -205,3 +205,12 @@
 .ru-case { display: flex; gap: 10px; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-alt); font: inherit; cursor: pointer; }
 .ru-case:hover { background: #ececec; }
 .ru-case-label { color: var(--muted); min-width: 150px; }
+
+/* Мастер служебных документов и журнал */
+.wiz-form { display: flex; flex-direction: column; gap: 6px; }
+.wiz-form textarea, .modal textarea { font: inherit; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; resize: vertical; flex: 1; min-width: 0; }
+.wiz-num { margin: 6px 0; color: var(--muted); }
+.jr-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow: auto; }
+.jr-row { display: flex; gap: 12px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.jr-no { font-weight: 600; min-width: 90px; }
+.jr-subj { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
