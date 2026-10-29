@@ -6,6 +6,8 @@ export interface ChartData { cats: string[]; names: string[]; series: number[][]
 
 /** Оформление диаграммы: цвета рядов (у круговой — долей), легенда (0 — снизу, 1 — справа, 2 — нет), подписи значений. */
 export interface ChartLook { colors: string[]; legend: number; labels: boolean }
+/** Настройки осей и линий (поля как у Chart). */
+export interface ChartAxes { x_title?: string; y_title?: string; y_min?: number | null; y_max?: number | null; no_grid?: boolean; no_markers?: boolean; smooth?: boolean; thick?: boolean }
 export interface ChartTemplate extends ChartLook { name: string }
 
 /** Встроенные шаблоны; свои пользователь сохраняет в настройках. */
@@ -40,7 +42,7 @@ function niceScale(min: number, max: number): [number, number, number] {
 const fmt = (n: number) => (Math.abs(n) >= 1e6 ? `${+(n / 1e6).toPrecision(3)}M` : String(+n.toPrecision(6))).replace('.', ',');
 
 export function drawChart(ctx: CanvasRenderingContext2D, r: { x: number; y: number; w: number; h: number },
-  kind: number, title: string, d: ChartData, look: Partial<ChartLook> = {}, textColor = '#333'): void {
+  kind: number, title: string, d: ChartData, look: Partial<ChartLook> & ChartAxes = {}, textColor = '#333'): void {
   const color = (i: number) => look.colors?.[i] ?? CHART_COLORS[i % CHART_COLORS.length];
   const legendPos = look.legend ?? 0, labels = !!look.labels;
   ctx.save();
@@ -102,17 +104,27 @@ export function drawChart(ctx: CanvasRenderingContext2D, r: { x: number; y: numb
     return;
   }
   const all = d.series.flat().filter(Number.isFinite);
-  const [lo, hi, step] = niceScale(Math.min(0, ...all, 0), Math.max(0, ...all, 0));
+  let [lo, hi, step] = niceScale(Math.min(0, ...all, 0), Math.max(0, ...all, 0));
+  if (look.y_min != null || look.y_max != null) {
+    lo = look.y_min ?? Math.min(lo, look.y_max! - 1);
+    hi = look.y_max ?? Math.max(hi, lo + 1);
+    if (hi <= lo) hi = lo + 1;
+    step = niceScale(lo, hi)[2];
+  }
   ctx.font = '11px sans-serif';
   const labelW = Math.max(...[lo, hi].map((v) => ctx.measureText(fmt(v)).width)) + 8;
-  const px0 = r.x + labelW + 8, px1 = right - 12, py0 = top + 4, py1 = bottom - 18;
+  const yTitle = look.y_title ? 16 : 0, xTitle = look.x_title ? 16 : 0;
+  const px0 = r.x + labelW + 8 + yTitle, px1 = right - 12, py0 = top + 4, py1 = bottom - 18 - xTitle;
   const yOf = (v: number) => py1 - ((v - lo) / (hi - lo)) * (py1 - py0);
   ctx.textAlign = 'right';
   for (let v = lo; v <= hi + step / 2; v += step) {
     const y = Math.round(yOf(v)) + 0.5;
-    ctx.strokeStyle = '#e3e3e3'; ctx.beginPath(); ctx.moveTo(px0, y); ctx.lineTo(px1, y); ctx.stroke();
+    if (!look.no_grid) { ctx.strokeStyle = '#e3e3e3'; ctx.beginPath(); ctx.moveTo(px0, y); ctx.lineTo(px1, y); ctx.stroke(); }
     ctx.fillStyle = textColor; ctx.fillText(fmt(v), px0 - 6, y);
   }
+  ctx.fillStyle = textColor; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  if (look.x_title) ctx.fillText(look.x_title, (px0 + px1) / 2, py1 + 14 + 14, px1 - px0);
+  if (look.y_title) { ctx.save(); ctx.translate(r.x + 12, (py0 + py1) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(look.y_title, 0, 0, py1 - py0); ctx.restore(); }
   const slot = (px1 - px0) / Math.max(1, n);
   ctx.textAlign = 'center';
   d.cats.forEach((c, i) => { ctx.fillStyle = textColor; ctx.fillText(c, px0 + slot * (i + 0.5), py1 + 12, slot - 2); });
@@ -131,16 +143,23 @@ export function drawChart(ctx: CanvasRenderingContext2D, r: { x: number; y: numb
   } else {
     d.series.forEach((vals, s) => {
       const col = color(s);
-      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2; ctx.beginPath();
-      let pen = false;
-      vals.forEach((v, i) => {
-        if (!Number.isFinite(v)) { pen = false; return; }
-        const x = px0 + slot * (i + 0.5), y = yOf(v);
-        if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y);
-        pen = true;
-      });
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = look.thick ? 4 : 2; ctx.beginPath();
+      const pts = vals.map((v, i) => (Number.isFinite(v) ? [px0 + slot * (i + 0.5), yOf(v)] as const : null));
+      let prev: readonly [number, number] | null = null;
+      for (const pt of pts) {
+        if (!pt) { prev = null; continue; }
+        if (!prev) ctx.moveTo(pt[0], pt[1]);
+        else if (look.smooth) { const mx = (prev[0] + pt[0]) / 2; ctx.bezierCurveTo(mx, prev[1], mx, pt[1], pt[0], pt[1]); }
+        else ctx.lineTo(pt[0], pt[1]);
+        prev = pt;
+      }
       ctx.stroke(); ctx.lineWidth = 1;
-      vals.forEach((v, i) => { if (Number.isFinite(v)) { ctx.beginPath(); ctx.arc(px0 + slot * (i + 0.5), yOf(v), 3, 0, Math.PI * 2); ctx.fill(); if (labels) { ctx.fillStyle = textColor; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(fmt(v), px0 + slot * (i + 0.5), yOf(v) - 9); ctx.fillStyle = col; } } });
+      vals.forEach((v, i) => {
+        const pt = pts[i];
+        if (!pt) return;
+        if (!look.no_markers) { ctx.beginPath(); ctx.arc(pt[0], pt[1], look.thick ? 4 : 3, 0, Math.PI * 2); ctx.fill(); }
+        if (labels) { ctx.fillStyle = textColor; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(fmt(v), pt[0], pt[1] - 9); ctx.fillStyle = col; }
+      });
     });
   }
   ctx.strokeStyle = '#888'; ctx.beginPath(); ctx.moveTo(px0, Math.round(zero) + 0.5); ctx.lineTo(px1, Math.round(zero) + 0.5); ctx.stroke();

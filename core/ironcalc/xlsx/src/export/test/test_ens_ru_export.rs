@@ -353,14 +353,17 @@ fn test_ens_charts_export() {
             model.set_user_input(0, r as i32 + 1, c as i32 + 1, v).unwrap();
         }
     }
-    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250, colors: vec!["#112233".to_string(), "#AABBCC".to_string()], legend: 1, labels: true };
-    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250, colors: vec!["#010203".to_string(), "#040506".to_string(), "#070809".to_string()], legend: 2, labels: true };
+    let bar = Chart { kind: 0, title: "План & факт".to_string(), range: "A1:C4".to_string(), row: 6, column: 2, dx: 3, dy: 4, width: 400, height: 250, colors: vec!["#112233".to_string(), "#AABBCC".to_string()], legend: 1, labels: true, x_title: "Квартал".to_string(), y_title: "Сумма & итог".to_string(), y_min: Some(5.0), y_max: Some(50.0), no_grid: true, no_markers: false, smooth: false, thick: false };
+    let pie = Chart { kind: 2, title: String::new(), range: "A1:B4".to_string(), row: 6, column: 8, dx: 0, dy: 0, width: 300, height: 250, colors: vec!["#010203".to_string(), "#040506".to_string(), "#070809".to_string()], legend: 2, labels: true, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: false, smooth: false, thick: false };
     assert!(model.set_charts(0, vec![Chart { range: "A1".to_string(), ..bar.clone() }]).is_err());
     model.set_charts(0, vec![bar.clone()]).unwrap();
+    let line = Chart { kind: 1, title: String::new(), range: "A1:C4".to_string(), row: 12, column: 2, dx: 0, dy: 0, width: 300, height: 200, colors: vec![], legend: 0, labels: false, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: true, smooth: true, thick: true };
     model.set_charts(0, vec![bar.clone(), pie.clone()]).unwrap();
+    let _ = &line;
     model.undo().unwrap();
     assert_eq!(model.get_charts(0).unwrap(), vec![bar.clone()]);
     model.redo().unwrap();
+    model.set_charts(0, vec![bar.clone(), pie.clone(), line.clone()]).unwrap();
     assert_eq!(model.get_range_numbers(0, 2, 2, 2, 3).unwrap(), vec![10.0, 12.0]);
     let name = "temp_ens_charts.xlsx";
     save_to_xlsx(model.get_model(), name).unwrap();
@@ -378,11 +381,11 @@ fn test_ens_charts_export() {
     let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
     std::fs::remove_file(name).unwrap();
     assert!(chart1.contains("<c:barChart>") && chart1.contains("<c:f>Sheet1!$B$2:$B$4</c:f>") && chart1.contains("План &amp; факт"), "{chart1}");
-    assert!(chart1.contains("<c:v>12</c:v>") && chart1.contains("<a:srgbClr val=\"AABBCC\"/>") && chart1.contains("<c:legendPos val=\"r\"/>") && chart1.contains("<c:showVal val=\"1\"/>"), "{chart1}");
+    assert!(chart1.contains("<c:v>12</c:v>") && chart1.contains("<a:srgbClr val=\"AABBCC\"/>") && chart1.contains("<c:legendPos val=\"r\"/>") && chart1.contains("<c:showVal val=\"1\"/>") && chart1.contains("Сумма &amp; итог") && chart1.contains("<c:max val=\"50\"/><c:min val=\"5\"/>") && !chart1.contains("<c:majorGridlines/>"), "{chart1}");
     assert!(chart2.contains("<c:pieChart>") && !chart2.contains("$C$") && chart2.contains("<c:dPt><c:idx val=\"2\"/>") && !chart2.contains("<c:legend>") && chart2.contains("<c:showPercent val=\"1\"/>"), "{chart2}");
     assert!(drawing.contains("<xdr:graphicFrame") && types.contains("/xl/charts/chart2.xml"), "{drawing}");
     let back = ironcalc_base::UserModel::from_model(back);
-    assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie]);
+    assert_eq!(back.get_charts(0).unwrap(), vec![bar, pie, line]);
 }
 
 // ENS-Office: passwords of the sheet and of the book structure (agile SHA-512 hash), round trip and undo.
@@ -428,7 +431,7 @@ fn test_ens_objects_shift_with_rows_and_columns() {
     model.set_comment(0, 5, 2, "n", "A").unwrap(); // B5
     model.set_comment(0, 2, 2, "m", "A").unwrap(); // B2
     model.add_image(0, Image { name: String::new(), row: 4, column: 3, dx: 0, dy: 0, width: 10, height: 10, ext: "png".to_string(), data: vec![1] }).unwrap();
-    model.set_charts(0, vec![Chart { kind: 0, title: String::new(), range: "A1:B3".to_string(), row: 6, column: 5, dx: 0, dy: 0, width: 100, height: 100, colors: vec![], legend: 0, labels: false }]).unwrap();
+    model.set_charts(0, vec![Chart { kind: 0, title: String::new(), range: "A1:B3".to_string(), row: 6, column: 5, dx: 0, dy: 0, width: 100, height: 100, colors: vec![], legend: 0, labels: false, x_title: String::new(), y_title: String::new(), y_min: None, y_max: None, no_grid: false, no_markers: false, smooth: false, thick: false }]).unwrap();
     model.set_page_break(0, true, 4, true).unwrap();
     model.insert_rows(0, 3, 2).unwrap();
     assert!(model.get_comment(0, 7, 2).unwrap().is_some() && model.get_comment(0, 2, 2).unwrap().is_some());

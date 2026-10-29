@@ -21,7 +21,9 @@ export interface RichRun { text: string; b?: boolean; i?: boolean; u?: boolean; 
 export interface ImageInfo { row: number; column: number; dx: number; dy: number; width: number; height: number; ext: string; name: string; sig: number }
 
 /** Диаграмма: kind 0 — столбцы, 1 — линии, 2 — круговая; range — «A1:C5» (первая строка — имена рядов, первый столбец — подписи). */
-export interface Chart { kind: number; title: string; range: string; row: number; column: number; dx: number; dy: number; width: number; height: number; colors: string[]; legend: number; labels: boolean }
+export interface Chart { kind: number; title: string; range: string; row: number; column: number; dx: number; dy: number; width: number; height: number; colors: string[]; legend: number; labels: boolean;
+  /** Подписи осей, границы шкалы значений (null — авто), без сетки, линии: без маркеров, сглаженные, толстые. */
+  x_title: string; y_title: string; y_min: number | null; y_max: number | null; no_grid: boolean; no_markers: boolean; smooth: boolean; thick: boolean }
 
 export interface CellStyle {
   num_fmt: string;

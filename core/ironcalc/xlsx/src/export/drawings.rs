@@ -124,9 +124,10 @@ pub(crate) fn get_chart_xml(model: &Model, sheet: u32, chart: &Chart) -> String 
         let vals: String = (r1 + 1..=r2)
             .filter_map(|r| num(r, c).map(|n| format!("<c:pt idx=\"{}\"><c:v>{n}</c:v></c:pt>", r - r1 - 1)))
             .collect();
+        let line_w = if chart.thick { 57150 } else { 28575 };
         let sp_pr = match (chart.kind, fill(i)) {
             (0, Some(f)) => format!("<c:spPr>{f}</c:spPr>"),
-            (1, Some(f)) => format!("<c:spPr><a:ln w=\"28575\" cap=\"rnd\">{f}<a:round/></a:ln></c:spPr>"),
+            (1, f) => format!("<c:spPr><a:ln w=\"{line_w}\" cap=\"rnd\">{}<a:round/></a:ln></c:spPr>", f.unwrap_or_default()),
             _ => String::new(),
         };
         let d_pt: String = if chart.kind == 2 {
@@ -150,14 +151,31 @@ pub(crate) fn get_chart_xml(model: &Model, sheet: u32, chart: &Chart) -> String 
 <c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>{vals}</c:numCache></c:numRef></c:val>{}</c:ser>",
             range_ref(&name, c, r1, c, r1),
             escape_xml(&text(r1, c)),
-            if chart.kind == 1 { "<c:marker><c:symbol val=\"none\"/></c:marker>" } else { "" },
+            if chart.kind == 1 { if chart.no_markers { "<c:marker><c:symbol val=\"none\"/></c:marker>" } else { "<c:marker><c:symbol val=\"circle\"/><c:size val=\"6\"/></c:marker>" } } else { "" },
             range_ref(&name, c, r1 + 1, c, r2),
             r2 - r1,
-            if chart.kind == 1 { "<c:smooth val=\"0\"/>" } else { "" }
+            if chart.kind == 1 { if chart.smooth { "<c:smooth val=\"1\"/>" } else { "<c:smooth val=\"0\"/>" } } else { "" }
         ));
     }
-    let axes = "<c:catAx><c:axId val=\"111\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"0\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"222\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>\
-<c:valAx><c:axId val=\"222\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"111\"/><c:crosses val=\"autoZero\"/></c:valAx>";
+    let axis_title = |t: &str| {
+        if t.is_empty() {
+            String::new()
+        } else {
+            format!("<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title>", escape_xml(t))
+        }
+    };
+    let scaling = format!(
+        "<c:scaling><c:orientation val=\"minMax\"/>{}{}</c:scaling>",
+        chart.y_max.map(|v| format!("<c:max val=\"{v}\"/>")).unwrap_or_default(),
+        chart.y_min.map(|v| format!("<c:min val=\"{v}\"/>")).unwrap_or_default()
+    );
+    let axes = format!(
+        "<c:catAx><c:axId val=\"111\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/>{}<c:numFmt formatCode=\"General\" sourceLinked=\"0\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"222\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx>\
+<c:valAx><c:axId val=\"222\"/>{scaling}<c:delete val=\"0\"/><c:axPos val=\"l\"/>{}{}<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"111\"/><c:crosses val=\"autoZero\"/></c:valAx>",
+        axis_title(&chart.x_title),
+        if chart.no_grid { "" } else { "<c:majorGridlines/>" },
+        axis_title(&chart.y_title)
+    );
     let plot = match chart.kind {
         0 => format!("<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/><c:varyColors val=\"0\"/>{series}<c:gapWidth val=\"150\"/><c:axId val=\"111\"/><c:axId val=\"222\"/></c:barChart>{axes}"),
         1 => format!("<c:lineChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>{series}<c:marker val=\"1\"/><c:axId val=\"111\"/><c:axId val=\"222\"/></c:lineChart>{axes}"),

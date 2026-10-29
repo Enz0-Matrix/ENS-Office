@@ -2,7 +2,7 @@ import './styles.css';
 import './themes.css';
 import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
-import { CHART_TEMPLATES, parseRange, type ChartLook } from './chart';
+import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
@@ -1165,7 +1165,7 @@ function deleteSelectedObject(): void {
 // --- Диаграммы ---
 
 /** Окно диаграммы: тип, заголовок, диапазон, шаблон оформления (цвета, легенда, подписи); для существующей — ещё «Удалить». */
-function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string; look?: Partial<ChartLook> }): void {
+function chartDialog(existing: number | null, initial: { kind: number; title: string; range: string; look?: Partial<ChartLook> & ChartAxes }): void {
   const overlay = $('recovery');
   const kinds = ['Столбцы', 'Линии', 'Круговая'];
   const templates = [...CHART_TEMPLATES, ...settings.chartTemplates];
@@ -1185,6 +1185,16 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
     <p>Цвета: <span data-f="swatches"></span></p>
     <p><label>Легенда: <select data-f="legend"><option value="0">снизу</option><option value="1">справа</option><option value="2">нет</option></select></label>
       <label style="margin-left:14px"><input type="checkbox" data-f="labels"> Подписи значений</label></p>
+    <details data-f="axes" ${initial.look && (initial.look.x_title || initial.look.y_title || initial.look.y_min != null || initial.look.y_max != null || initial.look.no_grid || initial.look.no_markers || initial.look.smooth || initial.look.thick) ? 'open' : ''}>
+      <summary>Оси и линии</summary>
+      <p><label>Подпись оси X: <input data-f="xt" style="width:55%"></label></p>
+      <p><label>Подпись оси Y: <input data-f="yt" style="width:55%"></label></p>
+      <p>Шкала значений: <label>от <input data-f="ymin" size="6" placeholder="авто"></label> <label>до <input data-f="ymax" size="6" placeholder="авто"></label></p>
+      <p><label><input type="checkbox" data-f="grid"> Линии сетки</label></p>
+      <p data-f="linebox"><label><input type="checkbox" data-f="markers"> Маркеры точек</label>
+        <label style="margin-left:12px"><input type="checkbox" data-f="smooth"> Сглаженные линии</label>
+        <label style="margin-left:12px"><input type="checkbox" data-f="thick"> Толстые линии</label></p>
+    </details>
     <div class="rec-actions">${existing === null ? '' : '<button data-act="delete" class="danger">Удалить</button>'}
     <button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${existing === null ? 'Создать' : 'Применить'}</button></div></div>`;
   overlay.hidden = false;
@@ -1193,6 +1203,13 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
   f('title').value = initial.title;
   f('range').value = initial.range;
   addRangePicker(f('range'));
+  const lk = initial.look ?? {};
+  f('xt').value = lk.x_title ?? ''; f('yt').value = lk.y_title ?? '';
+  f('ymin').value = lk.y_min == null ? '' : String(lk.y_min); f('ymax').value = lk.y_max == null ? '' : String(lk.y_max);
+  f('grid').checked = !lk.no_grid; f('markers').checked = !lk.no_markers; f('smooth').checked = !!lk.smooth; f('thick').checked = !!lk.thick;
+  const num = (v: string): number | null => { const n = Number(v.trim().replace(',', '.')); return v.trim() !== '' && Number.isFinite(n) ? n : null; };
+  const showLineOpts = () => { box.querySelector<HTMLElement>('[data-f="linebox"]')!.hidden = Number(f('kind').value) !== 1; };
+  f('kind').addEventListener('change', showLineOpts); showLineOpts();
   const swatches = () => {
     const rg = parseRange(f('range').value.trim().toUpperCase());
     const kind = Number(f('kind').value);
@@ -1233,7 +1250,9 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
       const list = model.getCharts(grid.sheet);
       if (act === 'delete' && existing !== null) model.setCharts(grid.sheet, list.filter((_, k) => k !== existing));
       if (act === 'ok') {
-        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels };
+        const c = { kind: Number(f('kind').value), title: f('title').value.trim(), range: f('range').value.trim().toUpperCase(), colors: look.colors, legend: look.legend, labels: look.labels,
+          x_title: f('xt').value.trim(), y_title: f('yt').value.trim(), y_min: num(f('ymin').value), y_max: num(f('ymax').value),
+          no_grid: !f('grid').checked, no_markers: !f('markers').checked, smooth: f('smooth').checked, thick: f('thick').checked };
         if (!parseRange(c.range)) { showToast('Укажите диапазон из двух и более строк и столбцов, например A1:C5.'); return; }
         if (existing === null) {
           // Новая диаграмма — справа от данных, чтобы не закрывать их.
