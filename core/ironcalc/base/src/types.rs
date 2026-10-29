@@ -337,6 +337,26 @@ pub struct Worksheet {
     pub ens_charts: Vec<Chart>,
     /// ENS-Office: shapes and text boxes over the sheet.
     pub ens_shapes: Vec<Shape>,
+    /// ENS-Office: data validation of cells (drop-down lists).
+    pub ens_validations: Vec<Validation>,
+}
+
+/// A drop-down list for cells (Excel's `<dataValidation type="list">`).
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct Validation {
+    /// The cells, as in xlsx: ranges separated by spaces ("B2:B10 D4").
+    pub sqref: String,
+    /// `"Да,Нет,Возможно"` (items in quotes, comma-separated) or a range: `$A$1:$A$5`, `Лист2!$A$1:$A$5`, a defined name.
+    pub source: String,
+    /// An empty cell is accepted.
+    #[serde(default)]
+    pub allow_blank: bool,
+    /// The cell shows no arrow button.
+    #[serde(default)]
+    pub no_arrow: bool,
+    /// The message when a value is not in the list (empty — the default one).
+    #[serde(default)]
+    pub error: String,
 }
 
 /// A shape or a text box over a sheet; the top left corner of its box is at the cell (`row`, `column`).

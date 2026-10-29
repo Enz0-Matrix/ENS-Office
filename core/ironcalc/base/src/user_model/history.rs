@@ -139,6 +139,12 @@ pub(crate) enum Diff {
         new_value: Vec<crate::types::Image>,
         old_value: Vec<crate::types::Image>,
     },
+    /// ENS-Office: the drop-down lists (data validation) of a sheet changed.
+    SetValidations {
+        sheet: u32,
+        new_value: Vec<crate::types::Validation>,
+        old_value: Vec<crate::types::Validation>,
+    },
     /// ENS-Office: the shapes of a sheet changed.
     SetShapes {
         sheet: u32,

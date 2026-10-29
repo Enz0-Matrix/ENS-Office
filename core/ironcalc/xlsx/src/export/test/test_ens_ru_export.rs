@@ -523,3 +523,41 @@ fn test_ens_shapes_export() {
     back.undo().unwrap();
     assert_eq!(back.get_shapes(0).unwrap()[0].row, 3);
 }
+
+// ENS-Office: drop-down lists (data validation): items, check on input, xlsx round trip, shifting with rows, undo.
+#[test]
+fn test_ens_validation_lists() {
+    use ironcalc_base::types::Validation;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    for (i, v) in ["Москва", "Тверь", "Омск"].iter().enumerate() {
+        model.set_user_input(0, i as i32 + 1, 1, v).unwrap();
+    }
+    let literal = Validation { sqref: "C2:C5 E2".to_string(), source: "\"Да,Нет,Возможно\"".to_string(), allow_blank: true, no_arrow: false, error: "Только да или нет".to_string() };
+    let ranged = Validation { sqref: "D2:D5".to_string(), source: "$A$1:$A$3".to_string(), allow_blank: false, no_arrow: true, error: String::new() };
+    assert!(model.set_validations(0, vec![Validation { sqref: "zz".to_string(), ..literal.clone() }]).is_err());
+    model.set_validations(0, vec![literal.clone(), ranged.clone()]).unwrap();
+    assert_eq!(model.get_dropdown_items(0, 3, 3).unwrap(), vec!["Да", "Нет", "Возможно"]);
+    assert_eq!(model.get_dropdown_items(0, 3, 4).unwrap(), vec!["Москва", "Тверь", "Омск"]);
+    assert!(model.has_dropdown(0, 2, 5) && !model.has_dropdown(0, 3, 4) && !model.has_dropdown(0, 9, 9));
+    assert_eq!(model.set_user_input(0, 3, 3, "Может"), Err("Только да или нет".to_string()));
+    assert!(model.set_user_input(0, 3, 3, "нет").is_ok());
+    assert!(model.set_user_input(0, 3, 3, "").is_ok());
+    assert!(model.set_user_input(0, 3, 4, "Тверь").is_ok());
+    assert!(model.set_user_input(0, 3, 4, "Казань").is_err());
+    assert!(model.set_user_input(0, 3, 4, "").is_err());
+    model.insert_rows(0, 1, 2).unwrap();
+    assert_eq!(model.get_validations(0).unwrap()[0].sqref, "C4:C7 E4");
+    model.undo().unwrap();
+    assert_eq!(model.get_validations(0).unwrap()[0].sqref, "C2:C5 E2");
+    let name = "temp_ens_validation.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains("<dataValidations count=\"2\">") && sheet.contains("<formula1>&quot;Да,Нет,Возможно&quot;</formula1>") && sheet.contains("showDropDown=\"1\""), "{sheet}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_validations(0).unwrap(), vec![literal, ranged]);
+}

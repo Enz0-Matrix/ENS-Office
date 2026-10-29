@@ -50,6 +50,7 @@ fn sheet_of(diff: &Diff) -> Option<u32> {
         | Diff::SetImages { sheet, .. }
         | Diff::SetCharts { sheet, .. }
         | Diff::SetShapes { sheet, .. }
+        | Diff::SetValidations { sheet, .. }
         | Diff::SetRichText { sheet, .. }
         | Diff::SetSheetProtected { sheet, .. }
         | Diff::SetPageBreaks { sheet, .. }

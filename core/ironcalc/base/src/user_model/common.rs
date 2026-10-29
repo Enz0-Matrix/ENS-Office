@@ -492,6 +492,7 @@ impl<'a> UserModel<'a> {
         value: &str,
     ) -> Result<(), String> {
         self.guard_cells(sheet, row, column, row, column)?;
+        self.check_validation(sheet, row, column, value)?;
         if !is_valid_column_number(column) {
             return Err("Invalid column".to_string());
         }

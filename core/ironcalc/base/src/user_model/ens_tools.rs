@@ -883,6 +883,7 @@ impl UserModel<'_> {
             (ws.ens_row_breaks, ws.ens_col_breaks) = breaks.clone();
             diffs.push(Diff::SetPageBreaks { sheet, new_value: breaks, old_value: old_breaks });
         }
+        diffs.extend(self.shift_validations(sheet, is_row, at, delta)?);
         Ok(diffs)
     }
 
