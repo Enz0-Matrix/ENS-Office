@@ -711,6 +711,136 @@ await test('темы: те же, что в ENS-Table; лист меняет цв
   await p.context().close();
 });
 
+
+// ---- Многоуровневые списки ----
+const listDoc = (s, scheme) => {
+  const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+  const item = (t, ...kids) => s.nodes.list_item.create(null, [P(t), ...kids]);
+  const ol = (items, attrs) => s.nodes.ordered_list.create({ order: 1, fmt: 'decimal', scheme: null, ...attrs }, items);
+  return { P, item, ol, scheme };
+};
+
+await test('списки: схема «1.2.14.Б» — номера считаются по структуре и показываются', async () => {
+  const p = await page();
+  const labels = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, { P, item, ol } = ((s) => {
+      const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+      const item = (t, ...k) => s.nodes.list_item.create(null, [P(t), ...k]);
+      const ol = (items, a) => s.nodes.ordered_list.create({ order: 1, fmt: 'decimal', scheme: null, ...a }, items);
+      return { P, item, ol };
+    })(s);
+    const scheme = E.PRESETS.find((x) => x.id === 'letters').scheme;
+    // 1 → 1.1 → 1.2 → (13 пунктов третьего уровня, берём 14-й) → А, Б на четвёртом.
+    const l3 = Array.from({ length: 14 }, (_, i) => item(`пункт ${i + 1}`, ...(i === 13 ? [ol([item('подпункт А'), item('подпункт Б')])] : [])));
+    const doc = s.nodes.doc.create(null, [ol([item('Раздел', ol([item('Подраздел 1.1'), item('Подраздел 1.2', ol(l3))]))], { scheme })]);
+    E.loadDoc(doc, E.getMeta(), 'l');
+    return [...document.querySelectorAll('.ProseMirror .num')].map((e) => e.textContent);
+  });
+  eq(labels.slice(0, 3), ['1.', '1.1.', '1.2.'], 'начало');
+  ok(labels.includes('1.2.14.'), `нет «1.2.14.»: ${labels.slice(-5)}`);
+  eq(labels.slice(-2), ['1.2.14.А', '1.2.14.Б'], 'четвёртый уровень — буквы');
+  await p.context().close();
+});
+
+await test('списки: схема и начальный номер доживают до docx и обратно; в Word-определении те же шаблоны', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const item = (t, ...k) => s.nodes.list_item.create(null, [P(t), ...k]);
+    const ol = (items, a) => s.nodes.ordered_list.create({ order: 1, fmt: 'decimal', scheme: null, ...a }, items);
+    const scheme = E.PRESETS.find((x) => x.id === 'gost').scheme;
+    const doc = s.nodes.doc.create(null, [ol([item('Один', ol([item('Вложенный')])), item('Два')], { scheme, order: 3 })]);
+    const back = E.importDocx(E.exportDocx(doc, E.getMeta(), 'x'));
+    return { scheme: back.doc.firstChild.attrs.scheme, want: scheme, order: back.doc.firstChild.attrs.order };
+  });
+  eq(r.scheme, r.want, 'схема после круга docx');
+  await p.context().close();
+});
+
+await test('списки: «Начать с…», «Продолжить нумерацию» и «Начать заново» не ломают соседей', async () => {
+  const p = await page();
+  const out = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const item = (t) => s.nodes.list_item.create(null, [P(t)]);
+    const ol = (items) => s.nodes.ordered_list.create({ order: 1, fmt: 'decimal', scheme: null }, items);
+    E.loadDoc(s.nodes.doc.create(null, [ol([item('a'), item('b'), item('c')]), P('вставка между списками'), ol([item('d'), item('e')])]), E.getMeta(), 'l');
+    const nums = () => [...document.querySelectorAll('.ProseMirror .num')].map((e) => e.textContent);
+    const before = nums();
+    // Курсор во второй список и «Продолжить».
+    const v = E.view; const pos = v.state.doc.child(0).nodeSize + v.state.doc.child(1).nodeSize + 3;
+    v.dispatch(v.state.tr.setSelection(v.state.selection.constructor.near(v.state.doc.resolve(pos))));
+    E.run('list.continue');
+    const cont = nums();
+    E.run('list.restart');
+    return { before, cont, restart: nums() };
+  });
+  eq(out.before, ['1.', '2.', '3.', '1.', '2.'], 'сначала каждый список с единицы');
+  eq(out.cont, ['1.', '2.', '3.', '4.', '5.'], 'продолжение нумерации');
+  eq(out.restart, ['1.', '2.', '3.', '1.', '2.'], 'заново');
+  await p.context().close();
+});
+
+await test('списки: ручные номера «1.», «1.1», «1.2.14.Б», «а)» превращаются в настоящий список с отменой', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const lines = ['Вступление без номера', '1. Общие положения', '1.1 Термины', '1.2 Сроки', '1.2.14 Основной пункт', '1.2.14.Б Особый случай', '2. Заключительные положения', 'Обычный абзац', '1. Другой список', 'а) первое', 'б) второе', '2026 год был непростым'];
+    E.loadDoc(s.nodes.doc.create(null, lines.map(P)), E.getMeta(), 'm');
+    E.view.dispatch(E.view.state.tr.setSelection(E.view.state.selection.constructor.atStart(E.view.state.doc)));
+    E.run('list.fromManual');
+    const d = E.view.state.doc;
+    return { types: [...Array(d.childCount).keys()].map((i) => d.child(i).type.name), nums: [...document.querySelectorAll('.ProseMirror .num')].map((e) => e.textContent), text: d.textContent };
+  });
+  eq(r.types, ['paragraph', 'ordered_list', 'paragraph', 'ordered_list', 'paragraph'], 'абзацы с номерами собраны в списки, прочее не тронуто');
+  ok(['1.', '1.1', '1.2', '1.2.14', '1.2.14.Б', '2.'].every((x) => r.nums.includes(x)), `номера: ${r.nums}`);
+  ok(r.nums.includes('а)') && r.nums.includes('б)'), `буквенные пункты: ${r.nums}`);
+  ok(!r.text.includes('1.1 Термины') && r.text.includes('Термины'), 'ручные номера из текста убраны');
+  ok(r.text.includes('2026 год был непростым'), 'одиночное «2026 год» не принято за список');
+  await p.keyboard.press('Control+KeyZ');
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('1.1 Термины'), 'отмена вернула ручные номера');
+  await p.context().close();
+});
+
+await test('списки: настройка схемы в окне и готовые схемы из ленты; номер не уезжает на следующую страницу', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.click('.btn[data-command="list.ordered"]');
+  await p.keyboard.type('Первый');
+  await p.keyboard.press('Enter');
+  await p.keyboard.type('Второй');
+  await p.selectOption('select[data-command="list.scheme"]', 'legal');
+  await p.keyboard.press('Tab');
+  await p.keyboard.type('Вложенный');
+  const nums = await p.$$eval('.ProseMirror .num', (e) => e.map((x) => x.textContent));
+  eq(nums, ['1.', '1.1.'], 'схема «1. 1.1.» применена: второй пункт вложен в первый');
+  await p.selectOption('select[data-command="list.scheme"]', 'custom');
+  await p.waitForSelector('.scheme-rows');
+  ok((await p.textContent('.scheme-preview')).includes('1.2.14.'), 'образец в окне настройки');
+  await p.click('.modal button.primary');
+  // Длинный список через границу страницы: номер и текст пункта остаются на одной странице.
+  const bad = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const items = Array.from({ length: 120 }, (_, i) => s.nodes.list_item.create(null, [P('Пункт ' + i + '. ' + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(2))]));
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.ordered_list.create({ order: 1, fmt: 'decimal', scheme: null }, items)]), E.getMeta(), 'big');
+    return new Promise((res) => setTimeout(() => {
+      const v = E.view, g = E.geometry(), box = v.dom.getBoundingClientRect(), sc = box.width / v.dom.offsetWidth, out = [];
+      document.querySelectorAll('.ProseMirror li.numbered').forEach((li) => {
+        const num = li.querySelector('.num').getBoundingClientRect(), pr = li.querySelector('p').getBoundingClientRect();
+        const pg = (y) => Math.floor((y - box.top) / sc / g.P);
+        if (pg(num.top + 2) !== pg(pr.top + 2)) out.push(li.querySelector('.num').textContent);
+      });
+      res({ out, pages: E.pageCount() });
+    }, 500));
+  });
+  ok(bad.pages >= 3, 'список занял несколько страниц');
+  eq(bad.out, [], 'номер на одной странице с текстом пункта');
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

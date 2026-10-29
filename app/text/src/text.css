@@ -47,12 +47,13 @@
 .ProseMirror h4 { font-size: 13pt; font-weight: 700; margin-top: 10pt; margin-bottom: 6pt; }
 .ProseMirror h5, .ProseMirror h6 { font-size: 12pt; font-weight: 700; margin-top: 10pt; margin-bottom: 6pt; }
 .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 { font-weight: 700; break-after: avoid; }
-.ProseMirror ul, .ProseMirror ol { margin: 0; padding-left: 36pt; }
+.ProseMirror ul { margin: 0; padding-left: 36pt; }
+.ProseMirror ol { margin: 0; padding-left: 0; list-style: none; }
 .ProseMirror li > p { margin: 0 0 var(--doc-after); }
-.ProseMirror ol[data-fmt="lowerLetter"] { list-style-type: lower-alpha; }
-.ProseMirror ol[data-fmt="upperLetter"] { list-style-type: upper-alpha; }
-.ProseMirror ol[data-fmt="lowerRoman"] { list-style-type: lower-roman; }
-.ProseMirror ol[data-fmt="upperRoman"] { list-style-type: upper-roman; }
+/* Нумерованные списки: номер — виджет numbering.ts, текст пункта начинается через ширину номера (--hang). */
+.ProseMirror li.numbered { display: grid; grid-template-columns: minmax(var(--hang, 36pt), max-content) 1fr; }
+.ProseMirror li.numbered > .num { grid-column: 1; padding-right: 6pt; white-space: nowrap; user-select: none; }
+.ProseMirror li.numbered > :not(.num) { grid-column: 2; min-width: 0; }
 .ProseMirror a { color: #0563c1; text-decoration: underline; cursor: text; }
 .ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; }
 .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
@@ -140,3 +141,15 @@
 .theme-row span { color: var(--muted); font-weight: 400; }
 .theme-extra { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 #status-saved:not(:empty)::after { content: "  ·  "; font-weight: 400; }
+
+/* Многоуровневый список */
+.scheme-head, .scheme-row { display: grid; grid-template-columns: 76px 1fr 130px 70px 100px; gap: 6px; align-items: center; margin: 3px 0; }
+.scheme-head { font-size: 12px; color: var(--muted); }
+.scheme-rows { max-height: 34vh; overflow: auto; }
+.scheme-row input, .scheme-row select { height: 26px; border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; font: inherit; background: var(--panel); color: var(--text); }
+.scheme-tokens { margin: 8px 0; }
+.scheme-tokens button { margin-right: 4px; }
+.scheme-preview { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-family: var(--doc-font); }
+.sp-line { display: flex; align-items: baseline; }
+.sp-ind { display: inline-block; }
+.sp-line b { min-width: 64px; display: inline-block; }

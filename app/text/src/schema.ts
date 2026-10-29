@@ -87,6 +87,7 @@ const nodes: Record<string, NodeSpec> = {
   bullet_list: {
     content: 'list_item+',
     group: 'block',
+    attrs: { scheme: { default: null } },
     parseDOM: [{ tag: 'ul' }],
     toDOM: () => ['ul', 0],
   },
@@ -94,7 +95,7 @@ const nodes: Record<string, NodeSpec> = {
     content: 'list_item+',
     group: 'block',
     /** fmt: decimal | lowerLetter | upperLetter | lowerRoman | upperRoman. */
-    attrs: { order: { default: 1 }, fmt: { default: 'decimal' } },
+    attrs: { order: { default: 1 }, fmt: { default: 'decimal' }, /** Схема многоуровневой нумерации (numbering.ts) — у внешнего списка. */ scheme: { default: null } },
     parseDOM: [{ tag: 'ol', getAttrs: (d) => ({ order: +((d as HTMLElement).getAttribute('start') ?? 1) }) }],
     toDOM: (n) => ['ol', { start: n.attrs.order === 1 ? undefined : n.attrs.order, 'data-fmt': n.attrs.fmt }, 0],
   },

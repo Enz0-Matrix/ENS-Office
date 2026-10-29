@@ -29,8 +29,12 @@ import pgCenter24 from '@fluentui/svg-icons/icons/document_page_bottom_center_24
 import pgRight24 from '@fluentui/svg-icons/icons/document_page_bottom_right_24_regular.svg?raw';
 import closeCircle24 from '@fluentui/svg-icons/icons/dismiss_circle_24_regular.svg?raw';
 import history24 from '@fluentui/svg-icons/icons/history_24_regular.svg?raw';
+import ccw24 from '@fluentui/svg-icons/icons/arrow_counterclockwise_24_regular.svg?raw';
+import wand24 from '@fluentui/svg-icons/icons/wand_24_regular.svg?raw';
+import numRot24 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_24_regular.svg?raw';
 
 Object.assign(ICONS, {
+  arrow_counterclockwise_24: ccw24, wand_24: wand24, text_number_list_ltr_rotate_270_24: numRot24,
   history_24: history24,
   header_24: hdr24, footer_24: ftr24, header_footer_24: hdrFtr24, page_number_24: pgCenter24, page_count_24: pgRight24, close_circle_24: closeCircle24,
   text_bullet_list_20: bullets20,

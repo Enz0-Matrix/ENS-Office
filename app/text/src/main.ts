@@ -30,6 +30,9 @@ import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { initThemes, themeDialog } from './themes-ui';
+import { applyScheme, continueList, convertManual, currentStart, setListStart } from './listtools';
+import { PRESETS, presetOf, type Scheme } from './numbering';
+import { schemeDialog } from './lists-ui';
 import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
@@ -520,6 +523,26 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
+  {
+    id: 'list.scheme', label: 'Нумерация пунктов',
+    run: (v) => {
+      if (!v) return;
+      if (v === 'custom') { schemeDialog(currentScheme(), (s) => { dispatchCmd(applyScheme(s)); }); setSelect('list.scheme', ''); return; }
+      dispatchCmd(applyScheme(PRESETS.find((p) => p.id === v)?.scheme ?? null));
+    },
+  },
+  { id: 'list.restart', label: 'Начать нумерацию заново', run: () => { if (!setListStart(1)(active().state, active().dispatch)) toast('Поставьте курсор в нумерованный список'); active().focus(); } },
+  { id: 'list.startAt', label: 'Начать нумерацию с…', run: () => startAtDialog() },
+  { id: 'list.continue', label: 'Продолжить нумерацию предыдущего списка', run: () => { if (!continueList(active().state, active().dispatch)) toast('Выше нет нумерованного списка, который можно продолжить'); active().focus(); } },
+  {
+    id: 'list.fromManual', label: 'Номера, набранные вручную, в список',
+    run: () => {
+      snap('before', 'Перед преобразованием ручных номеров в список');
+      const n = convertManual(active().state, (tr) => active().dispatch(tr));
+      toast(n ? `Преобразовано пунктов: ${n}. Отменить можно Ctrl+Z.` : 'Ручной нумерации не найдено: нужны подряд идущие абзацы вида «1. …», «1.1 …», «а) …».');
+      active().focus();
+    },
+  },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
   { id: 'ver.named', label: 'Записать именную версию', run: () => askNamedVersion(historyHost) },
@@ -539,6 +562,28 @@ register(
   { id: 'file.history', label: 'История версий', run: () => showHistory() },
   { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => void printDocument() },
 );
+
+/** Схема многоуровневого списка у выделения (самого внешнего списка). */
+function currentScheme(): Scheme | null {
+  const { $from } = active().state.selection;
+  for (let d = 1; d <= $from.depth; d++) {
+    const n = $from.node(d);
+    if (n.type === schema.nodes.ordered_list || n.type === schema.nodes.bullet_list) return (n.attrs.scheme as Scheme | null) ?? null;
+  }
+  return null;
+}
+
+function startAtDialog(): void {
+  const cur = currentStart(active().state);
+  if (cur == null) { toast('Поставьте курсор в нумерованный список'); return; }
+  dialog((box, close) => {
+    const n = el('input', { type: 'number', value: String(cur), min: '1' });
+    const go = () => { close(); setListStart(+n.value || 1)(active().state, active().dispatch); active().focus(); };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    box.append(el('h2', { textContent: 'Начать нумерацию с' }), el('div', { class: 'dlg-row' }, el('label', { textContent: 'Номер' }), n),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Применить', onclick: go })));
+  });
+}
 
 // ---------------------------------------------------------------- вкладки ленты
 
@@ -608,6 +653,16 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
+      {
+        name: 'Нумерация',
+        items: [
+          { type: 'select', command: 'list.scheme', width: 190, options: [{ value: '', label: 'Схема нумерации…' }, ...PRESETS.map((p) => ({ value: p.id, label: p.name })), { value: 'custom', label: 'Настроить…' }] },
+          { type: 'medium', command: 'list.restart', icon: 'arrow_counterclockwise' },
+          { type: 'medium', command: 'list.startAt', icon: 'text_number_list' },
+          { type: 'medium', command: 'list.continue', icon: 'text_number_list_ltr_rotate_270' },
+          { type: 'medium', command: 'list.fromManual', icon: 'wand' },
+        ],
+      },
       {
         name: 'Редактирование',
         items: [
@@ -784,6 +839,7 @@ function updateUi(): void {
   setSelect('para.line', String(paraAttr<number>(active().state, 'line') ?? meta.defaults.line));
   setSelect('page.orientation', meta.page.w > meta.page.h ? 'landscape' : 'portrait');
   setSelect('ver.reminder', String(settings.saveReminderMinutes));
+  setSelect('list.scheme', presetOf(currentScheme()) === 'custom' ? '' : presetOf(currentScheme()) === 'simple' ? '' : presetOf(currentScheme()));
   setSelect('page.size', sizeKey());
   setSelect('page.margins', marginsKey());
 }
@@ -1367,6 +1423,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

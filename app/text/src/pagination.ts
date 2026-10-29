@@ -63,9 +63,9 @@ function rowDom(h: number, cols: number): HTMLElement {
   return tr;
 }
 
-interface Item { pos: number; end: number; node: PMNode; el: HTMLElement; row: boolean; cols: number }
+interface Item { pos: number; end: number; node: PMNode; el: HTMLElement; row: boolean; cols: number; /** Узел, которому ставится верхний отступ: у первого абзаца пункта списка — сам пункт (иначе номер остался бы на прошлой странице). */ padPos: number; padEnd: number }
 interface Line { pos: number; top: number; bottom: number }
-interface Planned { kind: Spec['pg']; pos: number; end: number; h: number; cols: number }
+interface Planned { kind: Spec['pg']; pos: number; end: number; h: number; cols: number; padPos: number; padEnd: number }
 
 /** Расчёт разрывов по текущему DOM. */
 function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items: number } {
@@ -104,13 +104,17 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
       node.forEach((row, off) => {
         const p = pos + 1 + off;
         const el = view.nodeDOM(p) as HTMLElement | null;
-        if (el) items.push({ pos: p, end: p + row.nodeSize, node: row, el, row: true, cols });
+        if (el) items.push({ pos: p, end: p + row.nodeSize, node: row, el, row: true, cols, padPos: p, padEnd: p + row.nodeSize });
       });
       return false;
     }
     if (node.isTextblock) {
       const el = view.nodeDOM(pos) as HTMLElement | null;
-      if (el) items.push({ pos, end: pos + node.nodeSize, node, el, row: false, cols: 0 });
+      if (el) {
+        const $p = view.state.doc.resolve(pos);
+        const inItem = $p.parent.type.name === 'list_item' && $p.index() === 0;
+        items.push({ pos, end: pos + node.nodeSize, node, el, row: false, cols: 0, padPos: inItem ? pos - 1 : pos, padEnd: inItem ? pos - 1 + $p.parent.nodeSize : pos + node.nodeSize });
+      }
       return false;
     }
     return true;
@@ -222,8 +226,8 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
       break;
     }
 
-    if (pad > 0.5) out.push({ kind: it.row ? 'row' : 'pad', pos: it.pos, end: it.end, h: r1(pad), cols: it.cols });
-    for (const s of splits) out.push({ kind: 'split', pos: s.pos, end: s.pos, h: r1(s.h), cols: 0 });
+    if (pad > 0.5) out.push({ kind: it.row ? 'row' : 'pad', pos: it.pos, end: it.end, h: r1(pad), cols: it.cols, padPos: it.padPos, padEnd: it.padEnd });
+    for (const s of splits) out.push({ kind: 'split', pos: s.pos, end: s.pos, h: r1(s.h), cols: 0, padPos: s.pos, padEnd: s.pos });
     acc += r1(pad) + splits.reduce((s, x) => s + r1(x.h), 0);
     lastBottom = nBottom + acc;
   }
@@ -233,7 +237,7 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
 
 function toDecos(out: Planned[]): Decoration[] {
   return out.map((p) => {
-    if (p.kind === 'pad') return Decoration.node(p.pos, p.end, { class: 'pg-pad', style: `padding-top:${p.h}px` }, { pg: 'pad', h: p.h });
+    if (p.kind === 'pad') return Decoration.node(p.padPos, p.padEnd, { class: 'pg-pad', style: `padding-top:${p.h}px` }, { pg: 'pad', h: p.h });
     if (p.kind === 'row') return Decoration.widget(p.pos, () => rowDom(p.h, p.cols), { side: -1, key: `row${p.h}:${p.cols}`, pg: 'row', h: p.h });
     return Decoration.widget(p.pos, () => splitDom(p.h), { side: -1, key: `split${p.h}`, pg: 'split', h: p.h });
   });

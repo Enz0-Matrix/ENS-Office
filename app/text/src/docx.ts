@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import type { Scheme } from './numbering';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
@@ -155,7 +156,7 @@ function parsePPr(pPr: Element | undefined): PFmt {
 
 // ---------------------------------------------------------------- импорт
 
-interface ListInfo { kind: 'bullet' | 'ordered'; fmt: string }
+interface ListInfo { kind: 'bullet' | 'ordered'; fmt: string; text?: string; start?: number; hang?: number }
 
 interface Ctx {
   files: Record<string, Uint8Array>;
@@ -244,7 +245,10 @@ function readNumbering(xml: string | undefined, ctx: Ctx): void {
     const levels: ListInfo[] = [];
     for (const l of kids(a, 'lvl')) {
       const fmt = attr(kid(l, 'numFmt'), 'val') ?? 'decimal';
-      levels[num(attr(l, 'ilvl')) ?? 0] = fmt === 'bullet' || fmt === 'none' ? { kind: 'bullet', fmt } : { kind: 'ordered', fmt };
+      const hang = num(attr(kid(kid(l, 'pPr'), 'ind'), 'hanging'));
+      levels[num(attr(l, 'ilvl')) ?? 0] = fmt === 'bullet' || fmt === 'none'
+        ? { kind: 'bullet', fmt }
+        : { kind: 'ordered', fmt, text: attr(kid(l, 'lvlText'), 'val') ?? undefined, start: num(attr(kid(l, 'start'), 'val')) ?? 1, hang: hang ? hang / 20 : undefined };
     }
     abstracts.set(num(attr(a, 'abstractNumId')) ?? 0, levels);
   }
@@ -261,7 +265,7 @@ function listInfo(ctx: Ctx, numId: number | undefined, ilvl: number): ListInfo |
   return levels[ilvl] ?? levels[levels.length - 1] ?? { kind: 'bullet', fmt: 'bullet' };
 }
 
-const ORDERED_FMTS = ['decimal', 'lowerLetter', 'upperLetter', 'lowerRoman', 'upperRoman'];
+const ORDERED_FMTS = ['decimal', 'decimalZero', 'lowerLetter', 'upperLetter', 'lowerRoman', 'upperRoman', 'russianLower', 'russianUpper'];
 const orderedFmt = (fmt: string) => (ORDERED_FMTS.includes(fmt) ? fmt : 'decimal');
 
 function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
@@ -458,7 +462,7 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
   }
 }
 
-interface Entry { node: PMNode; list?: { key: number; level: number; info: ListInfo } }
+interface Entry { node: PMNode; list?: { key: number; level: number; info: ListInfo; levels?: ListInfo[] } }
 
 const HEADING_RE = /^(?:heading|заголовок)\s*(\d)$/i;
 
@@ -503,22 +507,34 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
     };
     entries.push({
       node: schema.nodes[level ? 'heading' : 'paragraph'].create(attrs, chunk.nodes),
-      list: info ? { key: para.numId ?? 0, level: para.ilvl ?? 0, info } : undefined,
+      list: info ? { key: para.numId ?? 0, level: para.ilvl ?? 0, info, levels: ctx.nums.get(para.numId ?? 0) } : undefined,
     });
   });
   return entries;
 }
 
 /** Склеивает подряд идущие абзацы-элементы списка во вложенные списки. */
+/** Схема многоуровневой нумерации из определения Word; null — обычные «1.», «а.» (схема не нужна). */
+function schemeFrom(levels: ListInfo[]): Scheme | null {
+  if (levels[0]?.kind !== 'ordered') return null;
+  const sch: Scheme = Array.from({ length: 9 }, (_, i) => {
+    const l = levels[Math.min(i, levels.length - 1)];
+    const ok = l.kind === 'ordered';
+    return { fmt: ok ? orderedFmt(l.fmt) : 'decimal', text: ok && l.text && /%\d/.test(l.text) ? l.text : `%${i + 1}.`, start: ok ? l.start ?? 1 : 1, hang: l.hang ?? 36 };
+  });
+  const simple = sch.every((l, i) => l.text === `%${i + 1}.` && l.start === 1);
+  return simple ? null : sch;
+}
+
 function assemble(entries: Entry[]): PMNode[] {
   const out: PMNode[] = [];
-  interface Open { key: number; level: number; kind: 'bullet' | 'ordered'; fmt: string; items: PMNode[][] }
+  interface Open { key: number; level: number; kind: 'bullet' | 'ordered'; fmt: string; items: PMNode[][]; levels?: ListInfo[] }
   const stack: Open[] = [];
   const build = (o: Open): PMNode => {
     const items = o.items.map((c) => schema.nodes.list_item.create(null, c));
     return o.kind === 'bullet'
       ? schema.nodes.bullet_list.create(null, items)
-      : schema.nodes.ordered_list.create({ order: 1, fmt: orderedFmt(o.fmt) }, items);
+      : schema.nodes.ordered_list.create({ order: 1, fmt: orderedFmt(o.fmt), scheme: stack.length === 0 && o.levels ? schemeFrom(o.levels) : null }, items);
   };
   const close = () => {
     const o = stack.pop()!;
@@ -535,7 +551,7 @@ function assemble(entries: Entry[]): PMNode[] {
       out.push(e.node);
       continue;
     }
-    const { key, level, info } = e.list;
+    const { key, level, info, levels } = e.list;
     while (stack.length && stack[stack.length - 1].level > level) close();
     let top = stack[stack.length - 1];
     if (top && top.level === level && (top.key !== key || top.kind !== info.kind)) {
@@ -543,7 +559,7 @@ function assemble(entries: Entry[]): PMNode[] {
       top = stack[stack.length - 1];
     }
     if (!top || top.level < level) {
-      stack.push({ key, level, kind: info.kind, fmt: info.fmt, items: [] });
+      stack.push({ key, level, kind: info.kind, fmt: info.fmt, items: [], levels });
       top = stack[stack.length - 1];
     }
     // Заголовок внутри списка в элемент списка не кладём: список закрывается.
@@ -895,10 +911,19 @@ function numberingFor(ctx: ExportCtx, list: PMNode): number {
     l.forEach((item) => item.forEach((c) => { if (c.type.name === 'bullet_list' || c.type.name === 'ordered_list') scan(c, level + 1); }));
   };
   scan(list, 0);
+  const scheme = (list.attrs.scheme as Scheme | null) ?? null;
   const id = ctx.nums.length + 1;
   const bullets = ['•', '◦', '▪'];
   let lvls = '';
+  let leftSum = 0;
   for (let k = 0; k < 9; k++) {
+    if (scheme) {
+      // Многоуровневая схема: шаблон, формат, начало и отступ каждого уровня — как задал пользователь.
+      const l = scheme[Math.min(k, scheme.length - 1)];
+      leftSum += Math.round(l.hang * 20);
+      lvls += `<w:lvl w:ilvl="${k}"><w:start w:val="${l.start}"/><w:numFmt w:val="${orderedFmt(l.fmt)}"/><w:lvlText w:val="${esc(l.text)}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${leftSum}" w:hanging="${Math.round(l.hang * 20)}"/></w:pPr></w:lvl>`;
+      continue;
+    }
     const l = levels[k] ?? levels[levels.length - 1] ?? { kind: 'bullet', fmt: 'bullet' };
     const left = 720 * (k + 1);
     if (l.kind === 'bullet') {
@@ -908,7 +933,7 @@ function numberingFor(ctx: ExportCtx, list: PMNode): number {
     }
   }
   ctx.nums.push({
-    abstract: `<w:abstractNum w:abstractNumId="${id}"><w:multiLevelType w:val="hybridMultilevel"/>${lvls}</w:abstractNum>`,
+    abstract: `<w:abstractNum w:abstractNumId="${id}"><w:multiLevelType w:val="${scheme ? 'multilevel' : 'hybridMultilevel'}"/>${lvls}</w:abstractNum>`,
     num: `<w:num w:numId="${id}"><w:abstractNumId w:val="${id}"/></w:num>`,
   });
   return id;

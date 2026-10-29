@@ -11,6 +11,7 @@ import { EditorState, Plugin, PluginKey, Selection, TextSelection, type Command,
 import { columnResizing, goToNextCell, tableEditing, TableView } from 'prosemirror-tables';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { schema } from './schema';
+import { numberingPlugin } from './numbering';
 
 // ---------------------------------------------------------------- поиск
 
@@ -455,6 +456,7 @@ export function createState(doc: PMNode, extra: Plugin[] = []): EditorState {
       dropCursor({ color: '#2b579a' }),
       gapCursor(),
       findPlugin,
+      numberingPlugin,
     ],
   });
 }
