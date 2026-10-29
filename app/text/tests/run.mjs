@@ -1073,7 +1073,7 @@ await test('совместимость с Word: шрифт без аналога
   await p.waitForTimeout(100);
   ok(await p.evaluate(() => document.getElementById('dialog').hidden), 'окно закрылось после «Показать»');
   // чистый документ — без предупреждений
-  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Просто текст'))]), E.getMeta(), 'clean'); });
+  await p.evaluate(() => { const E = window.ens, s = E.schema; const m = E.getMeta(); m.lossy = []; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Просто текст'))]), m, 'clean'); });
   await p.evaluate(() => window.ens.run('review.compat'));
   await p.waitForSelector('.cmp-verdict.ok');
 });
