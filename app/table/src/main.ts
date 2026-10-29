@@ -1272,7 +1272,9 @@ function chartDialog(existing: number | null, initial: { kind: number; title: st
 function insertChart(kind: number): void {
   const s = grid.sel;
   const single = s.r1 === s.r2 && s.c1 === s.c2;
-  const [r1, c1, r2, c2] = single ? model.getSheetDimension(grid.sheet) : [s.r1, s.c1, s.r2, s.c2];
+  // Выделены целые строки или столбцы — берём занятую часть листа, как в Excel.
+  const [dr1, dc1, dr2, dc2] = model.getSheetDimension(grid.sheet);
+  const [r1, c1, r2, c2] = single ? [dr1, dc1, dr2, dc2] : [s.r1, s.c1, Math.min(s.r2, Math.max(dr2, s.r1)), Math.min(s.c2, Math.max(dc2, s.c1))];
   chartDialog(null, { kind, title: '', range: `${columnName(c1)}${r1}:${columnName(c2)}${r2}` });
 }
 
