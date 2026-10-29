@@ -4,7 +4,7 @@
 // с вашего прошлого открытия, и замечается правка в другой программе
 // (по «отпечаткам» содержимого листов).
 
-import type { Model } from './engine';
+import { columnName, type Model } from './engine';
 import { saveSettings, settings } from './settings';
 import { APP_VERSION } from './version';
 
@@ -92,16 +92,76 @@ const when = (t: number) => new Date(t).toLocaleString('ru-RU', { day: '2-digit'
 
 export interface ChangesHost {
   goTo(sheet: string, area: string): void;
+  /** Подсветить области на листах (null — снять). */
+  mark?(items: [string, string][] | null): void;
+  /** Выбрать другую версию файла и показать отличия. */
+  compare?(): void;
 }
 
-function entryHtml(e: LogEntry): string {
+export interface BookDiff {
+  sheets: [string, string][];
+  notes: string[];
+  cells: number;
+}
+
+/** Сравнение двух книг по содержимому ячеек (формулы и значения): где отличаются. */
+export function diffBooks(a: Model, b: Model): BookDiff {
+  const pa = a.getWorksheetsProperties(), pb = b.getWorksheetsProperties();
+  const out: BookDiff = { sheets: [], notes: [], cells: 0 };
+  const nb = new Map(pb.map((p, i) => [p.name, i]));
+  pa.forEach((p, i) => {
+    const j = nb.get(p.name);
+    if (j === undefined) { out.notes.push(`Лист «${p.name}» есть только в открытой книге`); return; }
+    const da = a.getSheetDimension(i), db = b.getSheetDimension(j);
+    const r2 = Math.max(da[2], db[2]), c2 = Math.max(da[3], db[3]);
+    const rows = new Map<number, [number, number][]>();
+    let n = 0;
+    for (let r = 1; r <= r2; r++) {
+      let run: [number, number] | null = null;
+      for (let c = 1; c <= c2 + 1; c++) {
+        const diff = c <= c2 && a.getCellContent(i, r, c) !== b.getCellContent(j, r, c);
+        if (diff) { n++; if (run) run[1] = c; else run = [c, c]; }
+        else if (run) { (rows.get(r) ?? rows.set(r, []).get(r)!).push(run); run = null; }
+      }
+    }
+    if (!n) return;
+    out.cells += n;
+    // Соседние строки с одинаковыми столбцами сливаются в один прямоугольник.
+    const open = new Map<string, [number, number, number, number]>();
+    const areas: [number, number, number, number][] = [];
+    for (let r = 1; r <= r2 + 1; r++) {
+      const here = new Set((rows.get(r) ?? []).map(([x, y]) => `${x}:${y}`));
+      for (const [k, v] of [...open]) if (!here.has(k)) { areas.push(v); open.delete(k); }
+      for (const [x, y] of rows.get(r) ?? []) {
+        const k = `${x}:${y}`, o = open.get(k);
+        if (o) o[2] = r; else open.set(k, [r, x, r, y]);
+      }
+    }
+    const name = (q: [number, number, number, number]) => `${columnName(q[1])}${q[0]}` + (q[0] === q[2] && q[1] === q[3] ? '' : `:${columnName(q[3])}${q[2]}`);
+    out.sheets.push([p.name, areas.sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(name).join(' ')]);
+  });
+  pb.forEach((p) => { if (!pa.some((q) => q.name === p.name)) out.notes.push(`Лист «${p.name}» есть только в другой версии`); });
+  return out;
+}
+
+/** Показать результат сравнения: вместо записей журнала — отличия, с подсветкой на листах. */
+export function showDiff(host: ChangesHost, other: string, d: BookDiff): void {
+  const entry: LogEntry = { u: 'Отличия от', t: Date.now(), app: other, ch: { sheets: d.sheets, notes: d.notes }, h: {} };
+  show(host, 'Сравнение версий', d.cells || d.notes.length
+    ? `Отличается ячеек: <b>${d.cells}</b>. Подсвечены на листах; кнопка с адресом — переход.`
+    : 'Содержимое ячеек одинаково.', [entry]);
+  host.mark?.(d.sheets);
+}
+
+function entryHtml(e: LogEntry, i: number): string {
   const parts = [
     ...(e.ch?.sheets ?? []).map(([s, areas]) => `<div class="chg-sheet"><b>${esc(s)}</b>${areas
       ? areas.split(' ').slice(0, 12).map((a) => ` <button class="chg-area" data-sheet="${esc(s)}" data-area="${esc(a)}">${esc(a)}</button>`).join('') + (areas.split(' ').length > 12 ? ' …' : '')
       : ' — изменён'}</div>`),
     ...(e.ch?.notes ?? []).map((n) => `<div class="chg-note">${esc(n)}</div>`),
   ];
-  return `<li><div class="chg-who">${esc(e.u)} · ${when(e.t)}${e.app && !e.app.startsWith('ENS-Table') ? ` · <i>${esc(e.app)}</i>` : ''}</div>${parts.join('') || '<div class="chg-note">сохранено без изменений</div>'}</li>`;
+  const mk = (e.ch?.sheets ?? []).some(([, a]) => a) ? ` <button class="chg-mark" data-i="${i}" title="Подсветить изменённые ячейки на листах">подсветить</button>` : '';
+  return `<li><div class="chg-who">${esc(e.u)} · ${when(e.t)}${mk}${e.app && !e.app.startsWith('ENS-Table') ? ` · <i>${esc(e.app)}</i>` : ''}</div>${parts.join('') || '<div class="chg-note">сохранено без изменений</div>'}</li>`;
 }
 
 let panel: HTMLElement | null = null;
@@ -110,13 +170,17 @@ function show(host: ChangesHost, title: string, intro: string, entries: LogEntry
   panel?.remove();
   panel = document.createElement('div');
   panel.className = 'changes-panel';
-  panel.innerHTML = `<div class="chg-head"><b>${esc(title)}</b><button class="chg-close" title="Закрыть">✕</button></div>
+  panel.innerHTML = `<div class="chg-head"><b>${esc(title)}</b><span><button class="chg-clear" title="Снять подсветку">снять подсветку</button>${host.compare ? '<button class="chg-compare" title="Сравнить с другой версией файла">сравнить с файлом…</button>' : ''}<button class="chg-close" title="Закрыть">✕</button></span></div>
     ${intro ? `<p class="chg-intro">${intro}</p>` : ''}
-    <ul class="chg-list">${entries.slice().reverse().map(entryHtml).join('')}</ul>`;
+    <ul class="chg-list">${entries.map((e, i) => entryHtml(e, i)).reverse().join('')}</ul>`;
   document.body.append(panel);
   panel.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
-    if (t.closest('.chg-close')) { panel?.remove(); panel = null; return; }
+    if (t.closest('.chg-close')) { panel?.remove(); panel = null; host.mark?.(null); return; }
+    if (t.closest('.chg-clear')) { host.mark?.(null); return; }
+    const mk = t.closest<HTMLElement>('.chg-mark');
+    if (mk) { host.mark?.(entries[Number(mk.dataset.i)].ch.sheets.filter(([, a]) => a)); return; }
+    if (t.closest('.chg-compare')) { host.compare?.(); return; }
     const a = t.closest<HTMLElement>('.chg-area');
     if (a) host.goTo(a.dataset.sheet!, a.dataset.area!);
   });

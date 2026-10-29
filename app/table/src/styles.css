@@ -401,11 +401,13 @@ footer { display: flex; flex-direction: column; }
 .changes-panel { position: fixed; right: 16px; bottom: 40px; z-index: 60; width: min(420px, calc(100vw - 32px)); max-height: 60vh;
   display: flex; flex-direction: column; background: var(--panel, #fff); color: var(--text); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.18); font-size: 13px; }
-.chg-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
+.chg-head { flex-wrap: wrap; gap: 4px; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
 .chg-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
 .chg-intro { margin: 0 12px 6px; color: var(--muted); }
 .chg-list { list-style: none; margin: 0; padding: 0 12px 10px; overflow: auto; }
 .chg-list li { padding: 6px 0; border-top: 1px solid var(--border); }
+.chg-head button, .chg-mark { border: 0; background: none; color: var(--accent-dark, #2f7d5f); cursor: pointer; font: inherit; font-size: 12px; margin-left: 8px; text-decoration: underline dotted; }
+.chg-head .chg-close { font-size: 14px; color: inherit; text-decoration: none; }
 .chg-who { color: var(--muted); margin-bottom: 2px; }
 .chg-area { border: 0; background: none; padding: 0 2px; color: var(--accent-dark, #2f7d5f); cursor: pointer; text-decoration: underline dotted; font: inherit; }
 .chg-note { color: var(--text); }
@@ -459,3 +461,21 @@ footer { display: flex; flex-direction: column; }
 .us-stop { position: relative; z-index: 1; flex: 1; border: 0; background: transparent; font: inherit; font-size: 11px; color: #444; cursor: pointer; padding: 0 6px; border-radius: 9px; text-align: left; }
 .us-stop.on { color: #fff; font-weight: 600; }
 .us-rule { font-size: 10px; line-height: 1.1; color: #333; font-weight: 600; }
+
+/* «У. Болт» — необязательный помощник */
+.bolt { position: fixed; right: 18px; bottom: 44px; z-index: 55; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
+.bolt > * { pointer-events: auto; }
+.bolt-body { cursor: grab; touch-action: none; transition: transform .35s ease; transform-origin: 50% 90%; filter: drop-shadow(0 2px 3px rgba(0,0,0,.3)); }
+.bolt.lying .bolt-body { transform: rotate(90deg) translate(-18px, -6px); }
+.bolt-bubble { max-width: 260px; padding: 8px 10px; border-radius: 10px; background: var(--panel, #fff); color: var(--text, #222); border: 1px solid var(--border, #bbb); box-shadow: 0 2px 8px rgba(0,0,0,.2); font-size: 12.5px; line-height: 1.35; }
+.bolt-x { position: absolute; right: -4px; bottom: 0; border: 0; background: none; font-size: 11px; color: var(--muted); cursor: pointer; opacity: .5; }
+.bolt-x:hover { opacity: 1; }
+.bolt-pupil { animation: bolt-look 9s ease-in-out infinite; }
+@keyframes bolt-look { 0%, 70%, 100% { transform: translate(0, 0); } 78%, 90% { transform: translate(-3px, 0); } }
+@media (prefers-reduced-motion: reduce) { .bolt-pupil { animation: none; } .bolt-body { transition: none; } }
+
+.credits { position: fixed; inset: 0; z-index: 95; display: grid; place-items: center; background: rgba(0,0,0,.45); }
+.credits-box { background: var(--panel, #fff); color: var(--text, #222); border-radius: 12px; padding: 24px 32px; text-align: center; max-width: 440px; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+.credits-box h2 { margin: 0 0 8px; }
+.credits-box p { margin: 6px 0; }
+.credits-small { color: var(--muted); font-size: 12px; }
