@@ -66,7 +66,9 @@ export function nameDialog(host: Host): void {
         }
       } catch (e) { list.textContent = (e as Error).message; }
     };
-    for (const c of [fio, pos, gender, ini]) { c.addEventListener('input', render); c.addEventListener('change', render); }
+    // На «change» текстовых полей список не перестраиваем: уход фокуса при щелчке по строке съедал бы сам щелчок.
+    for (const c of [fio, pos]) c.addEventListener('input', render);
+    for (const c of [gender, ini]) c.addEventListener('change', render);
     box.append(
       el('h2', { textContent: 'ФИО и должность по падежам' }),
       el('div', { class: 'dlg-row' }, el('label', { textContent: 'ФИО' }), fio),

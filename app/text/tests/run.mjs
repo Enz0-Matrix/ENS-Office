@@ -1001,7 +1001,8 @@ await test('сумма прописью и ФИО по падежам: окна 
   const rows = await p.$$eval('.ru-case', (e) => e.map((x) => x.textContent));
   ok(rows[2].includes('Генеральному директору Петровой Анне Сергеевне'), `дательный: ${rows[2]}`);
   await p.click('.ru-case:nth-child(2)');
-  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).endsWith('Генерального директора Петровой Анны Сергеевны'), 'вставлен родительный');
+  const fin = await p.evaluate(() => window.ens.view.state.doc.textContent);
+  ok(fin.endsWith('Генерального директора Петровой Анны Сергеевны'), `вставлен родительный: ${fin}`);
 });
 
 // ---- Проверка оформления и «рентген» ----
