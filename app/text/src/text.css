@@ -31,7 +31,7 @@
 .sheet-wrap { width: max-content; min-width: 100%; display: flex; justify-content: center; }
 .sheet { position: relative; flex: none; color: #000; }
 .papers { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-.paper { position: absolute; left: 0; right: 0; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.28); }
+.paper { position: absolute; left: 0; right: 0; background: var(--paper, #fff); box-shadow: 0 1px 6px rgba(0,0,0,.28); }
 .sheet > .ProseMirror { position: relative; z-index: 1; box-sizing: border-box; }
 /* Распорки разрыва страниц (pagination.ts) */
 .ProseMirror .pg-split { display: inline-block; width: 100%; vertical-align: top; pointer-events: none; user-select: none; }
@@ -92,6 +92,7 @@
 .hf-label { position: absolute; left: 0; top: -22px; transform: none; background: var(--accent); color: #fff; font: 11px "Segoe UI", sans-serif; padding: 2px 8px; border-radius: 3px 3px 0 0; white-space: nowrap; }
 .hf-edit-footer .hf-label { top: auto; bottom: -22px; border-radius: 0 0 3px 3px; }
 .sheet.hf-mode > .ProseMirror { opacity: .45; }
+.sheet > .hf-edit { background: var(--paper, #fff); }
 
 /* Печать: страницы вплотную (зазор 0), как рассчитала вёрстка, поля — внутри страницы, колонтитулы — на каждом листе. */
 @media print {
@@ -100,7 +101,7 @@
   .desk { overflow: visible !important; margin: 0 !important; padding: 0 !important; border: 0 !important; background: #fff !important; }
   .sheet-wrap { zoom: 1 !important; display: block !important; width: auto !important; min-width: 0 !important; }
   .sheet { min-height: 0 !important; height: calc(var(--sheet-h) - 1px) !important; overflow: hidden !important; }
-  .paper { box-shadow: none !important; }
+  .paper { box-shadow: none !important; background: #fff !important; }
   .find-hit { background: none !important; }
   .ProseMirror tr, .ProseMirror img { break-inside: avoid; }
 }
@@ -113,20 +114,29 @@
 .hist-list { overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
 .hist-row { display: block; width: 100%; text-align: left; border: 0 !important; border-radius: 4px; background: none !important; padding: 6px 8px !important; }
 .hist-row:hover { background: var(--hover) !important; }
-.hist-row.on { background: #cfdff5 !important; }
+.hist-row.on { background: var(--hover) !important; outline: 1px solid var(--accent); }
 .hist-kind { font-weight: 600; }
 .hist-meta, .hist-note { font-size: 12px; color: var(--muted); }
 .hist-empty { color: var(--muted); padding: 8px; }
 .hist-detail { overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
-.hist-bar { display: flex; gap: 8px; margin-bottom: 8px; position: sticky; top: 0; background: #fff; padding-bottom: 6px; }
+.hist-bar { display: flex; gap: 8px; margin-bottom: 8px; position: sticky; top: 0; background: var(--panel); padding-bottom: 6px; }
 .hist-title { font-weight: 600; margin: 4px 0 8px; }
 .diff-p { margin: 4px 0; white-space: pre-wrap; padding: 2px 6px; border-radius: 3px; }
 .diff-skip { color: var(--muted); font-size: 12px; margin: 6px 0; }
 .diff-hunk { border-left: 3px solid var(--accent); padding-left: 8px; margin: 8px 0; }
 .diff-revert { margin-top: 2px; }
-.d-del { background: #fde7e9; text-decoration: line-through; color: #8a1f2a; }
-.d-ins { background: #dff6dd; }
+.d-del { background: rgba(220, 50, 60, .2); text-decoration: line-through; }
+.d-ins { background: rgba(60, 170, 80, .25); }
 .d-same { }
 .disk-list { overflow: auto; grid-column: 1 / -1; }
 #status-saved.warn { color: #b3261e; font-weight: 600; }
 .diff-legend { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+
+/* Темы */
+[data-theme] .desk { background: var(--bg); }
+.theme-list { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; max-height: 38vh; overflow: auto; }
+.theme-row { text-align: left; padding: 7px 10px !important; }
+.theme-row.on { outline: 1px solid var(--accent); background: var(--hover) !important; }
+.theme-row span { color: var(--muted); font-weight: 400; }
+.theme-extra { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+#status-saved:not(:empty)::after { content: "  ·  "; font-weight: 400; }

@@ -29,6 +29,7 @@ import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
+import { initThemes, themeDialog } from './themes-ui';
 import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
@@ -519,6 +520,7 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
+  { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
   { id: 'ver.named', label: 'Записать именную версию', run: () => askNamedVersion(historyHost) },
   { id: 'ver.disk', label: 'Копии на диске', run: () => showHistory('disk') },
@@ -741,6 +743,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.zoomReset', icon: 'document_text', label: '100%' },
         ],
       },
+      { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }] },
     ],
   },
 ];
@@ -1318,6 +1321,7 @@ window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, 
 // Выпадающие списки ленты должны отдавать фокус обратно в текст.
 $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
+initThemes();
 applyPage();
 setZoom(1);
 updateStats();

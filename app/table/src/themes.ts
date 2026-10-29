@@ -2,7 +2,7 @@
 // вид программы: оформление ячеек в книге и печать остаются как есть.
 // Интерфейс красит CSS ([data-theme] в themes.css), сетку — GridTheme.
 
-import { CLASSIC_GRID, type GridTheme } from './grid';
+import { CLASSIC_GRID, type GridTheme } from './gridtheme';
 
 export interface Theme {
   id: string;

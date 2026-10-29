@@ -691,6 +691,26 @@ await test('защита: «Не сохранено N мин» и напомин
   await p.context().close();
 });
 
+
+// ---- Темы ----
+await test('темы: те же, что в ENS-Table; лист меняет цвет на экране, печать остаётся белой', async () => {
+  const p = await page();
+  await p.evaluate(() => window.ens.run('view.theme'));
+  await p.waitForSelector('.theme-list');
+  const names = await p.$$eval('.theme-row b', (e) => e.map((x) => x.textContent.replace('✓ ', '')));
+  for (const need of ['Классическая', 'Пустошь', 'Матрица']) ok(names.includes(need), `нет темы «${need}»: ${names}`);
+  await p.click('.theme-row:has-text("Пустошь")');
+  eq(await p.evaluate(() => document.documentElement.dataset.theme), 'wasteland', 'атрибут темы');
+  eq(await p.evaluate(() => getComputedStyle(document.querySelector('.paper')).backgroundColor), 'rgb(242, 232, 207)', 'цвет листа на экране');
+  await p.click('.modal button.primary');
+  await p.emulateMedia({ media: 'print' });
+  eq(await p.evaluate(() => getComputedStyle(document.querySelector('.paper')).backgroundColor), 'rgb(255, 255, 255)', 'в печати лист белый');
+  await p.emulateMedia({ media: 'screen' });
+  // Тема запоминается и общая с ENS-Table (настройка theme).
+  eq(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-table.settings')).theme), 'wasteland', 'настройка сохранена');
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
