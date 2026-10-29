@@ -13,12 +13,12 @@ import {
 import type { Node as PMNode } from 'prosemirror-model';
 import { register, run, handleKey } from '../../table/src/commands';
 import { FONT_SIZES, FONTS, lastColor, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
-import { fontStack, loadFonts } from '../../table/src/fonts';
+import { fontStack, loadFonts, OFFICE_FONTS } from '../../table/src/fonts';
 import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
 import { schema } from './schema';
 import {
-  clearFormatting, createState, insertField, currentLevel, currentStyle, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
+  clearFormatting, createState, insertField, currentLevel, currentStyle, fmtActive, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
   listKind, markActive, paraAttr, replaceAll, replaceMatch, setLink, setParaAttrs, setStyle, setTextStyle, toggle, toggleList, toggles,
 } from './editor';
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type HfDoc, type PageSetup } from './docx';
@@ -1253,17 +1253,42 @@ const findbar = $('findbar');
 function openFind(withReplace: boolean): void {
   findbar.hidden = false;
   findbar.replaceChildren();
+  if (!document.getElementById('fmt-fonts')) document.body.append(el('datalist', { id: 'fmt-fonts' }, ...OFFICE_FONTS.map((f) => el('option', { value: f }))));
   const q = el('input', { type: 'text', placeholder: 'Найти', value: findKey.getState(view.state)?.query ?? '' });
   const r = el('input', { type: 'text', placeholder: 'Заменить на' });
   const mc = el('input', { type: 'checkbox' });
   const count = el('span', { class: 'count' });
+  // Условие по оформлению («Формат»): шрифт, кегль, Ж/К/Ч/зачёркнутый; и оформление для замены.
+  const fmtRow = (title: string, withStrike: boolean) => {
+    const font = el('input', { type: 'text', placeholder: 'Шрифт', title: 'Шрифт (любой, если пусто)'});
+    font.setAttribute('list', 'fmt-fonts');
+    const size = el('input', { type: 'number', placeholder: 'Кегль', min: '1', max: '400', step: '0.5' });
+    const flags = (['strong', 'em', 'underline', ...(withStrike ? ['strike'] : [])] as const).map((k) => {
+      const c = el('input', { type: 'checkbox' });
+      return { k, c, label: el('label', { class: 'fmtflag' }, c, ({ strong: 'Ж', em: 'К', underline: 'Ч', strike: 'З' } as Record<string, string>)[k]) };
+    });
+    const get = (): Record<string, string | number | boolean> => {
+      const o: Record<string, string | number | boolean> = {};
+      if (font.value.trim()) o.font = font.value.trim();
+      if (parseFloat(size.value) > 0) o.size = parseFloat(size.value);
+      for (const f of flags) if (f.c.checked) o[f.k] = true;
+      return o;
+    };
+    const row = el('div', { class: 'fmtrow' }, el('span', { class: 'fmttitle', textContent: title }), font, size, ...flags.map((f) => f.label));
+    return { row, get, inputs: [font, size, ...flags.map((f) => f.c)] };
+  };
+  const sf = fmtRow('Искать с оформлением:', true);
+  const rf = fmtRow('Заменить оформлением:', false);
+  const fmtBox = el('div', { class: 'fmtbox' }, sf.row, ...(withReplace ? [rf.row] : []));
+  fmtBox.hidden = true;
   const sync = () => {
-    view.dispatch(view.state.tr.setMeta(findKey, { query: q.value, matchCase: mc.checked, current: -1 }));
+    view.dispatch(view.state.tr.setMeta(findKey, { query: q.value, matchCase: mc.checked, fmt: fmtActive(sf.get()) ? sf.get() : null, current: -1 }));
     const s = findKey.getState(view.state)!;
-    count.textContent = q.value ? `Найдено: ${s.matches.length}` : '';
+    count.textContent = q.value || s.fmt ? `Найдено: ${s.matches.length}` : '';
   };
   q.addEventListener('input', sync);
   mc.addEventListener('change', sync);
+  for (const i of sf.inputs) { i.addEventListener('input', sync); i.addEventListener('change', sync); }
   q.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); findStep(view, e.shiftKey ? -1 : 1); }
     if (e.key === 'Escape') closeFind();
@@ -1274,7 +1299,7 @@ function openFind(withReplace: boolean): void {
     let idx = s.current;
     const sel = view.state.selection;
     if (idx < 0 || s.matches[idx]?.from !== sel.from || s.matches[idx]?.to !== sel.to) { findStep(view, 1); return; }
-    replaceMatch(view, idx, r.value);
+    replaceMatch(view, idx, r.value, rf.get());
     sync();
     findStep(view, 1);
     idx = -1;
@@ -1283,15 +1308,16 @@ function openFind(withReplace: boolean): void {
     el('button', { textContent: '↑', title: 'Предыдущее (Shift+Enter)', onclick: () => findStep(view, -1) }),
     el('button', { textContent: '↓', title: 'Следующее (Enter)', onclick: () => findStep(view, 1) }),
   ];
-  const kids: (Node | string)[] = [q, ...buttons, el('label', {}, mc, ' Учитывать регистр'), count];
+  const fmtBtn = el('button', { textContent: 'Формат', title: 'Искать и заменять по оформлению: шрифт, кегль, Ж/К/Ч', onclick: () => { fmtBox.hidden = !fmtBox.hidden; fmtBtn.classList.toggle('on', !fmtBox.hidden); } });
+  const kids: (Node | string)[] = [q, ...buttons, el('label', {}, mc, ' Учитывать регистр'), fmtBtn, count];
   if (withReplace) {
     kids.push(r, el('button', { textContent: 'Заменить', onclick: replaceOne }), el('button', {
       textContent: 'Заменить все',
-      onclick: () => { if (findKey.getState(view.state)?.matches.length) snap('before', `Перед «Заменить все» (${q.value} → ${r.value})`); const n = replaceAll(view, r.value); sync(); toast(`Заменено: ${n}`); },
+      onclick: () => { if (findKey.getState(view.state)?.matches.length) snap('before', `Перед «Заменить все» (${q.value} → ${r.value})`); const n = replaceAll(view, r.value, rf.get()); sync(); toast(`Заменено: ${n}`); },
     }));
   }
   kids.push(el('button', { textContent: '✕', title: 'Закрыть (Esc)', onclick: closeFind }));
-  findbar.append(...kids);
+  findbar.append(...kids, fmtBox);
   const sel = view.state.selection;
   if (!sel.empty && sel.$from.sameParent(sel.$to)) q.value = view.state.doc.textBetween(sel.from, sel.to);
   sync();
@@ -1301,7 +1327,7 @@ function openFind(withReplace: boolean): void {
 
 function closeFind(): void {
   findbar.hidden = true;
-  view.dispatch(view.state.tr.setMeta(findKey, { query: '', current: -1 }));
+  view.dispatch(view.state.tr.setMeta(findKey, { query: '', fmt: null, current: -1 }));
   view.focus();
 }
 
@@ -1598,6 +1624,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

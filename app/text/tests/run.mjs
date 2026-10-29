@@ -949,6 +949,42 @@ await test('поиск команд Alt+Q: находит по-русски и �
 });
 
 
+// ---- Поиск и замена по оформлению ----
+await test('поиск по оформлению: шрифт/кегль/Ж, замена только оформления и текста с оформлением', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const ts = (font, size) => s.marks.textStyle.create({ font, size });
+    const P = (...r) => s.nodes.paragraph.create(null, r);
+    E.loadDoc(s.nodes.doc.create(null, [
+      P(s.text('Обычный '), s.text('Арий', [ts('Arial', 14)]), s.text(' и '), s.text('жирный', [s.marks.strong.create()])),
+      P(s.text('Арий', [ts('Arial', 14), s.marks.strong.create()]), s.text(' Арий')),
+    ]), E.getMeta(), 'fmt');
+  });
+  await p.keyboard.press('Control+KeyH');
+  await p.click('.findbar button:has-text("Формат")');
+  const st = () => p.evaluate(() => { const s = window.ens.findState(); return s.matches.length; });
+  await p.fill('.fmtbox .fmtrow:nth-child(1) input[type=text]', 'Arial');
+  await p.waitForTimeout(100);
+  eq(await st(), 2, 'Arial: два участка');
+  await p.fill('.fmtbox .fmtrow:nth-child(1) input[type=number]', '14');
+  await p.check('.fmtbox .fmtrow:nth-child(1) label:has-text("Ж") input');
+  await p.waitForTimeout(100);
+  eq(await st(), 1, 'Arial 14 жирный: один');
+  await p.uncheck('.fmtbox .fmtrow:nth-child(1) label:has-text("Ж") input');
+  await p.fill('.findbar input[placeholder="Найти"]', 'Арий');
+  await p.waitForTimeout(100);
+  eq(await st(), 2, 'текст «Арий» + Arial 14: два');
+  // замена только оформления: Arial 14 → Verdana, жирный
+  await p.fill('.fmtbox .fmtrow:nth-child(2) input[type=text]', 'Verdana');
+  await p.check('.fmtbox .fmtrow:nth-child(2) label:has-text("Ж") input');
+  await p.click('.findbar button:has-text("Заменить все")');
+  await p.waitForTimeout(150);
+  const r = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.isText) out.push([n.text, n.marks.map((m) => m.type.name + (m.attrs.font ? ':' + m.attrs.font : '')).sort().join(',')]); }); return out; });
+  ok(r.filter((x) => x[1].includes('Verdana') && x[1].includes('strong')).map((x) => x[0]).join('|') === 'Арий|Арий', `после замены: ${JSON.stringify(r)}`);
+  ok(r.some((x) => x[0] === ' Арий' && !x[1].includes('strong')), 'не найденное не тронуто');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
