@@ -1,6 +1,6 @@
 [package]
 name = "ens-text"
-version = "0.1.0"
+version = "0.0.1"
 description = "ENS-Tekst — текстовый редактор ENS-Office"
 edition = "2021"
 publish = false
