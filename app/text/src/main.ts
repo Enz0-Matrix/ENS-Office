@@ -32,6 +32,7 @@ import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
+import { compatDialog } from './compat-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
@@ -583,6 +584,7 @@ register(
     run: () => { view.dispatch(view.state.tr.setMeta(focusKey, !focusKey.getState(view.state))); updateUi(); },
   },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
+  { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.inspector', label: 'Рентген форматирования', keywords: ['формат', 'инспектор', 'откуда'], keys: ['Ctrl+Alt+KeyI'], run: () => toggleInspector(inspectorSource, inspectorActions) },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
@@ -921,6 +923,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
           { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
+          { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
         ],
       },
       { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }] },

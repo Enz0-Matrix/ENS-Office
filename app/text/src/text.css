@@ -214,3 +214,15 @@
 .jr-row { display: flex; gap: 12px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
 .jr-no { font-weight: 600; min-width: 90px; }
 .jr-subj { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Совместимость с Word */
+.cmp-verdict { font-weight: 600; margin: 6px 0; }
+.cmp-verdict.warn { color: #b26a00; }
+.cmp-verdict.ok { color: #1b7f3b; }
+.cmp-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.cmp-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.cmp-dot { flex: none; width: 20px; height: 20px; border-radius: 50%; text-align: center; line-height: 20px; font-weight: 700; color: #fff; background: #b26a00; }
+.cmp-row.info .cmp-dot { background: #2b579a; }
+.cmp-text { flex: 1; }
+.cmp-title { font-weight: 600; }
+.cmp-detail { color: var(--muted); }

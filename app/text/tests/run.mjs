@@ -1052,6 +1052,32 @@ await test('мастер документов: приказ по ГОСТ, но�
   ok(!bad.some((x) => /Поля|Шрифт|Номера страниц/.test(x)), `замечания к приказу: ${bad.join(' | ')}`);
 });
 
+await test('совместимость с Word: шрифт без аналога, широкая таблица, дробный кегль, потери', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, m = E.getMeta();
+    const ts = (font, size) => s.marks.textStyle.create({ font, size });
+    const P = (...r) => s.nodes.paragraph.create(null, r);
+    const cell = (w) => s.nodes.table_cell.create({ colwidth: [w] }, P(s.text('x')));
+    const table = s.nodes.table.create(null, [s.nodes.table_row.create(null, [cell(500), cell(500)])]);
+    m.lossy = ['сноски: 2'];
+    E.loadDoc(s.nodes.doc.create(null, [P(s.text('Inter', [ts('Inter', 11.3)])), P(s.text('Arial', [ts('Arial', 12)])), table, P()]), m, 'cmp');
+  });
+  await p.evaluate(() => window.ens.run('review.compat'));
+  await p.waitForSelector('.cmp-row');
+  const titles = await p.$$eval('.cmp-row .cmp-title', (e) => e.map((x) => x.textContent));
+  const has = (re) => titles.some((x) => re.test(x));
+  ok(has(/Шрифт «Inter»/) && !has(/Шрифт «Arial»/), `шрифты: ${titles.join(' | ')}`);
+  ok(has(/Таблица шире/) && has(/Дробный кегль/) && has(/Не перенесено/) && has(/насчитал страниц/), `остальное: ${titles.join(' | ')}`);
+  await p.click('.cmp-row:has-text("Шрифт «Inter»") button');
+  await p.waitForTimeout(100);
+  ok(await p.evaluate(() => document.getElementById('dialog').hidden), 'окно закрылось после «Показать»');
+  // чистый документ — без предупреждений
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Просто текст'))]), E.getMeta(), 'clean'); });
+  await p.evaluate(() => window.ens.run('review.compat'));
+  await p.waitForSelector('.cmp-verdict.ok');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
