@@ -829,7 +829,7 @@ pub(crate) fn get_worksheet_xml(
         String::new()
     };
     let page_breaks = page_breaks_xml(worksheet);
-    let drawing = if worksheet.ens_images.is_empty() && worksheet.ens_charts.is_empty() {
+    let drawing = if worksheet.ens_images.is_empty() && worksheet.ens_charts.is_empty() && worksheet.ens_shapes.is_empty() {
         String::new()
     } else {
         let n = external_link_count(worksheet) + if worksheet.comments.is_empty() { 0 } else { 2 } + 1;

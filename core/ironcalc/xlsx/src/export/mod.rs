@@ -65,7 +65,7 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         }
     }
     for (i, w) in workbook.worksheets.iter().enumerate() {
-        if !w.ens_images.is_empty() || !w.ens_charts.is_empty() {
+        if !w.ens_images.is_empty() || !w.ens_charts.is_empty() || !w.ens_shapes.is_empty() {
             content.push(format!(
                 r#"<Override PartName="/xl/drawings/drawing{}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#,
                 i + 1
@@ -188,7 +188,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     let mut has_worksheet_rels = false;
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
-        let drawing_id = (!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty()).then_some(sheet_index + 1);
+        let drawing_id = (!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty() || !worksheet.ens_shapes.is_empty()).then_some(sheet_index + 1);
         if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id, drawing_id) {
             if !has_worksheet_rels {
                 zip.add_directory("xl/worksheets/_rels", options)?;
@@ -225,7 +225,8 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let images = &worksheet.ens_images;
         let charts = &worksheet.ens_charts;
-        if images.is_empty() && charts.is_empty() {
+        let shapes = &worksheet.ens_shapes;
+        if images.is_empty() && charts.is_empty() && shapes.is_empty() {
             continue;
         }
         let id = sheet_index + 1;
@@ -239,7 +240,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             has_media_dir = true;
         }
         zip.start_file(format!("xl/drawings/drawing{id}.xml"), options)?;
-        zip.write_all(drawings::get_drawing_xml(images, charts).as_bytes())?;
+        zip.write_all(drawings::get_drawing_xml(images, charts, shapes).as_bytes())?;
         zip.start_file(format!("xl/drawings/_rels/drawing{id}.xml.rels"), options)?;
         zip.write_all(drawings::get_drawing_rels(images, media_count, charts, chart_count).as_bytes())?;
         for (i, img) in images.iter().enumerate() {

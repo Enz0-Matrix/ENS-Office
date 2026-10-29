@@ -846,6 +846,11 @@ impl UserModel<'_> {
         for c in &mut charts {
             if is_row { c.row = clamp(c.row) } else { c.column = clamp(c.column) }
         }
+        let old_shapes = ws.ens_shapes.clone();
+        let mut shapes = old_shapes.clone();
+        for sh in &mut shapes {
+            if is_row { sh.row = clamp(sh.row) } else { sh.column = clamp(sh.column) }
+        }
         let mut comments = Vec::new();
         for c in &old_comments {
             let Some(r) = crate::expressions::utils::parse_reference_a1(&c.cell_ref) else { continue };
@@ -866,6 +871,10 @@ impl UserModel<'_> {
             ws.ens_charts = charts.clone();
             diffs.push(Diff::SetCharts { sheet, new_value: charts, old_value: old_charts });
         }
+        if shapes != old_shapes {
+            ws.ens_shapes = shapes.clone();
+            diffs.push(Diff::SetShapes { sheet, new_value: shapes, old_value: old_shapes });
+        }
         if comments != old_comments {
             ws.comments = comments.clone();
             diffs.push(Diff::SetComments { sheet, new_value: comments, old_value: old_comments });
@@ -875,6 +884,30 @@ impl UserModel<'_> {
             diffs.push(Diff::SetPageBreaks { sheet, new_value: breaks, old_value: old_breaks });
         }
         Ok(diffs)
+    }
+
+    /// ENS-Office: the shapes and text boxes of the sheet.
+    pub fn get_shapes(&self, sheet: u32) -> Result<Vec<crate::types::Shape>, String> {
+        Ok(self.model.workbook.worksheet(sheet)?.ens_shapes.clone())
+    }
+
+    /// ENS-Office: replaces the shapes of the sheet (add, change, delete are done by the caller); an undoable step.
+    pub fn set_shapes(&mut self, sheet: u32, shapes: Vec<crate::types::Shape>) -> Result<(), String> {
+        self.guard_sheet(sheet)?;
+        let bad = |s: &crate::types::Shape| {
+            s.kind > 5
+                || if s.kind == 3 || s.kind == 4 { s.width < 0 || s.height < 0 || s.width + s.height < 1 } else { s.width < 1 || s.height < 1 }
+        };
+        if shapes.iter().any(bad) {
+            return Err("Неверная фигура.".to_string());
+        }
+        let old_value = self.get_shapes(sheet)?;
+        if old_value == shapes {
+            return Ok(());
+        }
+        self.model.workbook.worksheet_mut(sheet)?.ens_shapes = shapes.clone();
+        self.push_diff_list(vec![Diff::SetShapes { sheet, new_value: shapes, old_value }]);
+        Ok(())
     }
 
     /// ENS-Office: the charts of the sheet.

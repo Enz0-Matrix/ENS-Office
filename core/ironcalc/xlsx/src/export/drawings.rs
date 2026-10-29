@@ -4,7 +4,7 @@ use ironcalc_base::{
     cell::CellValue,
     expressions::utils::{number_to_column, quote_name},
     parse_chart_range,
-    types::{Chart, Image},
+    types::{Chart, Image, Shape},
     Model,
 };
 
@@ -13,7 +13,7 @@ use super::{escape::escape_xml, xml_constants::XML_DECLARATION};
 const EMU_PER_PX: i64 = 9525;
 
 /// `xl/drawings/drawingN.xml`: one `<xdr:oneCellAnchor>` with a picture per image.
-pub(crate) fn get_drawing_xml(images: &[Image], charts: &[Chart]) -> String {
+pub(crate) fn get_drawing_xml(images: &[Image], charts: &[Chart], shapes: &[Shape]) -> String {
     let mut anchors = String::new();
     for (i, img) in images.iter().enumerate() {
         let (cx, cy) = (i64::from(img.width) * EMU_PER_PX, i64::from(img.height) * EMU_PER_PX);
@@ -50,6 +50,9 @@ pub(crate) fn get_drawing_xml(images: &[Image], charts: &[Chart]) -> String {
             images.len() + j + 2,
             j + 1
         ));
+    }
+    for (k, sh) in shapes.iter().enumerate() {
+        anchors.push_str(&shape_anchor_xml(sh, images.len() + charts.len() + k + 2));
     }
     format!(
         "{XML_DECLARATION}\n<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{anchors}</xdr:wsDr>"
@@ -194,5 +197,66 @@ pub(crate) fn get_chart_xml(model: &Model, sheet: u32, chart: &Chart) -> String 
     format!(
         "{XML_DECLARATION}\n<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:chart>{title}<c:plotArea><c:layout/>{plot}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/></c:chart></c:chartSpace>"
+    )
+}
+
+fn color_fill(c: &str) -> Option<String> {
+    let c = c.strip_prefix('#').filter(|c| c.len() == 6)?;
+    Some(format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>", c.to_uppercase()))
+}
+
+/// One shape or text box as an `<xdr:oneCellAnchor>` (`id` — unique number of the drawing object).
+fn shape_anchor_xml(sh: &Shape, id: usize) -> String {
+    let (cx, cy) = (i64::from(sh.width) * EMU_PER_PX, i64::from(sh.height) * EMU_PER_PX);
+    let from = format!(
+        "<xdr:from><xdr:col>{}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:ext cx=\"{cx}\" cy=\"{cy}\"/>",
+        sh.column - 1,
+        i64::from(sh.dx) * EMU_PER_PX,
+        sh.row - 1,
+        i64::from(sh.dy) * EMU_PER_PX
+    );
+    let width = i64::from(sh.line_width.max(1)) * EMU_PER_PX;
+    let is_line = sh.kind == 3 || sh.kind == 4;
+    let line_color = if sh.line_color.is_empty() && is_line { "#000000" } else { &sh.line_color };
+    let ln = match color_fill(line_color) {
+        Some(f) => format!("<a:ln w=\"{width}\">{f}{}</a:ln>", if sh.kind == 4 { "<a:tailEnd type=\"triangle\"/>" } else { "" }),
+        None => "<a:ln><a:noFill/></a:ln>".to_string(),
+    };
+    let flip = if sh.flip { " flipV=\"1\"" } else { "" };
+    let raw_name = format!("Фигура {id}");
+    let name = escape_xml(&raw_name);
+    if is_line {
+        return format!(
+            "<xdr:oneCellAnchor>{from}<xdr:cxnSp macro=\"\"><xdr:nvCxnSpPr><xdr:cNvPr id=\"{id}\" name=\"{name}\"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr>\
+<xdr:spPr><a:xfrm{flip}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"line\"><a:avLst/></a:prstGeom>{ln}</xdr:spPr></xdr:cxnSp><xdr:clientData/></xdr:oneCellAnchor>"
+        );
+    }
+    let prst = match sh.kind {
+        1 => "roundRect",
+        2 => "ellipse",
+        _ => "rect",
+    };
+    let fill = color_fill(&sh.fill).unwrap_or_else(|| "<a:noFill/>".to_string());
+    let algn = ["l", "ctr", "r"][usize::from(sh.align.min(2))];
+    let run_pr = format!(
+        "<a:rPr lang=\"ru-RU\"{}{}>{}</a:rPr>",
+        if sh.font_size > 0.0 { format!(" sz=\"{}\"", (sh.font_size * 100.0).round() as i64) } else { String::new() },
+        if sh.bold { " b=\"1\"" } else { "" },
+        color_fill(&sh.text_color).unwrap_or_default()
+    );
+    let paragraphs: String = if sh.text.is_empty() {
+        "<a:p><a:endParaRPr lang=\"ru-RU\"/></a:p>".to_string()
+    } else {
+        sh.text
+            .split('\n')
+            .map(|l| format!("<a:p><a:pPr algn=\"{algn}\"/><a:r>{run_pr}<a:t>{}</a:t></a:r></a:p>", escape_xml(l)))
+            .collect()
+    };
+    let anchor = if sh.kind == 5 { "t" } else { "ctr" };
+    format!(
+        "<xdr:oneCellAnchor>{from}<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"{name}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr>\
+<xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>{fill}{ln}</xdr:spPr>\
+<xdr:txBody><a:bodyPr vertOverflow=\"clip\" wrap=\"square\" rtlCol=\"0\" anchor=\"{anchor}\"/><a:lstStyle/>{paragraphs}</xdr:txBody></xdr:sp><xdr:clientData/></xdr:oneCellAnchor>",
+        if sh.kind == 5 { " txBox=\"1\"" } else { "" }
     )
 }

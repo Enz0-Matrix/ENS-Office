@@ -486,3 +486,40 @@ fn test_ens_protection_permissions() {
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_sheet_permissions(0).unwrap(), vec!["formatCells", "insertRows"]);
 }
+
+// ENS-Office: shapes, lines, arrows and text boxes round trip, with undo and shifting with rows.
+#[test]
+fn test_ens_shapes_export() {
+    use ironcalc_base::types::Shape;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x").unwrap();
+    let base = Shape { kind: 0, text: String::new(), fill: String::new(), line_color: String::new(), line_width: 0, text_color: String::new(), font_size: 0.0, bold: false, align: 0, flip: false, row: 3, column: 2, dx: 4, dy: 5, width: 120, height: 60 };
+    let rect = Shape { text: "Итог & проверка\nвторая строка".to_string(), fill: "#FFE699".to_string(), line_color: "#7F6000".to_string(), line_width: 2, text_color: "#C00000".to_string(), font_size: 14.0, bold: true, align: 1, ..base.clone() };
+    let round = Shape { kind: 1, fill: "#DDEBF7".to_string(), line_color: "#2F75B5".to_string(), line_width: 1, ..base.clone() };
+    let ellipse = Shape { kind: 2, fill: "#E2EFDA".to_string(), row: 8, ..base.clone() };
+    let line = Shape { kind: 3, line_color: "#000000".to_string(), line_width: 3, width: 100, height: 0, row: 10, ..base.clone() };
+    let arrow = Shape { kind: 4, line_color: "#FF0000".to_string(), line_width: 2, flip: true, width: 80, height: 80, row: 12, ..base.clone() };
+    let tbox = Shape { kind: 5, text: "Надпись".to_string(), align: 2, row: 14, ..base.clone() };
+    let all = vec![rect, round, ellipse, line, arrow, tbox];
+    assert!(model.set_shapes(0, vec![Shape { kind: 9, ..base.clone() }]).is_err());
+    model.set_shapes(0, vec![all[0].clone()]).unwrap();
+    model.set_shapes(0, all.clone()).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_shapes(0).unwrap().len(), 1);
+    model.redo().unwrap();
+    let name = "temp_ens_shapes.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut drawing = String::new();
+    zip.by_name("xl/drawings/drawing1.xml").unwrap().read_to_string(&mut drawing).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(drawing.contains("prst=\"roundRect\"") && drawing.contains("prst=\"ellipse\"") && drawing.contains("<a:tailEnd type=\"triangle\"/>") && drawing.contains("txBox=\"1\"") && drawing.contains("Итог &amp; проверка"), "{drawing}");
+    let mut back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_shapes(0).unwrap(), all);
+    back.insert_rows(0, 1, 2).unwrap();
+    assert_eq!(back.get_shapes(0).unwrap()[0].row, 5);
+    back.undo().unwrap();
+    assert_eq!(back.get_shapes(0).unwrap()[0].row, 3);
+}

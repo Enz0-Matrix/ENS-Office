@@ -2,7 +2,7 @@
 
 use std::io::{BufReader, Read};
 
-use ironcalc_base::types::{Chart, Image};
+use ironcalc_base::types::{Chart, Image, Shape};
 
 use super::xml::XmlNode;
 
@@ -52,9 +52,10 @@ pub(crate) fn load_images<R: Read + std::io::Seek>(
     archive: &mut zip::read::ZipArchive<R>,
     sheet_path: &str,
     sheet_name: &str,
-) -> (Vec<Image>, Vec<Chart>) {
+) -> (Vec<Image>, Vec<Chart>, Vec<Shape>) {
     let mut out = Vec::new();
     let mut charts = Vec::new();
+    let mut shapes = Vec::new();
     let sheet_dir = dir_of(sheet_path).to_string();
     for (_, t, target) in rels_of(archive, sheet_path) {
         if !t.ends_with("/drawing") {
@@ -74,6 +75,12 @@ pub(crate) fn load_images<R: Read + std::io::Seek>(
             if let Some(frame) = anchor.children().find(|n| n.has_tag_name("graphicFrame")) {
                 if let Some(c) = load_chart(archive, &drawing_rels, &drawing_path, anchor, frame, sheet_name) {
                     charts.push(c);
+                }
+                continue;
+            }
+            if let Some(node) = anchor.children().find(|n| n.has_tag_name("sp") || n.has_tag_name("cxnSp")) {
+                if let Some(sh) = load_shape(anchor, node) {
+                    shapes.push(sh);
                 }
                 continue;
             }
@@ -114,7 +121,7 @@ pub(crate) fn load_images<R: Read + std::io::Seek>(
             });
         }
     }
-    (out, charts)
+    (out, charts, shapes)
 }
 
 /// "'My sheet'!$A$2:$A$5" → (sheet name, column1, row1, column2, row2).
@@ -262,5 +269,97 @@ fn load_chart<R: Read + std::io::Seek>(
         dy: (number(from, "rowOff") / EMU_PER_PX) as i32,
         width,
         height,
+    })
+}
+
+/// `#RRGGBB` of the first `<a:srgbClr>` inside `n`.
+fn srgb(n: &XmlNode) -> Option<String> {
+    n.descendants().find(|c| c.has_tag_name("srgbClr")).and_then(|c| c.attribute("val")).map(|v| format!("#{}", v.to_uppercase()))
+}
+
+/// A shape (`<xdr:sp>`) or a line (`<xdr:cxnSp>`) of the drawing.
+fn load_shape(anchor: &XmlNode, node: &XmlNode) -> Option<Shape> {
+    let sp_pr = node.children().find(|n| n.has_tag_name("spPr"))?;
+    let geom = sp_pr.children().find(|n| n.has_tag_name("prstGeom")).and_then(|g| g.attribute("prst")).unwrap_or("rect");
+    let is_line = node.has_tag_name("cxnSp") || matches!(geom, "line" | "straightConnector1");
+    let has_style = node.children().any(|n| n.has_tag_name("style"));
+    let ln = sp_pr.children().find(|n| n.has_tag_name("ln"));
+    let arrow = ln.is_some_and(|l| l.children().any(|n| matches!(n.tag_name(), "tailEnd" | "headEnd") && n.attribute("type").is_some_and(|t| t != "none")));
+    let is_text_box = node.children().find(|n| n.has_tag_name("nvSpPr")).and_then(|n| n.children().find(|c| c.has_tag_name("cNvSpPr"))).is_some_and(|c| c.attribute("txBox").is_some_and(|v| v == "1" || v == "true"));
+    let kind = if is_line {
+        if arrow { 4 } else { 3 }
+    } else if is_text_box {
+        5
+    } else {
+        match geom {
+            "roundRect" => 1,
+            "ellipse" => 2,
+            _ => 0,
+        }
+    };
+    let fill = if sp_pr.children().any(|n| n.has_tag_name("noFill")) {
+        String::new()
+    } else if let Some(f) = sp_pr.children().find(|n| n.has_tag_name("solidFill")) {
+        srgb(f).unwrap_or_else(|| "#4472C4".to_string())
+    } else if has_style && !is_line && !is_text_box {
+        "#4472C4".to_string()
+    } else {
+        String::new()
+    };
+    let (line_color, line_width) = match ln {
+        Some(l) if l.children().any(|n| n.has_tag_name("noFill")) => (String::new(), 0),
+        Some(l) => {
+            let c = l.children().find(|n| n.has_tag_name("solidFill")).and_then(srgb);
+            let w = l.attribute("w").and_then(|w| w.parse::<i64>().ok()).map_or(1, |w| (w / EMU_PER_PX).clamp(1, 20) as u8);
+            (c.unwrap_or_else(|| if has_style || is_line { "#2F528F".to_string() } else { String::new() }), w)
+        }
+        None if has_style => ("#2F528F".to_string(), 1),
+        None => (String::new(), 0),
+    };
+    let (mut text, mut text_color, mut font_size, mut bold, mut align) = (Vec::new(), String::new(), 0.0, false, 0u8);
+    if let Some(body) = node.children().find(|n| n.has_tag_name("txBody")) {
+        for (i, p) in body.children().filter(|n| n.has_tag_name("p")).enumerate() {
+            let line: String = p.children().filter(|n| n.has_tag_name("r")).flat_map(|r| r.children().filter(|n| n.has_tag_name("t")).filter_map(|t| t.text())).collect();
+            if i == 0 {
+                align = match p.children().find(|n| n.has_tag_name("pPr")).and_then(|pp| pp.attribute("algn")) {
+                    Some("ctr") => 1,
+                    Some("r") => 2,
+                    _ => 0,
+                };
+                if let Some(rpr) = p.children().find(|n| n.has_tag_name("r")).and_then(|r| r.children().find(|n| n.has_tag_name("rPr"))) {
+                    font_size = rpr.attribute("sz").and_then(|v| v.parse::<f64>().ok()).map_or(0.0, |v| v / 100.0);
+                    bold = rpr.attribute("b").is_some_and(|v| v == "1" || v == "true");
+                    text_color = srgb(rpr).unwrap_or_default();
+                }
+            }
+            text.push(line);
+        }
+    }
+    let xfrm = sp_pr.children().find(|n| n.has_tag_name("xfrm"));
+    let flag = |a: &str| xfrm.and_then(|x| x.attribute(a)).is_some_and(|v| v == "1" || v == "true");
+    let from = anchor.children().find(|n| n.has_tag_name("from"));
+    let ext = anchor.children().find(|n| n.has_tag_name("ext")).or_else(|| xfrm.and_then(|x| x.children().find(|n| n.has_tag_name("ext"))));
+    let size = |a: &str| ext.and_then(|n| n.attribute(a)).and_then(|v| v.parse::<i64>().ok()).map_or(0, |v| (v / EMU_PER_PX) as i32);
+    let (mut width, mut height) = (size("cx"), size("cy"));
+    if width <= 0 && height <= 0 {
+        (width, height) = (120, 60);
+    }
+    Some(Shape {
+        kind,
+        text: text.join("\n").trim_end_matches('\n').to_string(),
+        fill,
+        line_color,
+        line_width,
+        text_color,
+        font_size,
+        bold,
+        align,
+        flip: flag("flipV") != flag("flipH"),
+        row: number(from, "row") as i32 + 1,
+        column: number(from, "col") as i32 + 1,
+        dx: (number(from, "colOff") / EMU_PER_PX) as i32,
+        dy: (number(from, "rowOff") / EMU_PER_PX) as i32,
+        width: width.max(if is_line { 0 } else { 1 }),
+        height: height.max(if is_line { 0 } else { 1 }),
     })
 }
