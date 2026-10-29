@@ -82,7 +82,8 @@ export function showBackstage(section: Section = 'info'): void {
         <img class="bs-logo" src="${logoUrl}" alt="ENS-Office" width="64" height="64"><br>
         ENS-Office · ENS-Table ${APP_VERSION}<br>
         Автор: Н. Едренников<br>
-        Обратная связь: <a href="mailto:n.edrennikov@yandex.ru">n.edrennikov@yandex.ru</a>
+        Обратная связь: <a href="mailto:n.edrennikov@yandex.ru">n.edrennikov@yandex.ru</a><br>
+        Новости: <a href="https://t.me/ENS_Office" target="_blank" rel="noopener">t.me/ENS_Office</a>
       </div>
     </nav>
     <section class="bs-body"></section>`;
