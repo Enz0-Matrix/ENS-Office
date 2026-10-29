@@ -31,6 +31,9 @@ export interface Shape {
   bold: boolean; align: number; flip: boolean; row: number; column: number; dx: number; dy: number; width: number; height: number;
 }
 
+/** Раскрывающийся список: ячейки (как в xlsx, «B2:B10 D4») и источник (`"Да,Нет"` или диапазон `Лист1!$A$1:$A$5`). */
+export interface Validation { sqref: string; source: string; allow_blank: boolean; no_arrow: boolean; error: string }
+
 export interface CellStyle {
   num_fmt: string;
   fill: { color?: Color };
@@ -139,6 +142,12 @@ export interface Model {
   addImage(sheet: number, row: number, column: number, width: number, height: number, ext: string, name: string, data: Uint8Array): number;
   placeImage(sheet: number, index: number, row: number, column: number, dx: number, dy: number, width: number, height: number): void;
   deleteImage(sheet: number, index: number): void;
+  getValidations(sheet: number): Validation[];
+  /** Заменяет все списки листа (одно действие отмены). */
+  setValidations(sheet: number, list: Validation[]): void;
+  /** У ячейки есть список со стрелкой. */
+  hasDropdown(sheet: number, row: number, column: number): boolean;
+  getDropdownItems(sheet: number, row: number, column: number): string[];
   getShapes(sheet: number): Shape[];
   /** Заменяет все фигуры листа (одно действие отмены). */
   setShapes(sheet: number, shapes: Shape[]): void;

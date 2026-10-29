@@ -1166,6 +1166,79 @@ function deleteSelectedObject(): void {
   grid.render();
 }
 
+// --- Раскрывающиеся списки ---
+
+grid.onDropdown = (x, y) => {
+  const s = grid.sel;
+  const items = model.getDropdownItems(grid.sheet, s.row, s.column);
+  if (!items.length) { showToast('Список пуст: проверьте источник в «Данные → Список…».'); return; }
+  const current = model.getFormattedCellValue(grid.sheet, s.row, s.column).toLowerCase();
+  showMenu(items.map((label) => ({
+    label, checked: label.toLowerCase() === current,
+    run: () => {
+      try { model.setUserInput(grid.sheet, s.row, s.column, label); } catch (e) { showToast(String(e)); }
+      grid.render(); updateFormulaBar(); updateStatus(); focusGrid();
+    },
+  })), x, y);
+};
+
+/** «Проверка данных» → список: ячейки, источник (перечень или диапазон), пустые значения, стрелка, сообщение об ошибке. */
+function validationDialog(): void {
+  if (editing) commitEdit(0, 0);
+  const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
+  const sel = s.r1 === s.r2 && s.c1 === s.c2 ? cell(s.r1, s.c1) : `${cell(s.r1, s.c1)}:${cell(s.r2, s.c2)}`;
+  const list = model.getValidations(grid.sheet);
+  const colNum = (t: string) => t.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+  const covers = (sqref: string) => sqref.split(/\s+/).some((t) => {
+    const m = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(t.toUpperCase());
+    if (!m) return false;
+    const [c1, r1, c2, r2] = [colNum(m[1]), Number(m[2]), colNum(m[3] ?? m[1]), Number(m[4] ?? m[2])];
+    return r1 <= s.r2 && r2 >= s.r1 && c1 <= s.c2 && c2 >= s.c1;
+  });
+  const found = list.find((v) => covers(v.sqref));
+  const literal = (src: string) => src.startsWith('"') ? src.replace(/^"|"$/g, '').split(',').join('; ') : src.replace(/^=/, '');
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Раскрывающийся список</h2>
+    <p>Ячейка получит стрелку со списком; другое значение ввести нельзя.</p>
+    <p><label>Ячейки: <input data-f="cells" style="width:55%"></label></p>
+    <p><label>Источник: <input data-f="source" style="width:55%" placeholder="Да; Нет; Возможно  или  A1:A5"></label></p>
+    <p style="margin:0 0 8px;color:var(--muted)">Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).</p>
+    <p><label><input type="checkbox" data-f="blank"> Игнорировать пустые ячейки</label>
+      <label style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
+    <p><label>Сообщение об ошибке: <input data-f="error" style="width:55%" placeholder="по умолчанию"></label></p>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать список</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`)!;
+  f('cells').value = found?.sqref ?? sel;
+  f('source').value = found ? literal(found.source) : '';
+  f('blank').checked = found?.allow_blank ?? true;
+  f('arrow').checked = !(found?.no_arrow ?? false);
+  f('error').value = found?.error ?? '';
+  addRangePicker(f('cells'));
+  addRangePicker(f('source'), 'sheet');
+  f('source').focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act || act === 'range-pick') return;
+    try {
+      if (act === 'delete' && found) model.setValidations(grid.sheet, list.filter((v) => v !== found));
+      if (act === 'ok') {
+        const text = f('source').value.trim();
+        const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
+        const source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
+        if (!text) { showToast('Укажите значения списка или диапазон.'); return; }
+        const next = { sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: !f('arrow').checked, error: f('error').value.trim() };
+        model.setValidations(grid.sheet, found ? list.map((v) => (v === found ? next : v)) : [...list, next]);
+      }
+    } catch (err) { showToast(String(err)); return; }
+    grid.render();
+    close();
+  });
+}
+
 // --- Фигуры и надписи ---
 
 function insertShape(kind: number): void {
@@ -2916,6 +2989,7 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'data.validation', label: 'Раскрывающийся список (проверка данных)', keywords: ['validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
   { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
   { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
   { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },

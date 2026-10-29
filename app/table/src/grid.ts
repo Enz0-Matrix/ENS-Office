@@ -208,6 +208,9 @@ export class Grid {
   /** Рисунок перенесён или изменён: индекс, ячейка левого верхнего угла, сдвиг и размер (px). */
   onImagePlace: (kind: 'image' | 'chart' | 'shape', index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
   onImageSelect: (index: number) => void = () => {};
+  private dropdownBtn: { x: number; y: number; w: number; h: number; bottom: number; left: number } | null = null;
+  /** Щелчок по стрелке раскрывающегося списка: экранные координаты нижнего левого угла ячейки. */
+  onDropdown: (clientX: number, clientY: number) => void = () => {};
   /** Двойной щелчок по выбранному рисунку или диаграмме. */
   onObjectDouble: () => void = () => {};
   /** Ячейки с примечаниями ("строка:столбец") — красный уголок. */
@@ -891,6 +894,15 @@ export class Grid {
       const cr0 = this.canvas.getBoundingClientRect();
       if (this.outlineClick((e.clientX - cr0.left) / this.zoom, (e.clientY - cr0.top) / this.zoom)) { e.preventDefault(); return; }
     }
+    if (this.dropdownBtn) {
+      const cr2 = this.canvas.getBoundingClientRect(), b = this.dropdownBtn;
+      const px = (e.clientX - cr2.left) / this.zoom, py = (e.clientY - cr2.top) / this.zoom;
+      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+        e.preventDefault();
+        this.onDropdown(cr2.left + b.left * this.zoom, cr2.top + b.bottom * this.zoom);
+        return;
+      }
+    }
     if (this.images.length || this.charts.length || this.shapes.length) {
       const cr1 = this.canvas.getBoundingClientRect();
       const px = (e.clientX - cr1.left) / this.zoom, py = (e.clientY - cr1.top) / this.zoom;
@@ -1274,6 +1286,18 @@ export class Grid {
       if (b) this.drawBorders(b, cell);
     }
     this.drawImages();
+    // Стрелка раскрывающегося списка у активной ячейки.
+    this.dropdownBtn = null;
+    try {
+      const s = this.sel;
+      if (s.r1 === s.r2 && s.c1 === s.c2 && model.hasDropdown(this.sheet, s.row, s.column) && s.row >= ra && s.row <= rb && s.column >= ca && s.column <= cb) {
+        const r = this.lrect(s.row, s.column), bx = r.x + r.w - 17, by = r.y + Math.max(0, (r.h - 16) / 2);
+        this.dropdownBtn = { x: bx, y: by, w: 16, h: 16, bottom: r.y + r.h, left: r.x };
+        ctx.fillStyle = '#f3f3f3'; ctx.strokeStyle = '#9a9a9a'; ctx.lineWidth = 1;
+        ctx.fillRect(bx, by, 16, 16); ctx.strokeRect(bx + 0.5, by + 0.5, 15, 15);
+        ctx.fillStyle = '#333'; ctx.beginPath(); ctx.moveTo(bx + 4, by + 6); ctx.lineTo(bx + 12, by + 6); ctx.lineTo(bx + 8, by + 11); ctx.closePath(); ctx.fill();
+      }
+    } catch { /* без списка */ }
     // Красные уголки примечаний.
     if (this.commentCells.size) {
       ctx.save();

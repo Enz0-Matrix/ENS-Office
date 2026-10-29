@@ -30,6 +30,7 @@ import i_shape_ellipse_24 from '@fluentui/svg-icons/icons/circle_24_regular.svg?
 import i_shape_line_24 from '@fluentui/svg-icons/icons/line_24_regular.svg?raw';
 import i_shape_arrow_24 from '@fluentui/svg-icons/icons/arrow_up_right_24_regular.svg?raw';
 import i_text_box_24 from '@fluentui/svg-icons/icons/textbox_24_regular.svg?raw';
+import i_dropdown_list_24 from '@fluentui/svg-icons/icons/text_bullet_list_square_24_regular.svg?raw';
 import i_symbols_24 from '@fluentui/svg-icons/icons/symbols_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
@@ -110,6 +111,7 @@ export const ICONS: Record<string, string> = {
   'text_italic_20': textItalic20,
   'text_underline_20': textUnderline20,
   'symbols_24': i_symbols_24,
+  'dropdown_list_24': i_dropdown_list_24,
   'shape_rect_24': i_shape_rect_24,
   'shape_ellipse_24': i_shape_ellipse_24,
   'shape_line_24': i_shape_line_24,

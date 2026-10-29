@@ -264,6 +264,7 @@ export const TABS: RibbonTab[] = [
           { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
         ],
       },
+      { name: 'Проверка данных', items: [{ type: 'large', command: 'data.validation', icon: 'dropdown_list', label: 'Список' }] },
       {
         name: 'Структура',
         items: [
