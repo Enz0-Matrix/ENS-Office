@@ -228,6 +228,11 @@ export const TABS: RibbonTab[] = [
         { type: 'large', command: 'shape.arrow', icon: 'shape_arrow', label: 'Стрелка' },
       ] },
       { name: 'Ссылки', items: [{ type: 'large', command: 'link.edit', icon: 'link', label: 'Ссылка' }] },
+      { name: 'Расположение фигуры', items: [
+        { type: 'large', command: 'shape.front', icon: 'arrange_front', label: 'На передний план' },
+        { type: 'large', command: 'shape.back', icon: 'arrange_back', label: 'На задний план' },
+        { type: 'large', command: 'shape.rotateRight', icon: 'rotate_cw', label: 'Повернуть 90°' },
+      ] },
       { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },

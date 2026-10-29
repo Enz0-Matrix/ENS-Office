@@ -28,7 +28,7 @@ export interface Chart { kind: number; title: string; range: string; row: number
 /** Фигура или надпись: kind 0 — прямоугольник, 1 — скруглённый, 2 — эллипс, 3 — линия, 4 — стрелка, 5 — надпись. Цвета «#RRGGBB», пусто — нет. */
 export interface Shape {
   kind: number; text: string; fill: string; line_color: string; line_width: number; text_color: string; font_size: number;
-  bold: boolean; align: number; flip: boolean; row: number; column: number; dx: number; dy: number; width: number; height: number;
+  bold: boolean; align: number; flip: boolean; rotation: number; row: number; column: number; dx: number; dy: number; width: number; height: number;
 }
 
 /** Раскрывающийся список: ячейки (как в xlsx, «B2:B10 D4») и источник (`"Да,Нет"` или диапазон `Лист1!$A$1:$A$5`). */

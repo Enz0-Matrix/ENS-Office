@@ -1494,6 +1494,43 @@ function insertShape(kind: number): void {
   } catch (e) { showToast(String(e)); }
 }
 
+type ShapeOrder = 'front' | 'forward' | 'backward' | 'back';
+
+/** Выделенная фигура и её номер среди фигур листа. */
+function selectedShape(): number {
+  const o = grid.objAt(grid.selObj);
+  if (o?.kind !== 'shape') { showToast('Сначала выделите фигуру: щёлкните по ней.'); return -1; }
+  return o.index;
+}
+
+/** Порядок наложения фигур: чем позже в списке, тем выше (так же рисуется и сохраняется в xlsx). */
+function orderShape(op: ShapeOrder): void {
+  const i = selectedShape();
+  if (i < 0) return;
+  try {
+    const list = [...model.getShapes(grid.sheet)];
+    const to = op === 'front' ? list.length - 1 : op === 'back' ? 0 : op === 'forward' ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
+    if (to === i) return;
+    const [sh] = list.splice(i, 1);
+    list.splice(to, 0, sh);
+    model.setShapes(grid.sheet, list);
+    grid.selObj = grid.images.length + grid.charts.length + to;
+  } catch (e) { showToast(String(e)); }
+  grid.render();
+}
+
+grid.onShapeRotate = (index, degrees) => {
+  try { model.setShapes(grid.sheet, model.getShapes(grid.sheet).map((x, k) => (k === index ? { ...x, rotation: degrees } : x))); } catch (e) { showToast(String(e)); }
+  grid.render();
+};
+
+function rotateShape(delta: number): void {
+  const i = selectedShape();
+  if (i < 0) return;
+  const sh = model.getShapes(grid.sheet)[i];
+  grid.onShapeRotate(i, (((sh.rotation || 0) + delta) % 360 + 360) % 360);
+}
+
 /** Окно фигуры: текст, заливка, контур, шрифт; «Удалить». */
 function shapeDialog(index: number): void {
   const list = model.getShapes(grid.sheet);
@@ -1512,6 +1549,10 @@ function shapeDialog(index: number): void {
     <p><label>Размер шрифта: <input type="number" data-f="fs" min="6" max="96" style="width:60px"></label>
       <label style="margin-left:14px"><input type="checkbox" data-f="bold"> Жирный</label>
       <label style="margin-left:14px">Выравнивание: <select data-f="align"><option value="0">слева</option><option value="1">по центру</option><option value="2">справа</option></select></label></p>`}
+    <p><label>Поворот: <input type="number" data-f="rot" min="0" max="359" style="width:60px">°</label>
+      <button data-act="rot90" title="Повернуть на 90° по часовой стрелке">↻ 90°</button></p>
+    <p>Порядок: <button data-act="front">На передний план</button> <button data-act="forward">Вперёд</button>
+      <button data-act="backward">Назад</button> <button data-act="back">На задний план</button></p>
     <div class="rec-actions"><button data-act="delete" class="danger">Удалить</button><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
@@ -1521,6 +1562,7 @@ function shapeDialog(index: number): void {
   if (f('text')) f('text')!.value = sh.text;
   f('lw')!.value = String(sh.line_width || 1);
   if (f('flip')) f('flip')!.checked = sh.flip;
+  f('rot')!.value = String(sh.rotation || 0);
   if (f('fs')) f('fs')!.value = String(sh.font_size || 11);
   if (f('bold')) f('bold')!.checked = sh.bold;
   if (f('align')) f('align')!.value = String(sh.align);
@@ -1530,6 +1572,8 @@ function shapeDialog(index: number): void {
   box.addEventListener('click', (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
+    if (act === 'rot90') { f('rot')!.value = String(((Number(f('rot')!.value) || 0) + 90) % 360); return; }
+    if (['front', 'forward', 'backward', 'back'].includes(act)) { close(); grid.selObj = grid.images.length + grid.charts.length + index; orderShape(act as ShapeOrder); return; }
     try {
       if (act === 'delete') model.setShapes(grid.sheet, list.filter((_, k) => k !== index));
       if (act === 'ok') {
@@ -1541,6 +1585,7 @@ function shapeDialog(index: number): void {
           line_color: line ? (pick('line') || '#000000') : pick('line'),
           line_width: Math.max(1, Math.min(20, Math.round(Number(f('lw')!.value) || 1))),
           flip: f('flip') ? f('flip')!.checked : sh.flip,
+          rotation: (((Math.round(Number(f('rot')!.value)) || 0) % 360) + 360) % 360,
           text_color: line ? '' : pick('text'),
           font_size: f('fs') ? Math.max(0, Math.min(96, Number(f('fs')!.value) || 0)) : sh.font_size,
           bold: f('bold') ? f('bold')!.checked : sh.bold,
@@ -3272,6 +3317,12 @@ register(
     },
   })),
   { id: 'data.validation', label: 'Проверка данных', keywords: ['числа', 'даты', 'длина текста', 'ограничить ввод', 'validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
+  { id: 'shape.front', label: 'Фигура: на передний план', keywords: ['bring to front', 'порядок', 'наложение', 'наверх'], run: () => orderShape('front') },
+  { id: 'shape.forward', label: 'Фигура: на уровень вперёд', keywords: ['bring forward', 'вперёд'], run: () => orderShape('forward') },
+  { id: 'shape.backward', label: 'Фигура: на уровень назад', keywords: ['send backward', 'назад'], run: () => orderShape('backward') },
+  { id: 'shape.back', label: 'Фигура: на задний план', keywords: ['send to back', 'вниз', 'под всё'], run: () => orderShape('back') },
+  { id: 'shape.rotateRight', label: 'Фигура: повернуть на 90° по часовой', keywords: ['rotate', 'поворот', 'повернуть'], run: () => rotateShape(90) },
+  { id: 'shape.rotateLeft', label: 'Фигура: повернуть на 90° против часовой', keywords: ['rotate left', 'поворот'], run: () => rotateShape(-90) },
   { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
   { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
   { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },

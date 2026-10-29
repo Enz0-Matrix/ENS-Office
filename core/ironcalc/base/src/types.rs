@@ -408,6 +408,9 @@ pub struct Shape {
     /// A line or an arrow goes from the bottom left to the top right instead of top left to bottom right.
     #[serde(default)]
     pub flip: bool,
+    /// Clockwise rotation around the centre, degrees 0–359.
+    #[serde(default)]
+    pub rotation: i32,
     pub row: i32,
     pub column: i32,
     pub dx: i32,
