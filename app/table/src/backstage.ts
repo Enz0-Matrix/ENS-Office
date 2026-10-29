@@ -253,7 +253,7 @@ function render(section: Section): void {
         <input type="number" min="6" max="72" data-set="defaultFontSize" style="width:64px"></label>
       <label class="bs-row"><input type="checkbox" data-set="expandEditor"> Расширять поле ввода вправо по мере набора</label>
       <h2>Журнал изменений</h2>
-      <label class="bs-row">Ваше имя в журнале изменений книги
+      <label class="bs-row">Ваше имя (журнал изменений книги и подпись примечаний)
         <input data-set="userName" placeholder="как в системе" style="width:220px"></label>
       ${isDesktop ? `
       <h2>Сохранение и восстановление</h2>

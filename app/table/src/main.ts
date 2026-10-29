@@ -7,7 +7,7 @@ import { addRangePicker, initRangePicker } from './rangepick';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { showLog, userName } from './changelog';
+import { showLog } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
@@ -270,7 +270,8 @@ function commitEdit(dRow: number, dCol: number): void {
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
     }
   } catch (err) {
-    showToast(`Не удалось записать значение: ${err}`);
+    const text = String((err as Error)?.message ?? err).replace(/^Error: /, '');
+    showToast(/защищ/.test(text) ? 'Доступ к ячейке запрещён' : `Не удалось записать значение: ${text}`);
   }
   if (value.startsWith('=') && model.getCellType(s.sheet, s.row, s.column) === 16
     && ['#ОШИБКА!', '#ERROR!'].includes(model.getFormattedCellValue(s.sheet, s.row, s.column))) {
@@ -786,7 +787,7 @@ function updateStatus(): void {
       }
     }
   }
-  const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 10 });
+  const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 5 });
   const f = filterAt(grid.sheet, grid.sel.row, grid.sel.column);
   if (f && f.criteria.size && count <= 1) {
     let shown = 0;
@@ -1430,10 +1431,12 @@ function editComment(row: number, column: number): void {
   area.focus();
   const close = () => { overlay.hidden = true; focusGrid(); };
   box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
-  box.addEventListener('click', (e) => {
+  box.addEventListener('click', async (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
-    if (act === 'ok') model.setComment(grid.sheet, row, column, area.value, old?.author || userName(''));
+    if (act === 'ok') {
+      try { model.setComment(grid.sheet, row, column, area.value, old?.author || await desk.currentUser()); } catch (err) { showToast(String(err).replace(/^Error: /, '')); }
+    }
     if (act === 'delete') model.deleteComment(grid.sheet, row, column);
     if (act !== 'cancel') grid.render();
     close();
@@ -3040,7 +3043,7 @@ function showPicker(items: { label: string; hint?: string; run: () => void }[], 
 let toastTimer = 0;
 function showToast(text: string): void {
   const t = $('toast');
-  t.textContent = text;
+  t.textContent = text.replace(/^(Uncaught )?Error: /, "");
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => (t.hidden = true), 6000);
