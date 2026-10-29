@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog } from './changelog';
@@ -247,6 +247,11 @@ function commitEdit(dRow: number, dCol: number): void {
   const s = editCell;
   const value = activeValue();
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
+  const notice = value.startsWith('=') ? null : model.getValidationNotice(s.sheet, s.row, s.column, value);
+  if (notice && !confirm(`${notice.title ? `${notice.title}\n\n` : ''}${notice.message}\n\n${notice.style === 1 ? 'Продолжить?' : 'ОК — оставить значение, Отмена — править.'}`)) {
+    (editor.classList.contains('away') ? formula : editor).focus();
+    return;
+  }
   try {
     // «1 1/2» — число 1,5 с форматом «Дробный» (# ?/?), как в Excel; в ячейке «Общий» и только такой ввод.
     const frac = /^(-?)(\d+) +(\d+)\/(\d+)$/.exec(value.trim());
@@ -1182,7 +1187,33 @@ grid.onDropdown = (x, y) => setTimeout(() => {
   })), x, y);
 });
 
-/** «Проверка данных» → список: ячейки, источник (перечень или диапазон), пустые значения, стрелка, сообщение об ошибке. */
+const VAL_KINDS: [string, string][] = [
+  ['list', 'Список'], ['whole', 'Целое число'], ['decimal', 'Действительное число'], ['date', 'Дата'], ['time', 'Время'],
+  ['textLength', 'Длина текста'], ['custom', 'Другой (формула, только сохраняется)'],
+];
+const VAL_OPS: [string, string][] = [
+  ['between', 'между'], ['notBetween', 'вне'], ['equal', 'равно'], ['notEqual', 'не равно'], ['greaterThan', 'больше'],
+  ['lessThan', 'меньше'], ['greaterThanOrEqual', 'больше или равно'], ['lessThanOrEqual', 'меньше или равно'],
+];
+/** Дата ГГГГ-ММ-ДД ↔ порядковый номер дня (как в xlsx); время чч:мм ↔ доля суток. */
+const dateToSerial = (iso: string): string => {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const r = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(iso);
+  const [y, mo, da] = d ? [d[1], d[2], d[3]] : r ? [r[3], r[2], r[1]] : [undefined, undefined, undefined];
+  return y && mo && da ? String(Math.round(Date.UTC(+y, +mo - 1, +da) / 86400000) + 25569) : iso;
+};
+const serialToDate = (v: string): string => /^\d{5}$/.test(v) ? new Date((+v - 25569) * 86400000).toISOString().slice(0, 10) : v;
+const timeToFraction = (t: string): string => {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t);
+  return m ? String(+((+m[1] * 3600 + +m[2] * 60 + +(m[3] ?? 0)) / 86400).toFixed(10)) : t;
+};
+const fractionToTime = (v: string): string => {
+  if (!/^0?[.,]\d+$/.test(v) && v !== '0' && v !== '1') return v;
+  const sec = Math.round(parseFloat(v.replace(',', '.')) * 86400), p = (n: number) => String(n).padStart(2, '0');
+  return `${p(Math.floor(sec / 3600) % 24)}:${p(Math.floor(sec / 60) % 60)}`;
+};
+
+/** «Проверка данных»: список, числа, даты, время, длина текста; сообщения ввода и ошибки. */
 function validationDialog(): void {
   if (editing) commitEdit(0, 0);
   const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
@@ -1197,26 +1228,62 @@ function validationDialog(): void {
   });
   const found = list.find((v) => covers(v.sqref));
   const literal = (src: string) => src.startsWith('"') ? src.replace(/^"|"$/g, '').split(',').join('; ') : src.replace(/^=/, '');
+  const opts = (items: [string, string][]) => items.map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
   const overlay = $('recovery');
-  overlay.innerHTML = `<div class="modal"><h2>Раскрывающийся список</h2>
-    <p>Ячейка получит стрелку со списком; другое значение ввести нельзя.</p>
+  overlay.innerHTML = `<div class="modal"><h2>Проверка данных</h2>
     <p><label>Ячейки: <input data-f="cells" style="width:55%"></label></p>
-    <p><label>Источник: <input data-f="source" style="width:55%" placeholder="Да; Нет; Возможно  или  A1:A5"></label></p>
-    <p style="margin:0 0 8px;color:var(--muted)">Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).</p>
+    <p><label>Тип данных: <select data-f="kind">${opts(VAL_KINDS)}</select></label>
+      <label data-row="op" style="margin-left:10px"><select data-f="op">${opts(VAL_OPS)}</select></label></p>
+    <p data-row="source"><label><span data-l="source">Источник</span>: <input data-f="source" style="width:55%"></label></p>
+    <p data-row="source2"><label>Максимум: <input data-f="source2" style="width:55%"></label></p>
+    <p data-row="hint" style="margin:0 0 8px;color:var(--muted)"></p>
     <p><label><input type="checkbox" data-f="blank"> Игнорировать пустые ячейки</label>
-      <label style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
-    <p><label>Сообщение об ошибке: <input data-f="error" style="width:55%" placeholder="по умолчанию"></label></p>
-    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать список</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+      <label data-row="arrow" style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
+    <fieldset style="border:1px solid var(--border);margin:0 0 8px"><legend>Подсказка при выделении ячейки</legend>
+      <p><input data-f="ptitle" placeholder="Заголовок" style="width:90%"></p>
+      <p><input data-f="prompt" placeholder="Текст подсказки" style="width:90%"></p></fieldset>
+    <fieldset style="border:1px solid var(--border);margin:0 0 8px"><legend>Сообщение об ошибке</legend>
+      <p><label>Вид: <select data-f="style"><option value="0">Останов (запретить ввод)</option><option value="1">Предупреждение (спросить)</option><option value="2">Сообщение (предупредить)</option></select></label></p>
+      <p><input data-f="etitle" placeholder="Заголовок" style="width:90%"></p>
+      <p><input data-f="error" placeholder="Текст (по умолчанию стандартный)" style="width:90%"></p></fieldset>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать проверку</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
-  const f = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`)!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
+  const row = (n: string) => box.querySelector<HTMLElement>(`[data-row="${n}"]`)!;
+  const kindNow = () => f('kind').value;
+  const refresh = () => {
+    const k = kindNow(), isList = k === 'list', isCustom = k === 'custom';
+    row('op').hidden = isList || isCustom;
+    const two = !isList && !isCustom && ['between', 'notBetween'].includes(f('op').value);
+    row('source2').hidden = !two;
+    row('arrow').hidden = !isList;
+    box.querySelector('[data-l="source"]')!.textContent = isList ? 'Источник' : isCustom ? 'Формула' : two ? 'Минимум' : 'Значение';
+    row('source2').querySelector('label')!.firstChild!.textContent = 'Максимум: ';
+    row('hint').textContent = isList ? 'Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).'
+      : k === 'date' ? 'Дата ГГГГ-ММ-ДД, ДД.ММ.ГГГГ или ссылка на ячейку.' : k === 'time' ? 'Время чч:мм или ссылка на ячейку.'
+        : isCustom ? 'Формула сохраняется в файле и работает в Excel, но здесь пока не проверяется.' : 'Число или ссылка на ячейку (например, $A$1).';
+  };
+  f('kind').addEventListener('change', refresh);
+  f('op').addEventListener('change', refresh);
+  const k0 = found?.kind || 'list';
   f('cells').value = found?.sqref ?? sel;
-  f('source').value = found ? literal(found.source) : '';
+  f('kind').value = k0;
+  f('op').value = found?.op || 'between';
+  const show = (v: string) => k0 === 'date' ? serialToDate(v) : k0 === 'time' ? fractionToTime(v) : k0 === 'list' ? literal(v) : v;
+  f('source').value = found ? show(found.source) : '';
+  f('source2').value = found ? show(found.source2 ?? '') : '';
   f('blank').checked = found?.allow_blank ?? true;
   f('arrow').checked = !(found?.no_arrow ?? false);
   f('error').value = found?.error ?? '';
+  f('etitle').value = found?.error_title ?? '';
+  f('ptitle').value = found?.prompt_title ?? '';
+  f('prompt').value = found?.prompt ?? '';
+  f('style').value = String(found?.error_style ?? 0);
+  refresh();
   addRangePicker(f('cells'));
   addRangePicker(f('source'), 'sheet');
+  addRangePicker(f('source2'), 'sheet');
   f('source').focus();
   const close = () => { overlay.hidden = true; focusGrid(); };
   box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
@@ -1226,11 +1293,34 @@ function validationDialog(): void {
     try {
       if (act === 'delete' && found) model.setValidations(grid.sheet, list.filter((v) => v !== found));
       if (act === 'ok') {
+        const kind = kindNow();
         const text = f('source').value.trim();
-        const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
-        const source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
-        if (!text) { showToast('Укажите значения списка или диапазон.'); return; }
-        const next = { sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: !f('arrow').checked, error: f('error').value.trim() };
+        if (!text) { showToast(kind === 'list' ? 'Укажите значения списка или диапазон.' : 'Укажите значение.'); return; }
+        const norm = (raw: string): string => {
+          const t = raw.trim();
+          if (kind === 'date') return dateToSerial(t);
+          if (kind === 'time') return timeToFraction(t);
+          if (kind === 'whole' || kind === 'decimal' || kind === 'textLength') return t.replace(',', '.');
+          return t;
+        };
+        let source: string, source2 = '';
+        if (kind === 'list') {
+          const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
+          source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
+        } else {
+          source = kind === 'custom' ? text.replace(/^=/, '') : norm(text);
+          if (kind !== 'custom' && ['between', 'notBetween'].includes(f('op').value)) {
+            source2 = norm(f('source2').value);
+            if (!source2) { showToast('Укажите максимум.'); return; }
+          }
+        }
+        const plain = kind === 'list' || kind === 'custom';
+        const next: Validation = {
+          sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: kind === 'list' && !f('arrow').checked,
+          error: f('error').value.trim(), kind: kind === 'list' ? '' : kind, op: plain ? '' : (f('op').value === 'between' ? '' : f('op').value), source2,
+          prompt_title: f('ptitle').value.trim(), prompt: f('prompt').value.trim(), error_title: f('etitle').value.trim(), error_style: Number(f('style').value),
+        };
+        if (!plain && f('op').value === 'between') next.op = '';
         model.setValidations(grid.sheet, found ? list.map((v) => (v === found ? next : v)) : [...list, next]);
       }
     } catch (err) { showToast(String(err)); return; }
@@ -1615,6 +1705,25 @@ grid.onCellHover = (row, column, x, y) => {
   commentTip.hidden = false;
 };
 document.addEventListener('mouseleave', () => { commentTip.hidden = true; tipCell = ''; });
+
+/** Подсказка проверки данных у выделенной ячейки. */
+const valTip = Object.assign(document.createElement('div'), { className: 'comment-tip', hidden: true });
+document.body.appendChild(valTip);
+function showValidationPrompt(): void {
+  valTip.hidden = true;
+  if (editing) return;
+  let p: { title: string; message: string } | null = null;
+  try { p = model.getValidationPrompt(grid.sheet, grid.sel.row, grid.sel.column); } catch { /* нет подсказки */ }
+  if (!p) return;
+  valTip.textContent = '';
+  if (p.title) valTip.append(Object.assign(document.createElement('b'), { textContent: p.title }), document.createElement('br'));
+  valTip.append(p.message);
+  const r = grid.activeRect(), host = grid.scroller.getBoundingClientRect();
+  valTip.style.left = `${Math.min(host.left + r.x + 4, window.innerWidth - 280)}px`;
+  valTip.style.top = `${Math.min(host.top + r.y + r.h + 4, window.innerHeight - 100)}px`;
+  valTip.hidden = false;
+}
+document.addEventListener('keydown', () => { valTip.hidden = true; }, true);
 
 /** Разрыв страницы выше и левее активной ячейки (как в Excel). */
 function pageBreak(on: boolean): void {
@@ -2996,7 +3105,7 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
-  { id: 'data.validation', label: 'Раскрывающийся список (проверка данных)', keywords: ['validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
+  { id: 'data.validation', label: 'Проверка данных', keywords: ['числа', 'даты', 'длина текста', 'ограничить ввод', 'validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
   { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
   { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
   { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },
@@ -3439,7 +3548,7 @@ function syncNumberFormat(): void {
   select.value = fmt;
 }
 
-grid.onSelect = () => { updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
+grid.onSelect = () => { showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
 grid.scroller.addEventListener('focus', () => { if (!editing) focusGrid(); });
