@@ -401,11 +401,13 @@ footer { display: flex; flex-direction: column; }
 .changes-panel { position: fixed; right: 16px; bottom: 40px; z-index: 60; width: min(420px, calc(100vw - 32px)); max-height: 60vh;
   display: flex; flex-direction: column; background: var(--panel, #fff); color: var(--text); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.18); font-size: 13px; }
-.chg-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
+.chg-head { flex-wrap: wrap; gap: 4px; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
 .chg-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
 .chg-intro { margin: 0 12px 6px; color: var(--muted); }
 .chg-list { list-style: none; margin: 0; padding: 0 12px 10px; overflow: auto; }
 .chg-list li { padding: 6px 0; border-top: 1px solid var(--border); }
+.chg-head button, .chg-mark { border: 0; background: none; color: var(--accent-dark, #2f7d5f); cursor: pointer; font: inherit; font-size: 12px; margin-left: 8px; text-decoration: underline dotted; }
+.chg-head .chg-close { font-size: 14px; color: inherit; text-decoration: none; }
 .chg-who { color: var(--muted); margin-bottom: 2px; }
 .chg-area { border: 0; background: none; padding: 0 2px; color: var(--accent-dark, #2f7d5f); cursor: pointer; text-decoration: underline dotted; font: inherit; }
 .chg-note { color: var(--text); }

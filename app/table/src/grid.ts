@@ -156,6 +156,9 @@ export class Grid {
   extraRanges: { r1: number; c1: number; r2: number; c2: number }[] = [];
   /** Идёт Ctrl+щелчок: новое выделение добавляется к прежним, а не заменяет их. */
   private ctrlPick = false;
+  /** Подсвеченные области (журнал изменений, сравнение версий): лист, строки и столбцы. */
+  private areaMarks: { sheet: number; r1: number; c1: number; r2: number; c2: number }[] = [];
+  setMarks(list: { sheet: number; r1: number; c1: number; r2: number; c2: number }[]): void { this.areaMarks = list; this.render(); }
   focusCell: FocusCellOptions = { enabled: false, mode: 'shade', extent: 'toCell', color: '#2b7a6b' };
   theme: GridTheme = { ...CLASSIC_GRID };
   /** Окно приложения в фокусе (влияет только на яркость выделения). */
@@ -1381,6 +1384,22 @@ export class Grid {
     }
     this.pinModeRow = this.pinModeCol = false;
     if (this.focusCell.enabled) this.drawFocusCell(r0, rN, c0, cN);
+    if (this.areaMarks.length) {
+      ctx.save();
+      for (const m of this.areaMarks) {
+        if (m.sheet !== this.sheet) continue;
+        const ra = Math.max(m.r1, r0), rb = Math.min(m.r2, rN), ca = Math.max(m.c1, c0), cb = Math.min(m.c2, cN);
+        if (ra > rb || ca > cb) continue;
+        const x = this.sx(ca), y = this.sy(ra);
+        const w = this.sx(cb) + this.width(cb) - x, h = this.sy(rb) + this.height(rb) - y;
+        ctx.fillStyle = 'rgba(255, 196, 0, 0.30)';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(214, 140, 0, 0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x + 0.75, y + 0.75, w - 1.5, h - 1.5);
+      }
+      ctx.restore();
+    }
 
     // Активная ячейка: толстая рамка; в неактивном окне — бледнее.
     const border = this.windowActive ? this.theme.activeBorder : this.theme.activeBorderInactive;

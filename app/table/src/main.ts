@@ -5,10 +5,10 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { showLog } from './changelog';
+import { diffBooks, showDiff, showLog, type ChangesHost } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
@@ -17,7 +17,7 @@ import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
 import { THEMES, allThemes, applyTheme, setHiddenThemes, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
 import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
-import { copyText, openTarget, pickOpen, readText } from './platform';
+import { copyText, openTarget, pickOpen, readFile, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
 import { FUNCTION_CATEGORIES } from './funclib';
 import { openSymbols } from './symbols';
@@ -575,6 +575,35 @@ function goTo(ref: Ref): void {
   }
   focusGrid();
 }
+
+/** Подсветка областей на листах: «A1:C5», «5:7» (строки), «B:D» (столбцы). */
+function markAreas(items: [string, string][] | null): void {
+  const props = model.getWorksheetsProperties();
+  const list: { sheet: number; r1: number; c1: number; r2: number; c2: number }[] = [];
+  for (const [name, areas] of items ?? []) {
+    const sheet = props.findIndex((p) => p.name === name);
+    if (sheet < 0) continue;
+    for (const a of areas.split(' ').filter(Boolean).slice(0, 2000)) {
+      const rows = /^(\d+):(\d+)$/.exec(a), cols = /^([A-Z]+):([A-Z]+)$/.exec(a);
+      if (rows) list.push({ sheet, r1: +rows[1], c1: 1, r2: +rows[2], c2: 16_384 });
+      else if (cols) list.push({ sheet, r1: 1, c1: columnNumber(cols[1]), r2: 1_048_576, c2: columnNumber(cols[2]) });
+      else { const r = refsIn(a)[0]; if (r) list.push({ sheet, r1: r.row, c1: r.column, r2: r.row2 ?? r.row, c2: r.column2 ?? r.column }); }
+    }
+  }
+  grid.setMarks(list);
+}
+
+/** «Сравнить с другой версией»: выбрать файл и показать, где ячейки отличаются. */
+async function compareWithFile(): Promise<void> {
+  const path = await pickOpen();
+  if (!path) return;
+  try {
+    const other = fromBytes(await readFile(path));
+    showDiff(changesHost, path.replace(/^.*[\\/]/, ''), diffBooks(model, other));
+  } catch (e) { showToast(`Не удалось открыть файл для сравнения: ${(e as Error).message ?? e}`); }
+}
+
+const changesHost: ChangesHost = { goTo: (s, a) => goToArea(s, a), mark: markAreas, compare: () => void compareWithFile() };
 
 /** Переход к листу и области из журнала изменений: «A1:C5», «5:7» (строки), «B:D» (столбцы). */
 function goToArea(sheet: string, area: string): void {
@@ -3912,7 +3941,7 @@ initBackstage({
     try { model.setPrintTitles(grid.sheet, [r1, r2, c1, c2]); } catch (e) { return String(e); }
     return '';
   },
-  showChangeLog: () => showLog(model, { goTo: goToArea }),
+  showChangeLog: () => showLog(model, changesHost),
   printOptions: () => { try { return fromSaved(model.getPageSetup(grid.sheet)); } catch { return { ...DEFAULT_PRINT }; } },
   savePrintOptions: (opts) => { try { model.setPageSetup(grid.sheet, toSaved(opts)); } catch { /* старый движок */ } },
   print: (opts) => {
