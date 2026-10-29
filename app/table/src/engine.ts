@@ -223,6 +223,8 @@ export interface Model {
   setSelectedCell(row: number, column: number): void;
   setSelectedRange(startRow: number, startColumn: number, endRow: number, endColumn: number): void;
   copyToClipboard(): EngineClipboard;
+  /** Вставка ячеек, скопированных в другой книге (значения, формулы, стили, ссылки). */
+  pasteFromOtherBook(sourceRange: [number, number, number, number], data: unknown): void;
   pasteFromClipboard(sourceSheet: number, sourceRange: [number, number, number, number], data: unknown, isCut: boolean): void;
   autoFillRows(source: Area, toRow: number): void;
   autoFillColumns(source: Area, toColumn: number): void;

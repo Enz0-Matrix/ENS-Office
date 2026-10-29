@@ -2772,6 +2772,7 @@ function takeClip(cut: boolean): string {
     : fullRows ? { kind: 'row' as const, start: s.r1, count: s.r2 - s.r1 + 1 }
     : { kind: 'column' as const, start: s.c1, count: s.c2 - s.c1 + 1 };
   clip = { data: c.data, sheet: grid.sheet, range: c.range, text, cut, lines };
+  shareClip(clip);
   grid.clipRange = { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, c.range[2]), c2: Math.min(s.c2, c.range[3]), sheet: grid.sheet };
   grid.render();
   return text;
@@ -2794,6 +2795,23 @@ function insertCutLines(before: number): void {
   });
   dropClip();
   if (ok) grid.selectLines(L.kind, L.start + delta, L.start + delta + L.count - 1);
+}
+
+/** Другое окно (другая книга) той же программы видит скопированное через общее хранилище. */
+const SHARED_CLIP = 'ens-clip';
+function shareClip(c: Clip): void {
+  try {
+    const json = JSON.stringify({ text: c.text, data: c.data, range: c.range }, (_k, v) => (v instanceof Map ? { __map: [...v] } : v));
+    if (json.length < 4_000_000) localStorage.setItem(SHARED_CLIP, json); else localStorage.removeItem(SHARED_CLIP);
+  } catch { /* общий буфер недоступен: останется текст */ }
+}
+function foreignClip(text: string): { data: unknown; range: [number, number, number, number] } | null {
+  try {
+    const raw = localStorage.getItem(SHARED_CLIP);
+    if (!raw) return null;
+    const c = JSON.parse(raw, (_k, v) => (v && typeof v === 'object' && Array.isArray(v.__map) ? new Map(v.__map) : v)) as { text: string; data: unknown; range: [number, number, number, number] };
+    return sameText(text, c.text) ? c : null;
+  } catch { return null; }
 }
 
 function dropClip(): void {
@@ -2842,7 +2860,17 @@ function pasteHere(text: string): void {
     if (c.cut) dropClip(); // вырезанное вставляется один раз
   } else {
     if (clip) dropClip();
-    pasteText(text);
+    const other = foreignClip(text);
+    if (other) {
+      // Скопировано в другой книге: значения, формулы и оформление переносятся, как в Excel.
+      const [r1, c1, r2, c2] = other.range;
+      const area = selectionArea();
+      try {
+        model.setSelectedCell(area.row, area.column);
+        model.pasteFromOtherBook(other.range, other.data);
+        grid.selectRange(area.row, area.column, area.row + r2 - r1, area.column + c2 - c1);
+      } catch (e) { showToast(`Не удалось вставить: ${e}`); }
+    } else pasteText(text);
   }
   grid.render();
   updateFormulaBar();

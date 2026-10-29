@@ -733,3 +733,24 @@ fn undo_cut_paste_removes_style_from_target() {
         "H3 should have no style after undo (it was empty before the paste)"
     );
 }
+
+// ENS-Office: cells copied in one workbook keep their formatting when pasted into another.
+#[test]
+fn test_ens_paste_from_other_book() {
+    let mut a = new_empty_user_model();
+    a.set_user_input(0, 1, 1, "42").unwrap();
+    a.update_range_style(&Area { sheet: 0, row: 1, column: 1, width: 1, height: 1 }, "font.b", "true").unwrap();
+    a.update_range_style(&Area { sheet: 0, row: 1, column: 1, width: 1, height: 1 }, "fill.bg_color", "#FFFF00").unwrap();
+    a.set_selected_cell(1, 1).unwrap();
+    a.set_selected_range(1, 1, 1, 1).unwrap();
+    let clip = a.copy_to_clipboard().unwrap();
+    let mut b = new_empty_user_model();
+    b.set_selected_cell(3, 2).unwrap();
+    b.paste_from_other_book(clip.range, &clip.data).unwrap();
+    assert_eq!(b.get_formatted_cell_value(0, 3, 2).unwrap(), "42");
+    let st = b.get_cell_style(0, 3, 2).unwrap();
+    assert!(st.font.b);
+    assert_eq!(st.fill.color, Color::Rgb("#FFFF00".to_string()));
+    b.undo().unwrap();
+    assert_eq!(b.get_formatted_cell_value(0, 3, 2).unwrap(), "");
+}

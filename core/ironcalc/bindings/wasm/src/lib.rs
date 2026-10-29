@@ -1610,6 +1610,20 @@ impl Model {
             .map_err(|e| to_js_error(e.to_string()))
     }
 
+    /// ENS-Office: paste cells copied in another workbook (values, formulas, styles, links).
+    #[wasm_bindgen(js_name = "pasteFromOtherBook")]
+    pub fn paste_from_other_book(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "[number, number, number, number]")] source_range: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "ClipboardData")] clipboard: JsValue,
+    ) -> Result<(), JsError> {
+        let source_range: (i32, i32, i32, i32) =
+            serde_wasm_bindgen::from_value(source_range).map_err(|e| to_js_error(e.to_string()))?;
+        let clipboard: ClipboardData =
+            serde_wasm_bindgen::from_value(clipboard).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.paste_from_other_book(source_range, &clipboard).map_err(|e| to_js_error(e.to_string()))
+    }
+
     #[wasm_bindgen(js_name = "pasteCsvText")]
     pub fn paste_csv_string(
         &mut self,
