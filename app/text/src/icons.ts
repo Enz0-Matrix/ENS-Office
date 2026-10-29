@@ -1,4 +1,4 @@
-// Значки ENS-Tekst: Fluent UI System Icons (MIT). Добавляются к набору ENS-Table (ICONS).
+// Значки ENS-Text: Fluent UI System Icons (MIT). Добавляются к набору ENS-Table (ICONS).
 
 import { ICONS } from '../../table/src/icons';
 import bullets20 from '@fluentui/svg-icons/icons/text_bullet_list_ltr_20_regular.svg?raw';

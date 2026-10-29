@@ -1,4 +1,4 @@
-"""Картинки установщика ENS-Tekst (NSIS): те же, что у ENS-Table, но в синих тонах.
+"""Картинки установщика ENS-Text (NSIS): те же, что у ENS-Table, но в синих тонах.
 Запуск: python3 make_images.py (после `tauri icon`: нужен icons/64x64.png)."""
 
 import importlib.util

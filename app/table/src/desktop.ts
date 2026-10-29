@@ -193,7 +193,7 @@ export async function openPath(path: string): Promise<void> {
     if (info.kind !== 'xlsx' && info.kind !== 'xlsm') {
       const what = KIND_NAMES[info.kind] ?? 'файл неизвестного формата';
       host.toast(`«${info.name}» — это ${what}, а не книга Excel. ENS-Table открывает .xlsx и .xlsm` +
-        (info.kind === 'docx' ? '; документы Word будет открывать ENS-Tekst.' : '.'));
+        (info.kind === 'docx' ? '; документы Word будет открывать ENS-Text.' : '.'));
       return;
     }
     const bytes = await readFile(path);

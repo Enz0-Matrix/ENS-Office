@@ -370,7 +370,7 @@ export const TABS: RibbonTab[] = [
 ];
 
 /** Рисует ленту и строку вкладок. Возвращает функцию обновления состояний кнопок. */
-/** tabs — свои вкладки (ENS-Tekst); по умолчанию вкладки ENS-Table. */
+/** tabs — свои вкладки (ENS-Text); по умолчанию вкладки ENS-Table. */
 export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: () => void, tabs: RibbonTab[] = TABS): () => void {
   let active = 'home';
   const file = document.createElement('button');

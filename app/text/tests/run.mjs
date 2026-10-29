@@ -1,4 +1,4 @@
-// Проверка ENS-Tekst в Chromium (Playwright): ввод, форматирование, списки, таблицы, изображения,
+// Проверка ENS-Text в Chromium (Playwright): ввод, форматирование, списки, таблицы, изображения,
 // docx туда и обратно, восстановление, поиск. Запуск: npm test (Playwright должен быть доступен).
 import { spawn, execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -58,7 +58,7 @@ async function test(name, f) {
 }
 const fixture = (n) => [...readFileSync(join(here, 'fixtures', n))];
 
-console.log('ENS-Tekst');
+console.log('ENS-Text');
 
 await test('ввод по-русски, Enter, отмена и повтор', async () => {
   const p = await page();

@@ -1,4 +1,4 @@
-// Проверка настольной версии ENS-Tekst на помощнике для РЕД ОС 7 (app/text/redos7): настоящий помощник,
+// Проверка настольной версии ENS-Text на помощнике для РЕД ОС 7 (app/text/redos7): настоящий помощник,
 // настоящий интерфейс в Chromium. Окно браузера и окно выбора файла (zenity) подменяются сценариями.
 // Оболочку Tauri здесь не собрать (нужен WebKitGTK) — её собирает CI; общие части (files.rs, recovery.rs,
 // интерфейс desktop.ts) проверяются здесь. Запуск: npm run test:desktop
@@ -25,7 +25,7 @@ const fakebin = join(work, 'bin');
 mkdirSync(docs);
 mkdirSync(fakebin);
 
-console.log('ENS-Tekst, настоящие файлы (помощник РЕД ОС 7)');
+console.log('ENS-Text, настоящие файлы (помощник РЕД ОС 7)');
 execSync(`node node_modules/vite/bin/vite.js build --mode test --outDir ${ui}`, { cwd: root, stdio: 'pipe' });
 execSync('cargo build --quiet', { cwd: join(root, 'redos7'), stdio: 'inherit' });
 const helper = join(root, 'redos7', 'target', 'debug', 'ens-text-r7');

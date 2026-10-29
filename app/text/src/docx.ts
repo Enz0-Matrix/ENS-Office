@@ -657,7 +657,7 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
   return assemble(entries);
 }
 
-export interface Imported { doc: PMNode; meta: DocMeta; /** История версий ENS-Tekst из файла (сжатая строка) или ''. */ history: string }
+export interface Imported { doc: PMNode; meta: DocMeta; /** История версий ENS-Text из файла (сжатая строка) или ''. */ history: string }
 
 export function importDocx(bytes: Uint8Array): Imported {
   let files: Record<string, Uint8Array>;
@@ -751,7 +751,8 @@ export function importDocx(bytes: Uint8Array): Imported {
   return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy }, history: readHistoryPart(files) };
 }
 
-const HISTORY_NS = 'urn:ens-office:tekst:history';
+const HISTORY_NS = 'urn:ens-office:text:history';
+const HISTORY_NS_OLD = 'urn:ens-office:tekst:history';
 
 /** История версий лежит в customXml: Word такие части при сохранении оставляет. */
 function readHistoryPart(files: Record<string, Uint8Array>): string {
@@ -759,7 +760,7 @@ function readHistoryPart(files: Record<string, Uint8Array>): string {
     if (!/^customXml\/item\d+\.xml$/.test(path) || bytes.length < 40) continue;
     try {
       const root = parseXml(strFromU8(bytes)).documentElement;
-      if (root.localName === 'history' && root.namespaceURI === HISTORY_NS) return root.textContent ?? '';
+      if (root.localName === 'history' && (root.namespaceURI === HISTORY_NS || root.namespaceURI === HISTORY_NS_OLD)) return root.textContent ?? '';
     } catch { /* чужая часть — пропускаем */ }
   }
   return '';
@@ -1120,8 +1121,8 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     'word/styles.xml': strToU8(stylesXml(meta)),
     'word/settings.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="${NS.w}"><w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`),
     'docProps/core.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
-      `<dc:title>${esc(title)}</dc:title><dc:creator>ENS-Tekst</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
-    'docProps/app.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>ENS-Tekst</Application></Properties>'),
+      `<dc:title>${esc(title)}</dc:title><dc:creator>ENS-Text</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
+    'docProps/app.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>ENS-Text</Application></Properties>'),
   };
   if (ctx.nums.length) {
     files['word/numbering.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="${NS.w}">${ctx.nums.map((n) => n.abstract).join('')}${ctx.nums.map((n) => n.num).join('')}</w:numbering>`);

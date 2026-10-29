@@ -1,4 +1,4 @@
-// Схема документа ENS-Tekst (ProseMirror). Единицы: кегль и отступы — пункты (pt), как в docx;
+// Схема документа ENS-Text (ProseMirror). Единицы: кегль и отступы — пункты (pt), как в docx;
 // размеры изображений и ширины столбцов таблиц — пиксели CSS (96 на дюйм).
 
 import { Schema, type DOMOutputSpec, type MarkSpec, type Node as PMNode, type NodeSpec } from 'prosemirror-model';

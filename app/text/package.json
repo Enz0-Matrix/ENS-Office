@@ -2,7 +2,7 @@
   "name": "ens-text",
   "private": true,
   "version": "0.0.1",
-  "description": "ENS-Tekst — текстовый редактор ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
+  "description": "ENS-Text — текстовый редактор ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
   "type": "module",
   "scripts": {
     "dev": "vite --port 5174 --strictPort",

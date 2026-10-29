@@ -1,4 +1,4 @@
-// ENS-Tekst: текстовый редактор ENS-Office. Лента, команды, файлы, восстановление.
+// ENS-Text: текстовый редактор ENS-Office. Лента, команды, файлы, восстановление.
 
 import '../../table/src/styles.css';
 import './text.css';
@@ -122,7 +122,7 @@ function buildDocx(name: string): Uint8Array {
   if (base && JSON.stringify(base.meta) !== JSON.stringify(v.meta)) ch.notes.push('изменены параметры страницы или колонтитулы');
   const last = hist.log[hist.log.length - 1];
   const changed = ch.added || ch.removed || ch.changed || ch.notes.length;
-  if (changed || !last) V.addLog(hist, { u: me(), t: Date.now(), app: `ENS-Tekst ${APP_VERSION}`, kind: 'save', ch, h: hash });
+  if (changed || !last) V.addLog(hist, { u: me(), t: Date.now(), app: `ENS-Text ${APP_VERSION}`, kind: 'save', ch, h: hash });
   else { last.h = hash; last.t = Date.now(); }
   histRev++;
   return exportDocx(view.state.doc, meta, name, histText());
@@ -175,7 +175,7 @@ function adoptHistory(raw: string, info: { key: string; mtime?: number }): { tex
   const fresh = hist.log.filter((e) => e.kind === 'save' && e.t > since && e.u !== me());
   if (outside) {
     return {
-      text: 'Файл менялся в другой программе после последнего сохранения в ENS-Tekst. Прежняя версия сохранена в истории.',
+      text: 'Файл менялся в другой программе после последнего сохранения в ENS-Text. Прежняя версия сохранена в истории.',
       buttons: [{ label: 'Что изменилось', run: () => showHistory('versions', outside!.id, 'previous') }],
     };
   }
@@ -986,8 +986,8 @@ function updateUi(): void {
   if (dirty && !dirtySince) dirtySince = Date.now();
   if (!dirty) dirtySince = 0;
   updateSavedStatus();
-  $('doc-name').textContent = `${docName}${dirty ? ' •' : ''} — ENS-Tekst`;
-  document.title = `${docName}${dirty ? '*' : ''} — ENS-Tekst`;
+  $('doc-name').textContent = `${docName}${dirty ? ' •' : ''} — ENS-Text`;
+  document.title = `${docName}${dirty ? '*' : ''} — ENS-Text`;
   const canUndo = undoDepth(active().state) > 0;
   const canRedo = redoDepth(active().state) > 0;
   ($('qa-undo') as HTMLButtonElement).disabled = !canUndo;
@@ -1457,7 +1457,7 @@ function fileMenu(): void {
 function about(): void {
   dialog((box, close) => {
     box.append(
-      el('h2', { textContent: `ENS-Tekst ${APP_VERSION}` }),
+      el('h2', { textContent: `ENS-Text ${APP_VERSION}` }),
       el('p', { textContent: 'Текстовый редактор ENS-Office. Работает без интернета. Формат файлов — .docx.' }),
       el('p', { textContent: 'Версия 0.1 — первый этап: абзацы, заголовки, списки, таблицы, изображения, ссылки, страницы, печать. Колонтитулы, сноски и совместная работа — в планах.' }),
       el('div', { class: 'dlg-actions' }, el('button', { class: 'primary', textContent: 'Закрыть', onclick: close })),

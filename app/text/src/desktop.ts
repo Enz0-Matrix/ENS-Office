@@ -1,4 +1,4 @@
-// ENS-Tekst в настольной оболочке (Tauri: Windows, Linux) и в версии для РЕД ОС 7 (окно Chromium + помощник):
+// ENS-Text в настольной оболочке (Tauri: Windows, Linux) и в версии для РЕД ОС 7 (окно Chromium + помощник):
 // настоящие файлы, атомарное сохранение (ADR-005), восстановление после сбоя, «Открыть с помощью»,
 // вопрос «Сохранить?» при закрытии. В браузере всего этого нет: там main.ts скачивает копию.
 
@@ -63,7 +63,7 @@ const KIND_NAMES: Record<string, string> = {
 export async function start(h: Host): Promise<void> {
   host = h;
   setDialogProfile({
-    app: 'ENS-Tekst', open: 'Открыть документ',
+    app: 'ENS-Text', open: 'Открыть документ',
     filters: [{ name: 'Документы Word', extensions: ['docx'] }, { name: 'Все файлы', extensions: ['*'] }],
   });
   setInterval(() => void recovery.heartbeat().catch(() => {}), 30_000);
@@ -109,7 +109,7 @@ export async function openPath(path: string): Promise<void> {
     const info = await inspectFile(path);
     if (info.kind !== 'docx') {
       const what = KIND_NAMES[info.kind] ?? 'файл неизвестного формата';
-      toast(`«${info.name}» — это ${what}, а не документ Word. ENS-Tekst открывает .docx` +
+      toast(`«${info.name}» — это ${what}, а не документ Word. ENS-Text открывает .docx` +
         (info.kind === 'xlsx' || info.kind === 'xlsm' ? '; книги Excel открывает ENS-Table.' : '.'));
       return;
     }
@@ -161,7 +161,7 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   // ADR-005: документ с потерями при открытии поверх исходного файла не пишем — потерянное не вернуть.
   if (file.lossy.length && path === file.lossySource) {
     const c = await choose('Поверх этого файла сохранять нельзя',
-      `В «${baseName(path)}» есть то, что ENS-Tekst пока не умеет сохранять: ${file.lossy.join('; ')}. Если записать поверх, это пропадёт из файла. Сохраните копию — исходный файл останется как был.`,
+      `В «${baseName(path)}» есть то, что ENS-Text пока не умеет сохранять: ${file.lossy.join('; ')}. Если записать поверх, это пропадёт из файла. Сохраните копию — исходный файл останется как был.`,
       [{ id: 'copy', label: 'Сохранить как…', primary: true }, { id: 'no', label: 'Отмена' }]);
     return c === 'copy' ? saveAs() : false;
   }

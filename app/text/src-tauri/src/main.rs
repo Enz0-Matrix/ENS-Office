@@ -7,7 +7,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         eprintln!(
-            "ENS-Tekst: нет графического экрана.
+            "ENS-Text: нет графического экрана.
              Запустите программу на рабочем столе или подключитесь к компьютеру
              с пробросом окон: ssh -X пользователь@адрес (на сервере нужны
              X11Forwarding yes в /etc/ssh/sshd_config и пакет xorg-x11-xauth)."

@@ -1,18 +1,18 @@
-# ENS-Tekst для РЕД ОС 7 («Муром»): окно Chromium в режиме приложения +
+# ENS-Text для РЕД ОС 7 («Муром»): окно Chromium в режиме приложения +
 # помощник ens-text-r7 (файлы, сохранение на место, восстановление).
 # Собирается в CI: rpmbuild -bb --define "_ensroot <каталог с файлами>" …
 
 Name:           ens-text-r7
 Version:        %{ens_version}
 Release:        1
-Summary:        ENS-Tekst — текстовый редактор ENS-Office для РЕД ОС 7
+Summary:        ENS-Text — текстовый редактор ENS-Office для РЕД ОС 7
 License:        Proprietary
 URL:            https://github.com/Enz0-Matrix/ENS-Office
 BuildArch:      x86_64
 AutoReqProv:    no
 
 %description
-ENS-Tekst — текстовый редактор ENS-Office, совместимый с Microsoft Word (docx).
+ENS-Text — текстовый редактор ENS-Office, совместимый с Microsoft Word (docx).
 Версия для РЕД ОС 7: открывается своим окном (на основе установленного
 Chromium), сохраняет файлы на место и восстанавливает документы после сбоя.
 Работает без интернета.

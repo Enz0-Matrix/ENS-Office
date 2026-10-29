@@ -29,7 +29,7 @@ export interface LogEntry {
   /** Кто. */
   u: string;
   t: number;
-  /** Чем: «ENS-Tekst 0.1.0» или «другая программа». */
+  /** Чем: «ENS-Text 0.1.0» или «другая программа». */
   app: string;
   kind: 'save' | 'outside';
   /** Что изменилось по сравнению с предыдущей записью. */

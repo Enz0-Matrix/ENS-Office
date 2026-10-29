@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ENS-Tekst",
+  "productName": "ENS-Text",
   "version": "0.0.1",
   "identifier": "ru.ens-office.text",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ENS-Tekst",
+        "title": "ENS-Text",
         "width": 1280,
         "height": 820,
         "minWidth": 640,
@@ -38,7 +38,7 @@
     ],
     "publisher": "ENS-Office",
     "copyright": "© Н. Едренников, ENS-Office",
-    "shortDescription": "ENS-Tekst — текстовый редактор ENS-Office",
+    "shortDescription": "ENS-Text — текстовый редактор ENS-Office",
     "fileAssociations": [
       {
         "ext": [

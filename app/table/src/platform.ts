@@ -72,7 +72,7 @@ const XLSX_FILTER = [
   { name: 'Все файлы', extensions: ['*'] },
 ];
 
-/** Названия окон и типы файлов приложения. ENS-Tekst задаёт свои через setDialogProfile. */
+/** Названия окон и типы файлов приложения. ENS-Text задаёт свои через setDialogProfile. */
 let profile = { app: 'ENS-Table', open: 'Открыть книгу', filters: XLSX_FILTER };
 export function setDialogProfile(p: { app: string; open: string; filters: { name: string; extensions: string[] }[] }): void {
   profile = p;
@@ -105,7 +105,7 @@ export const openTarget = (target: string) => call<void>('open_target', { target
 export const osUserName = () => (isDesktop ? call<string>('user_name').catch(() => '') : Promise.resolve(''));
 export const startupFile = () => (isTauri ? invoke<string | null>('startup_file') : Promise.resolve(null));
 
-/** Копии на диске (только ENS-Tekst): предыдущие версии файлов и документы, закрытые без сохранения. */
+/** Копии на диске (только ENS-Text): предыдущие версии файлов и документы, закрытые без сохранения. */
 export interface HistoryEntry { kind: 'backup' | 'discarded'; name: string; path: string; ms: number; size: number }
 export const historyStore = (kind: HistoryEntry['kind'], name: string, bytes: Uint8Array) =>
   call<string>('history_store', bytes, { kind: encodeURIComponent(kind), name: encodeURIComponent(name) });

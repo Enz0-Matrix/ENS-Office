@@ -2,14 +2,14 @@
 # Готовые сборки — во вкладке Actions → запуск → Artifacts:
 #   ens-table-linux   — AppImage (без установки), rpm (РЕД ОС, Альт, Fedora), deb
 #   ens-table-windows — установщик NSIS и exe
-#   ens-text-linux / ens-text-windows — то же для ENS-Tekst (плюс ens-text-r7 для РЕД ОС 7)
+#   ens-text-linux / ens-text-windows — то же для ENS-Text (плюс ens-text-r7 для РЕД ОС 7)
 name: CI
 
 on:
   # Ветки проверяются через pull request; push — только для main.
   push:
     branches: [main]
-    # Тег vX.Y.Z — выпуск ENS-Table, тег text-vX.Y.Z — выпуск ENS-Tekst (см. задания release и release-text).
+    # Тег vX.Y.Z — выпуск ENS-Table, тег text-vX.Y.Z — выпуск ENS-Text (см. задания release и release-text).
     tags: ['v*', 'text-v*']
   pull_request:
   workflow_dispatch:
@@ -139,7 +139,7 @@ jobs:
           retention-days: 30
 
   text:
-    name: ENS-Tekst (типы, сборка, тесты)
+    name: ENS-Text (типы, сборка, тесты)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +174,7 @@ jobs:
           workspaces: |
             app/text/redos7 -> target
             app/table/redos7 -> target
-      - name: "Помощник РЕД ОС 7 (ENS-Table и ENS-Tekst) собирается"
+      - name: "Помощник РЕД ОС 7 (ENS-Table и ENS-Text) собирается"
         run: |
           (cd app/table/redos7 && cargo check)
           (cd app/text/redos7 && cargo check)
@@ -183,7 +183,7 @@ jobs:
         run: npm run test:desktop
 
   desktop-text:
-    name: Сборка ENS-Tekst ${{ matrix.name }}
+    name: Сборка ENS-Text ${{ matrix.name }}
     needs: text
     strategy:
       fail-fast: false
@@ -237,7 +237,7 @@ jobs:
         if: matrix.name == 'linux'
         with:
           tool: cargo-zigbuild
-      - name: ENS-Tekst для РЕД ОС 7 (glibc 2.17+, окно Chromium)
+      - name: ENS-Text для РЕД ОС 7 (glibc 2.17+, окно Chromium)
         if: matrix.name == 'linux'
         working-directory: app/text
         run: |
@@ -245,14 +245,14 @@ jobs:
           (cd redos7 && cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17)
           bin=redos7/target/x86_64-unknown-linux-gnu/release/ens-text-r7
           echo "Самая новая нужная версия glibc:"; objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
-          root="$RUNNER_TEMP/ENS-Tekst-redos7"
+          root="$RUNNER_TEMP/ENS-Text-redos7"
           mkdir -p "$root"
           cp "$bin" "$root/"
           cp -r dist "$root/ui"
           cp redos7/packaging/ens-text-r7.desktop redos7/packaging/install-user.sh "$root/"
           cp src-tauri/icons/128x128.png "$root/ens-text-r7.png"
           mkdir -p redos7-out
-          tar -C "$RUNNER_TEMP" -czf "redos7-out/ENS-Tekst_${ver}_redos7.tar.gz" ENS-Tekst-redos7
+          tar -C "$RUNNER_TEMP" -czf "redos7-out/ENS-Text_${ver}_redos7.tar.gz" ENS-Text-redos7
           rpmbuild -bb redos7/packaging/ens-text-r7.spec --define "_ensroot $root" --define "ens_version $ver" --define "_rpmdir $PWD/redos7-out" --define "_build_id_links none"
           find redos7-out -name '*.rpm' -exec mv {} redos7-out/ \;
           ls -la redos7-out
@@ -304,7 +304,7 @@ jobs:
           fi
 
   release-text:
-    name: Выпуск ENS-Tekst на GitHub
+    name: Выпуск ENS-Text на GitHub
     needs: desktop-text
     if: startsWith(github.ref, 'refs/tags/text-v')
     runs-on: ubuntu-latest
@@ -331,7 +331,7 @@ jobs:
           [ -f "$notes" ] || notes=/dev/null
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber
-            [ "$notes" = /dev/null ] || gh release edit "$tag" --title "ENS-Tekst $ver" --notes-file "$notes"
+            [ "$notes" = /dev/null ] || gh release edit "$tag" --title "ENS-Text $ver" --notes-file "$notes"
           else
-            gh release create "$tag" release/* --title "ENS-Tekst $ver" --notes-file "$notes" --verify-tag --prerelease
+            gh release create "$tag" release/* --title "ENS-Text $ver" --notes-file "$notes" --verify-tag --prerelease
           fi

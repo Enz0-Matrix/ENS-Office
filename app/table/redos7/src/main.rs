@@ -1,4 +1,4 @@
-//! ENS-Table (и ENS-Tekst) для РЕД ОС 7 («Муром», glibc 2.28).
+//! ENS-Table (и ENS-Text) для РЕД ОС 7 («Муром», glibc 2.28).
 //!
 //! Настольная версия (Tauri) там не запускается: её окну нужен WebKitGTK 4.1.
 //! Здесь окно рисует установленный Chromium (или Яндекс.Браузер) в режиме
@@ -9,7 +9,7 @@
 //! Работает только внутри компьютера: сервер слушает 127.0.0.1, каждый запрос
 //! к файлам требует секретный ключ, выданный окну при запуске.
 
-/// Названия и типы файлов приложения. Этот же файл собирает помощник ENS-Tekst
+/// Названия и типы файлов приложения. Этот же файл собирает помощник ENS-Text
 /// (app/text/redos7, функция `text`): отличаются только названия и фильтры.
 #[cfg(not(feature = "text"))]
 mod ident {
@@ -23,7 +23,7 @@ mod ident {
 }
 #[cfg(feature = "text")]
 mod ident {
-    pub const NAME: &str = "ENS-Tekst";
+    pub const NAME: &str = "ENS-Text";
     pub const DIR: &str = "ens-text";
     pub const PKG: &str = "ens-text-r7";
     pub const ZENITY_FILTER: &str = "--file-filter=Документы Word | *.docx *.DOCX";

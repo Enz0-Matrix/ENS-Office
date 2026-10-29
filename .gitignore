@@ -3,7 +3,7 @@ tests/corpus/private/
 *.xlsx
 *.docx
 !tests/corpus/public/**
-# Синтетические образцы для проверок ENS-Tekst (создаёт app/text/tests/make_fixtures.py), не реальные документы
+# Синтетические образцы для проверок ENS-Text (создаёт app/text/tests/make_fixtures.py), не реальные документы
 !app/text/tests/fixtures/*.docx
 target/
 node_modules/

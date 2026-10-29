@@ -13,7 +13,7 @@ name = "ens-table-r7"
 path = "src/main.rs"
 
 [features]
-# ENS-Tekst собирается из этого же main.rs (app/text/redos7): названия и фильтры файлов.
+# ENS-Text собирается из этого же main.rs (app/text/redos7): названия и фильтры файлов.
 text = []
 # Объявлена только для общего кода files.rs/recovery.rs; здесь всегда выключена.
 tauri-shell = []
