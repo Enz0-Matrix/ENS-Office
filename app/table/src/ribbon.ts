@@ -409,7 +409,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
   const RULES: { key: 'book' | 'sheet' | 'others'; short: string; name: string; hint: string }[] = [
     { key: 'book', short: 'Книга', name: 'Вся книга', hint: 'Кнопки отмены и повтора идут по всем действиям в книге, на любых листах, как в Excel.' },
     { key: 'sheet', short: 'Лист', name: 'Только этот лист', hint: 'Отменяются и повторяются только действия на открытом листе; остальное не затрагивается.' },
-    { key: 'others', short: 'Др.', name: 'Все листы, кроме этого', hint: 'Отменяются действия на других листах, а на открытом листе всё остаётся как есть.' },
+    { key: 'others', short: 'Другие', name: 'Только другие листы, не этот', hint: 'Отменяются действия на других листах, а на открытом листе всё остаётся как есть.' },
   ];
   let scopeAbort: AbortController | null = null;
   function renderUndoScope(): HTMLElement {

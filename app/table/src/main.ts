@@ -2010,7 +2010,7 @@ function wink(kind: 'undo' | 'redo'): void {
 }
 
 const SCOPES: ['book' | 'sheet' | 'others', string][] = [
-  ['book', 'Вся книга'], ['sheet', 'Только этот лист'], ['others', 'Все листы, кроме этого'],
+  ['book', 'Вся книга'], ['sheet', 'Только этот лист'], ['others', 'Только другие листы, не этот'],
 ];
 const qaScope = $<HTMLButtonElement>('qa-scope');
 function showScope(): void {
