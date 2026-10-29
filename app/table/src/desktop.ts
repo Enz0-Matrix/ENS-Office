@@ -4,6 +4,7 @@
 
 import { fromBytes, openXlsx, type Model } from './engine';
 import { APP_VERSION } from './version';
+import { maybeConfetti } from './eggs';
 import { afterSave, beforeSave, onOpened, userName } from './changelog';
 import { ask, beaconClose, inspectFile, isDesktop, osUserName, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
 import { localeId, saveSettings, settings, updateShared } from './settings';
@@ -232,11 +233,19 @@ export async function currentUser(): Promise<string> {
   return userName(await osName);
 }
 
+/** Пасхалка: первое сохранение книги на 1000+ строк. */
+function celebrate(m: Model): void {
+  try {
+    const rows = Math.max(0, ...m.getWorksheetsProperties().map((_, i) => m.getSheetDimension(i)[2]));
+    maybeConfetti(rows);
+  } catch { /* пасхалка — не повод для ошибки */ }
+}
+
 async function writeTo(path: string, isNew: boolean): Promise<boolean> {
   const m = host.model();
   const oldLog = beforeSave(m, await currentUser());
   const ok = await writeBytes(path, isNew);
-  if (ok) afterSave(m, path);
+  if (ok) { afterSave(m, path); celebrate(m); }
   else m.setChangeLog(oldLog);
   return ok;
 }
@@ -317,7 +326,7 @@ export async function openFromFolder(dir: string): Promise<void> {
 async function download(): Promise<boolean> {
   const doc = host.doc();
   beforeSave(host.model(), await currentUser());
-  afterSave(host.model(), '');
+  afterSave(host.model(), ''); celebrate(host.model());
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([new Uint8Array(host.model().toXlsx())], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

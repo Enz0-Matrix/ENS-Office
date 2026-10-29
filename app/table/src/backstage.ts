@@ -48,6 +48,7 @@ export interface BackstageHost {
 
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
+import { showCredits } from './eggs';
 import { APP_VERSION } from './version';
 import logoUrl from './assets/logo-128.png?inline';
 
@@ -93,6 +94,11 @@ export function showBackstage(section: Section = 'info'): void {
       </div>
     </nav>
     <section class="bs-body"></section>`;
+  let taps = 0, tapTimer = 0;
+  root.querySelector('.bs-logo')?.addEventListener('click', () => {
+    clearTimeout(tapTimer); tapTimer = window.setTimeout(() => (taps = 0), 1500);
+    if (++taps >= 7) { taps = 0; hideBackstage(); showCredits(); }
+  });
   root.querySelectorAll<HTMLButtonElement>('[data-go]').forEach((b) =>
     b.addEventListener('click', () => go(b.dataset.go!)));
   root.hidden = false;
@@ -276,6 +282,7 @@ function render(section: Section): void {
       <label class="bs-row">Что отменяют кнопки «Отменить» и «Повторить»
         <select data-set="undoScope"><option value="book">вся книга</option><option value="sheet">только действия на этом листе</option><option value="others">все листы, кроме этого</option></select></label>
       <p class="bs-muted">Быстро переключить можно и стрелкой ▾ рядом с кнопками отмены вверху окна.</p>
+      <label class="bs-row"><input type="checkbox" data-set="helper"> Помощник «У. Болт»: подсказывает по ошибкам в формулах (скептик, но добрый)</label>
       <label class="bs-row"><input type="checkbox" data-set="recognizeDates"> Распознавать даты при вводе в ячейки «Общий»</label>
       <label class="bs-row">Шрифт по умолчанию для новых книг
         <select data-set="defaultFont">${FONTS.map((f) => `<option>${f.label}</option>`).join('')}</select>
@@ -315,6 +322,9 @@ function render(section: Section): void {
     const scope = body.querySelector<HTMLSelectElement>('[data-set="undoScope"]')!;
     scope.value = settings.undoScope;
     scope.addEventListener('change', () => { settings.undoScope = scope.value as typeof settings.undoScope; saveSettings(); host.applySettings(); });
+    const helper = body.querySelector<HTMLInputElement>('[data-set="helper"]')!;
+    helper.checked = settings.helper;
+    helper.addEventListener('change', () => { settings.helper = helper.checked; saveSettings(); host.applySettings(); });
     const dates = body.querySelector<HTMLInputElement>('[data-set="recognizeDates"]')!;
     dates.checked = settings.recognizeDates;
     dates.addEventListener('change', () => { settings.recognizeDates = dates.checked; saveSettings(); host.applySettings(); });

@@ -8,6 +8,8 @@ import { newShape, SHAPE_NAMES } from './shapes';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
+import { boltApply, boltCell } from './bolt';
+import { ensMessage, isEnsEgg } from './eggs';
 import { diffBooks, showDiff, showLog, type ChangesHost } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
@@ -246,6 +248,7 @@ function commitEdit(dRow: number, dCol: number): void {
   endPoint();
   const s = editCell;
   const value = activeValue();
+  if (isEnsEgg(value)) { cancelEdit(); showToast(ensMessage()); return; }
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
   const notice = value.startsWith('=') ? null : model.getValidationNotice(s.sheet, s.row, s.column, value);
   if (notice && !confirm(`${notice.title ? `${notice.title}\n\n` : ''}${notice.message}\n\n${notice.style === 1 ? 'Продолжить?' : 'ОК — оставить значение, Отмена — править.'}`)) {
@@ -3828,7 +3831,13 @@ function syncNumberFormat(): void {
   select.value = fmt;
 }
 
-grid.onSelect = () => { showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
+function boltOnSelect(): void {
+  if (!settings.helper) return;
+  try { boltCell(`${grid.sheet}:${grid.sel.row}:${grid.sel.column}`, model.getFormattedCellValue(grid.sheet, grid.sel.row, grid.sel.column)); } catch { /* пусто */ }
+}
+
+boltApply();
+grid.onSelect = () => { boltOnSelect(); showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
 grid.scroller.addEventListener('focus', () => { if (!editing) focusGrid(); });
@@ -3912,7 +3921,7 @@ initBackstage({
     model.setRecognizeDates(settings.recognizeDates);
     newBookFont.name = settings.defaultFont;
     newBookFont.size = settings.defaultFontSize;
-    showScope(); syncUndoState();
+    showScope(); syncUndoState(); boltApply();
     grid.render(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat();
   },
   recoveryFolder: () => desk.recoveryFolder(),
