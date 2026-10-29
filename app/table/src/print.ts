@@ -4,6 +4,7 @@
 
 import type { BorderItem, CellStyle, Model } from './engine';
 import { drawChart, readChartData } from './chart';
+import { drawShape } from './shapes';
 import { fontStack } from './fonts';
 
 export type Paper = 'A4' | 'A3' | 'A5' | 'Letter';
@@ -132,7 +133,7 @@ export function printRange(model: Model, sheet: number, opts: PrintOptions, sel:
 function objectsExtent(model: Model, sheet: number): { r: number; c: number } | null {
   let r = 0, c = 0;
   try {
-    const all = [...model.getImages(sheet), ...model.getCharts(sheet)];
+    const all = [...model.getImages(sheet), ...model.getCharts(sheet), ...model.getShapes(sheet)];
     for (const o of all) {
       let y = -o.dy, row = o.row;
       while (y < o.height && row < 1_048_576 && row - o.row < 3000) { y += Math.max(1, Math.round(model.getRowHeight(sheet, row) * ROW_SCALE)) || 1; row++; }
@@ -307,6 +308,16 @@ function objectsHtml(model: Model, sheet: number, b: Built, rows: PrintRow[]): s
       ctx.scale(k, k);
       drawChart(ctx, { x: 0, y: 0, w: ch.width, h: ch.height }, ch.kind, ch.title, readChartData(model, sheet, ch), ch);
       out += `<img src="${cv.toDataURL('image/png')}" style="position:absolute;left:${at.x}px;top:${at.y}px;width:${ch.width}px;height:${ch.height}px">`;
+    }
+    for (const sh of model.getShapes(sheet)) {
+      const at = place(sh.row, sh.column, sh.dx, sh.dy);
+      if (!at) continue;
+      const k = 2, pad = 4, cv = document.createElement('canvas');
+      cv.width = (sh.width + pad * 2) * k; cv.height = (sh.height + pad * 2) * k;
+      const ctx = cv.getContext('2d')!;
+      ctx.scale(k, k);
+      drawShape(ctx, { x: pad, y: pad, w: sh.width, h: sh.height }, sh);
+      out += `<img src="${cv.toDataURL('image/png')}" style="position:absolute;left:${at.x - pad}px;top:${at.y - pad}px;width:${sh.width + pad * 2}px;height:${sh.height + pad * 2}px">`;
     }
   } catch { /* без рисунков */ }
   return out;

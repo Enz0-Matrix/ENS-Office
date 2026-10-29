@@ -654,6 +654,44 @@ impl Model {
         self.model.delete_image(sheet, index as usize).map_err(to_js_error)
     }
 
+    /// ENS-Office: drop-down lists of the sheet, `[{sqref, source, allow_blank, no_arrow, error}]`.
+    #[wasm_bindgen(js_name = "getValidations")]
+    pub fn get_validations(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let list = self.model.get_validations(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setValidations")]
+    pub fn set_validations(&mut self, sheet: u32, list: JsValue) -> Result<(), JsError> {
+        let list: Vec<ironcalc_base::types::Validation> = serde_wasm_bindgen::from_value(list).map_err(JsError::from)?;
+        self.model.set_validations(sheet, list).map_err(to_js_error)
+    }
+
+    /// ENS-Office: whether the cell shows a drop-down arrow.
+    #[wasm_bindgen(js_name = "hasDropdown")]
+    pub fn has_dropdown(&self, sheet: u32, row: i32, column: i32) -> bool {
+        self.model.has_dropdown(sheet, row, column)
+    }
+
+    /// ENS-Office: items of the cell's drop-down list (empty if none).
+    #[wasm_bindgen(js_name = "getDropdownItems")]
+    pub fn get_dropdown_items(&self, sheet: u32, row: i32, column: i32) -> Vec<String> {
+        self.model.get_dropdown_items(sheet, row, column).unwrap_or_default()
+    }
+
+    /// ENS-Office: shapes and text boxes of the sheet.
+    #[wasm_bindgen(js_name = "getShapes")]
+    pub fn get_shapes(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let list = self.model.get_shapes(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&list).map_err(JsError::from)
+    }
+
+    #[wasm_bindgen(js_name = "setShapes")]
+    pub fn set_shapes(&mut self, sheet: u32, shapes: JsValue) -> Result<(), JsError> {
+        let shapes: Vec<ironcalc_base::types::Shape> = serde_wasm_bindgen::from_value(shapes).map_err(JsError::from)?;
+        self.model.set_shapes(sheet, shapes).map_err(to_js_error)
+    }
+
     /// ENS-Office: charts of the sheet, `[{kind, title, range, row, column, dx, dy, width, height}]`.
     #[wasm_bindgen(js_name = "getCharts")]
     pub fn get_charts(&self, sheet: u32) -> Result<JsValue, JsError> {

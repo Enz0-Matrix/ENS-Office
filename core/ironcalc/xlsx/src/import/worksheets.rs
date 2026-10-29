@@ -18,7 +18,7 @@ use ironcalc_base::{
         utils::{column_to_number, is_valid_column_number, is_valid_row, parse_reference_a1},
     },
     types::{
-        ArrayKind, Cell, Col, Color, Comment, DefinedName, Dxf, FormulaValue, Link, MergedCell,
+        ArrayKind, Cell, Col, Color, Comment, DefinedName, Dxf, FormulaValue, Link, MergedCell, Validation,
         SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
     },
 };
@@ -1086,6 +1086,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             ens_page_setup: load_page_setup(ws),
             ens_images: Vec::new(),
             ens_charts: Vec::new(),
+            ens_shapes: Vec::new(),
+            ens_validations: load_validations(ws),
             ens_protected: protection.0,
             ens_protect_attrs: protection.1,
             ens_row_breaks: load_breaks(ws, "rowBreaks"),
@@ -1093,6 +1095,26 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         },
         sheet_view.is_selected,
     ))
+}
+
+/// ENS-Office: the drop-down lists (`<dataValidation type="list">`); other kinds of validation are not kept.
+fn load_validations(ws: &XmlNode) -> Vec<Validation> {
+    ws.children()
+        .filter(|n| n.has_tag_name("dataValidations"))
+        .flat_map(|n| n.children())
+        .filter(|n| n.has_tag_name("dataValidation") && n.attribute("type") == Some("list"))
+        .filter_map(|n| {
+            let source = n.children().find(|c| c.has_tag_name("formula1"))?.text()?.trim().to_string();
+            let flag = |a: &str| n.attribute(a).is_some_and(|v| v == "1" || v == "true");
+            Some(Validation {
+                sqref: n.attribute("sqref")?.to_string(),
+                source,
+                allow_blank: flag("allowBlank"),
+                no_arrow: flag("showDropDown"),
+                error: n.attribute("error").unwrap_or_default().to_string(),
+            })
+        })
+        .collect()
 }
 
 /// ENS-Office: `<sheetProtection>`: whether the sheet is protected and the remaining attributes (password hash).
@@ -1288,7 +1310,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
                 dxfs,
             )?;
             let mut s = s;
-            (s.ens_images, s.ens_charts) = super::drawings::load_images(archive, &path, sheet_name);
+            (s.ens_images, s.ens_charts, s.ens_shapes) = super::drawings::load_images(archive, &path, sheet_name);
             if is_selected {
                 selected_sheet = sheet_index;
             }

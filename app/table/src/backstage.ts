@@ -43,6 +43,7 @@ export interface BackstageHost {
 type Section = 'info' | 'new' | 'open' | 'print' | 'options';
 
 import { APP_VERSION } from './version';
+import logoUrl from './assets/logo-128.png?inline';
 
 const root = document.createElement('div');
 root.className = 'backstage';
@@ -78,9 +79,11 @@ export function showBackstage(section: Section = 'info'): void {
       <button data-go="options">${icon('settings', 20)}Параметры</button>
       ${DONATE_URL ? `<a class="bs-donate" href="${DONATE_URL}" target="_blank" rel="noopener">♥ Поддержать проект</a>` : ''}
       <div class="bs-about">
+        <img class="bs-logo" src="${logoUrl}" alt="ENS-Office" width="64" height="64"><br>
         ENS-Office · ENS-Table ${APP_VERSION}<br>
         Автор: Н. Едренников<br>
-        Обратная связь: <a href="mailto:n.edrennikov@yandex.ru">n.edrennikov@yandex.ru</a>
+        Обратная связь: <a href="mailto:n.edrennikov@yandex.ru">n.edrennikov@yandex.ru</a><br>
+        Новости: <a href="https://t.me/ENS_Office" target="_blank" rel="noopener">t.me/ENS_Office</a>
       </div>
     </nav>
     <section class="bs-body"></section>`;
@@ -253,7 +256,7 @@ function render(section: Section): void {
         <input type="number" min="6" max="72" data-set="defaultFontSize" style="width:64px"></label>
       <label class="bs-row"><input type="checkbox" data-set="expandEditor"> Расширять поле ввода вправо по мере набора</label>
       <h2>Журнал изменений</h2>
-      <label class="bs-row">Ваше имя в журнале изменений книги
+      <label class="bs-row">Ваше имя (журнал изменений книги и подпись примечаний)
         <input data-set="userName" placeholder="как в системе" style="width:220px"></label>
       ${isDesktop ? `
       <h2>Сохранение и восстановление</h2>

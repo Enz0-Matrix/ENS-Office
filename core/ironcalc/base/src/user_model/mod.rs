@@ -8,6 +8,7 @@ mod common;
 mod conditional_formatting;
 mod ens_changes;
 mod ens_protect;
+mod ens_validation;
 mod ens_tools;
 pub(crate) mod history;
 mod links;

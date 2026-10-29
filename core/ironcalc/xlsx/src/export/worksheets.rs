@@ -828,8 +828,27 @@ pub(crate) fn get_worksheet_xml(
     } else {
         String::new()
     };
+    let validations_xml = if worksheet.ens_validations.is_empty() {
+        String::new()
+    } else {
+        let items: String = worksheet
+            .ens_validations
+            .iter()
+            .map(|v| {
+                format!(
+                    "<dataValidation type=\"list\"{}{} showInputMessage=\"1\" showErrorMessage=\"1\"{} sqref=\"{}\"><formula1>{}</formula1></dataValidation>",
+                    if v.allow_blank { " allowBlank=\"1\"" } else { "" },
+                    if v.no_arrow { " showDropDown=\"1\"" } else { "" },
+                    if v.error.is_empty() { String::new() } else { format!(" error=\"{}\"", escape_xml(&v.error)) },
+                    escape_xml(&v.sqref),
+                    escape_xml(&v.source)
+                )
+            })
+            .collect();
+        format!("<dataValidations count=\"{}\">{items}</dataValidations>", worksheet.ens_validations.len())
+    };
     let page_breaks = page_breaks_xml(worksheet);
-    let drawing = if worksheet.ens_images.is_empty() && worksheet.ens_charts.is_empty() {
+    let drawing = if worksheet.ens_images.is_empty() && worksheet.ens_charts.is_empty() && worksheet.ens_shapes.is_empty() {
         String::new()
     } else {
         let n = external_link_count(worksheet) + if worksheet.comments.is_empty() { 0 } else { 2 } + 1;
@@ -876,6 +895,7 @@ pub(crate) fn get_worksheet_xml(
   {auto_filter_section}\
   {merge_cells_section}\
   {cf_sections}\
+  {validations_xml}\
   {hyperlinks_section}\
   {page_setup}\
   {page_breaks}\

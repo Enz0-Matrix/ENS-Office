@@ -4,10 +4,11 @@ import './themes2.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
+import { newShape, SHAPE_NAMES } from './shapes';
 import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { showLog, userName } from './changelog';
+import { showLog } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
 import { exampleFor, type FunctionExample } from './examples';
 import { askExpand, columnTitle, customSort, type SortRequest } from './sortdialog';
@@ -270,7 +271,8 @@ function commitEdit(dRow: number, dCol: number): void {
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
     }
   } catch (err) {
-    showToast(`Не удалось записать значение: ${err}`);
+    const text = String((err as Error)?.message ?? err).replace(/^Error: /, '');
+    showToast(/защищ/.test(text) ? 'Доступ к ячейке запрещён' : `Не удалось записать значение: ${text}`);
   }
   if (value.startsWith('=') && model.getCellType(s.sheet, s.row, s.column) === 16
     && ['#ОШИБКА!', '#ERROR!'].includes(model.getFormattedCellValue(s.sheet, s.row, s.column))) {
@@ -786,7 +788,7 @@ function updateStatus(): void {
       }
     }
   }
-  const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 10 });
+  const fmt = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 5 });
   const f = filterAt(grid.sheet, grid.sel.row, grid.sel.column);
   if (f && f.criteria.size && count <= 1) {
     let shown = 0;
@@ -1147,6 +1149,7 @@ imageInput.addEventListener('change', async () => {
 grid.onImagePlace = (kind, i, row, column, dx, dy, w, h) => {
   try {
     if (kind === 'image') model.placeImage(grid.sheet, i, row, column, dx, dy, w, h);
+    else if (kind === 'shape') model.setShapes(grid.sheet, model.getShapes(grid.sheet).map((x, k) => (k === i ? { ...x, row, column, dx, dy, width: w, height: x.kind === 3 || x.kind === 4 ? Math.max(0, h) : h } : x)));
     else model.setCharts(grid.sheet, model.getCharts(grid.sheet).map((c, k) => (k === i ? { ...c, row, column, dx, dy, width: w, height: h } : c)));
   } catch (e) { showToast(String(e)); }
   grid.render();
@@ -1156,10 +1159,157 @@ function deleteSelectedObject(): void {
   const o = grid.objAt(grid.selObj);
   try {
     if (o?.kind === 'image') model.deleteImage(grid.sheet, o.index);
+    else if (o?.kind === 'shape') model.setShapes(grid.sheet, model.getShapes(grid.sheet).filter((_, k) => k !== o.index));
     else if (o) model.setCharts(grid.sheet, model.getCharts(grid.sheet).filter((_, k) => k !== o.index));
   } catch (e) { showToast(String(e)); }
   grid.selObj = -1;
   grid.render();
+}
+
+// --- Раскрывающиеся списки ---
+
+grid.onDropdown = (x, y) => setTimeout(() => {
+  const s = grid.sel;
+  const items = model.getDropdownItems(grid.sheet, s.row, s.column);
+  if (!items.length) { showToast('Список пуст: проверьте источник в «Данные → Список…».'); return; }
+  const current = model.getFormattedCellValue(grid.sheet, s.row, s.column).toLowerCase();
+  showMenu(items.map((label) => ({
+    label, checked: label.toLowerCase() === current,
+    run: () => {
+      try { model.setUserInput(grid.sheet, s.row, s.column, label); } catch (e) { showToast(String(e)); }
+      grid.render(); updateFormulaBar(); updateStatus(); focusGrid();
+    },
+  })), x, y);
+});
+
+/** «Проверка данных» → список: ячейки, источник (перечень или диапазон), пустые значения, стрелка, сообщение об ошибке. */
+function validationDialog(): void {
+  if (editing) commitEdit(0, 0);
+  const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
+  const sel = s.r1 === s.r2 && s.c1 === s.c2 ? cell(s.r1, s.c1) : `${cell(s.r1, s.c1)}:${cell(s.r2, s.c2)}`;
+  const list = model.getValidations(grid.sheet);
+  const colNum = (t: string) => t.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+  const covers = (sqref: string) => sqref.split(/\s+/).some((t) => {
+    const m = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/.exec(t.toUpperCase());
+    if (!m) return false;
+    const [c1, r1, c2, r2] = [colNum(m[1]), Number(m[2]), colNum(m[3] ?? m[1]), Number(m[4] ?? m[2])];
+    return r1 <= s.r2 && r2 >= s.r1 && c1 <= s.c2 && c2 >= s.c1;
+  });
+  const found = list.find((v) => covers(v.sqref));
+  const literal = (src: string) => src.startsWith('"') ? src.replace(/^"|"$/g, '').split(',').join('; ') : src.replace(/^=/, '');
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Раскрывающийся список</h2>
+    <p>Ячейка получит стрелку со списком; другое значение ввести нельзя.</p>
+    <p><label>Ячейки: <input data-f="cells" style="width:55%"></label></p>
+    <p><label>Источник: <input data-f="source" style="width:55%" placeholder="Да; Нет; Возможно  или  A1:A5"></label></p>
+    <p style="margin:0 0 8px;color:var(--muted)">Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).</p>
+    <p><label><input type="checkbox" data-f="blank"> Игнорировать пустые ячейки</label>
+      <label style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
+    <p><label>Сообщение об ошибке: <input data-f="error" style="width:55%" placeholder="по умолчанию"></label></p>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать список</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`)!;
+  f('cells').value = found?.sqref ?? sel;
+  f('source').value = found ? literal(found.source) : '';
+  f('blank').checked = found?.allow_blank ?? true;
+  f('arrow').checked = !(found?.no_arrow ?? false);
+  f('error').value = found?.error ?? '';
+  addRangePicker(f('cells'));
+  addRangePicker(f('source'), 'sheet');
+  f('source').focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act || act === 'range-pick') return;
+    try {
+      if (act === 'delete' && found) model.setValidations(grid.sheet, list.filter((v) => v !== found));
+      if (act === 'ok') {
+        const text = f('source').value.trim();
+        const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
+        const source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
+        if (!text) { showToast('Укажите значения списка или диапазон.'); return; }
+        const next = { sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: !f('arrow').checked, error: f('error').value.trim() };
+        model.setValidations(grid.sheet, found ? list.map((v) => (v === found ? next : v)) : [...list, next]);
+      }
+    } catch (err) { showToast(String(err)); return; }
+    grid.render();
+    close();
+  });
+}
+
+// --- Фигуры и надписи ---
+
+function insertShape(kind: number): void {
+  const s = grid.sel;
+  try {
+    const list = model.getShapes(grid.sheet);
+    model.setShapes(grid.sheet, [...list, newShape(kind, s.row, s.column)]);
+    grid.selObj = grid.images.length + grid.charts.length + list.length;
+    grid.render();
+  } catch (e) { showToast(String(e)); }
+}
+
+/** Окно фигуры: текст, заливка, контур, шрифт; «Удалить». */
+function shapeDialog(index: number): void {
+  const list = model.getShapes(grid.sheet);
+  const sh = list[index];
+  if (!sh) return;
+  const line = sh.kind === 3 || sh.kind === 4;
+  const overlay = $('recovery');
+  const colorRow = (key: string, label: string, value: string) =>
+    `<p><label><input type="checkbox" data-on="${key}"${value ? ' checked' : ''}> ${label}</label> <input type="color" data-c="${key}" value="${value || '#000000'}" style="width:36px;height:24px;padding:0"></p>`;
+  overlay.innerHTML = `<div class="modal"><h2>${SHAPE_NAMES[sh.kind] ?? 'Фигура'}</h2>
+    ${line ? '' : '<p><textarea data-f="text" rows="4" style="width:100%;box-sizing:border-box;font:inherit" placeholder="Текст"></textarea></p>'}
+    ${line ? '' : colorRow('fill', 'Заливка', sh.fill)}
+    ${colorRow('line', line ? 'Цвет линии' : 'Контур', sh.line_color || (line ? '#000000' : ''))}
+    <p><label>Толщина: <input type="number" data-f="lw" min="1" max="20" style="width:60px"> px</label>${line ? '<label style="margin-left:14px"><input type="checkbox" data-f="flip"> Снизу вверх</label>' : ''}</p>
+    ${line ? '' : `${colorRow('text', 'Цвет текста', sh.text_color)}
+    <p><label>Размер шрифта: <input type="number" data-f="fs" min="6" max="96" style="width:60px"></label>
+      <label style="margin-left:14px"><input type="checkbox" data-f="bold"> Жирный</label>
+      <label style="margin-left:14px">Выравнивание: <select data-f="align"><option value="0">слева</option><option value="1">по центру</option><option value="2">справа</option></select></label></p>`}
+    <div class="rec-actions"><button data-act="delete" class="danger">Удалить</button><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement & HTMLTextAreaElement>(`[data-f="${n}"]`);
+  const on = (k: string) => box.querySelector<HTMLInputElement>(`[data-on="${k}"]`);
+  const col = (k: string) => box.querySelector<HTMLInputElement>(`[data-c="${k}"]`);
+  if (f('text')) f('text')!.value = sh.text;
+  f('lw')!.value = String(sh.line_width || 1);
+  if (f('flip')) f('flip')!.checked = sh.flip;
+  if (f('fs')) f('fs')!.value = String(sh.font_size || 11);
+  if (f('bold')) f('bold')!.checked = sh.bold;
+  if (f('align')) f('align')!.value = String(sh.align);
+  f('text')?.focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+  box.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    try {
+      if (act === 'delete') model.setShapes(grid.sheet, list.filter((_, k) => k !== index));
+      if (act === 'ok') {
+        const pick = (k: string) => (on(k)?.checked ? col(k)!.value.toUpperCase() : '');
+        const next = {
+          ...sh,
+          text: f('text')?.value ?? sh.text,
+          fill: line ? '' : pick('fill'),
+          line_color: line ? (pick('line') || '#000000') : pick('line'),
+          line_width: Math.max(1, Math.min(20, Math.round(Number(f('lw')!.value) || 1))),
+          flip: f('flip') ? f('flip')!.checked : sh.flip,
+          text_color: line ? '' : pick('text'),
+          font_size: f('fs') ? Math.max(0, Math.min(96, Number(f('fs')!.value) || 0)) : sh.font_size,
+          bold: f('bold') ? f('bold')!.checked : sh.bold,
+          align: f('align') ? Number(f('align')!.value) : sh.align,
+        };
+        model.setShapes(grid.sheet, list.map((x, k) => (k === index ? next : x)));
+      }
+      if (act === 'delete') grid.selObj = -1;
+    } catch (err) { showToast(String(err)); }
+    grid.render();
+    close();
+  });
 }
 
 // --- Диаграммы ---
@@ -1284,7 +1434,11 @@ function editSelectedChart(): void {
   const c = model.getCharts(grid.sheet)[o.index];
   chartDialog(o.index, { kind: c.kind, title: c.title, range: c.range, look: c });
 }
-grid.onObjectDouble = () => { if (grid.objAt(grid.selObj)?.kind === 'chart') editSelectedChart(); };
+grid.onObjectDouble = () => {
+  const o = grid.objAt(grid.selObj);
+  if (o?.kind === 'chart') editSelectedChart();
+  else if (o?.kind === 'shape') shapeDialog(o.index);
+};
 
 // --- Защита листа, ячеек и структуры книги ---
 
@@ -1430,10 +1584,12 @@ function editComment(row: number, column: number): void {
   area.focus();
   const close = () => { overlay.hidden = true; focusGrid(); };
   box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
-  box.addEventListener('click', (e) => {
+  box.addEventListener('click', async (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
-    if (act === 'ok') model.setComment(grid.sheet, row, column, area.value, old?.author || userName(''));
+    if (act === 'ok') {
+      try { model.setComment(grid.sheet, row, column, area.value, old?.author || await desk.currentUser()); } catch (err) { showToast(String(err).replace(/^Error: /, '')); }
+    }
     if (act === 'delete') model.deleteComment(grid.sheet, row, column);
     if (act !== 'cancel') grid.render();
     close();
@@ -2833,6 +2989,13 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
+  { id: 'data.validation', label: 'Раскрывающийся список (проверка данных)', keywords: ['validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
+  { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
+  { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
+  { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },
+  { id: 'shape.line', label: 'Фигура: линия', keywords: ['line', 'линия'], run: () => insertShape(3) },
+  { id: 'shape.arrow', label: 'Фигура: стрелка', keywords: ['arrow', 'стрелка'], run: () => insertShape(4) },
+  { id: 'shape.textbox', label: 'Надпись', keywords: ['text box', 'textbox', 'надпись', 'текстовое поле'], run: () => insertShape(5) },
   { id: 'chart.bar', label: 'Диаграмма: столбцы', keywords: ['chart', 'column chart', 'диаграмма', 'гистограмма', 'график'], run: () => insertChart(0) },
   { id: 'chart.line', label: 'Диаграмма: линии', keywords: ['line chart', 'график', 'диаграмма'], run: () => insertChart(1) },
   { id: 'chart.pie', label: 'Диаграмма: круговая', keywords: ['pie chart', 'круговая', 'диаграмма'], run: () => insertChart(2) },
@@ -3040,7 +3203,7 @@ function showPicker(items: { label: string; hint?: string; run: () => void }[], 
 let toastTimer = 0;
 function showToast(text: string): void {
   const t = $('toast');
-  t.textContent = text;
+  t.textContent = text.replace(/^(Uncaught )?Error: /, "");
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => (t.hidden = true), 6000);

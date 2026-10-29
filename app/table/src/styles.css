@@ -439,3 +439,6 @@ footer { display: flex; flex-direction: column; }
 .range-bar input { width: 180px; font: inherit; }
 .range-bar button { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 4px 12px; font: inherit; cursor: pointer; }
 .range-bar button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Логотип в «Файл» */
+.bs-logo { border-radius: 10px; margin-bottom: 6px; }
