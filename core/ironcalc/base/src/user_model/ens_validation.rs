@@ -4,7 +4,34 @@
 use crate::expressions::utils::parse_reference_a1;
 
 use super::{common::UserModel, history::Diff};
+use crate::formatter::format::parse_date;
 use crate::types::Validation;
+use serde::Serialize;
+
+/// A message for the user: the hint of a cell, or the warning about a value that breaks the rule.
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct ValidationMessage {
+    pub style: u8,
+    pub title: String,
+    pub message: String,
+}
+
+fn parse_number(t: &str) -> Option<f64> {
+    let t = t.trim().replace(',', ".");
+    t.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// "13:30" or "13:30:15" → a fraction of a day.
+fn parse_time(t: &str) -> Option<f64> {
+    let mut parts = t.trim().split(':');
+    let h: f64 = parts.next()?.trim().parse().ok()?;
+    let m: f64 = parts.next()?.trim().parse().ok()?;
+    let sec: f64 = parts.next().map_or(Some(0.0), |p| p.trim().parse().ok())?;
+    if parts.next().is_some() || !(0.0..24.0).contains(&h) || !(0.0..60.0).contains(&m) || !(0.0..60.0).contains(&sec) {
+        return None;
+    }
+    Some((h * 3600.0 + m * 60.0 + sec) / 86400.0)
+}
 
 /// One range of an `sqref`: "B2:B10" or "D4" → (row1, column1, row2, column2).
 fn parse_span(token: &str) -> Option<(i32, i32, i32, i32)> {
@@ -63,7 +90,7 @@ impl UserModel<'_> {
 
     /// Whether the cell has a drop-down list with an arrow button.
     pub fn has_dropdown(&self, sheet: u32, row: i32, column: i32) -> bool {
-        self.validation_at(sheet, row, column).is_some_and(|v| !v.no_arrow)
+        self.validation_at(sheet, row, column).is_some_and(|v| matches!(v.kind.as_str(), "" | "list") && !v.no_arrow)
     }
 
     fn items_of(&self, sheet: u32, v: &Validation) -> Vec<String> {
@@ -98,27 +125,118 @@ impl UserModel<'_> {
 
     /// The items of the drop-down list of the cell, if it has one.
     pub fn get_dropdown_items(&self, sheet: u32, row: i32, column: i32) -> Option<Vec<String>> {
-        let v = self.validation_at(sheet, row, column)?;
+        let v = self.validation_at(sheet, row, column).filter(|v| matches!(v.kind.as_str(), "" | "list"))?;
         Some(self.items_of(sheet, &v))
     }
 
-    /// Error if `value` may not be typed into the cell (it has a list and the value is not in it).
-    pub(crate) fn check_validation(&self, sheet: u32, row: i32, column: i32, value: &str) -> Result<(), String> {
-        let Some(v) = self.validation_at(sheet, row, column) else { return Ok(()) };
+    /// The check applied to `value` typed into the cell; `Some` — the value breaks the rule.
+    fn violated(&self, sheet: u32, row: i32, column: i32, value: &str) -> Option<Validation> {
+        let v = self.validation_at(sheet, row, column)?;
         let value = value.trim();
         if value.is_empty() {
-            return if v.allow_blank { Ok(()) } else { Err(self.validation_error(&v)) };
+            return (!v.allow_blank).then_some(v);
         }
-        let items = self.items_of(sheet, &v);
-        if items.iter().any(|i| i.to_lowercase() == value.to_lowercase()) {
-            Ok(())
-        } else {
-            Err(self.validation_error(&v))
+        let ok = match v.kind.as_str() {
+            "" | "list" => {
+                let low = value.to_lowercase();
+                self.items_of(sheet, &v).iter().any(|i| i.to_lowercase() == low)
+            }
+            "custom" => true,
+            _ => self.value_fits(sheet, &v, value),
+        };
+        (!ok).then_some(v)
+    }
+
+    /// A bound of a rule: a number, a date, a time, or a reference to a cell.
+    fn bound(&self, sheet: u32, kind: &str, text: &str) -> Option<f64> {
+        let t = text.trim().trim_start_matches('=');
+        if let Some(n) = parse_number(t) {
+            return Some(n);
+        }
+        if kind == "date" {
+            if let Ok((serial, _)) = parse_date(t, self.model.locale) {
+                return Some(serial as f64);
+            }
+        }
+        if kind == "time" {
+            if let Some(n) = parse_time(t) {
+                return Some(n);
+            }
+        }
+        let r = parse_reference_a1(&t.replace('$', ""))?;
+        match self.model.get_cell_value_by_index(sheet, r.row, r.column).ok()? {
+            crate::cell::CellValue::Number(n) => Some(n),
+            _ => None,
         }
     }
 
+    fn value_fits(&self, sheet: u32, v: &Validation, value: &str) -> bool {
+        if value.starts_with('=') {
+            return true; // a formula is not checked
+        }
+        let kind = v.kind.as_str();
+        let x = match kind {
+            "textLength" => value.chars().count() as f64,
+            "whole" | "decimal" => match parse_number(value) {
+                Some(n) if kind == "decimal" || n.fract() == 0.0 => n,
+                _ => return false,
+            },
+            "date" => match parse_number(value).or_else(|| parse_date(value, self.model.locale).ok().map(|(d, _)| d as f64)) {
+                Some(n) => n,
+                None => return false,
+            },
+            "time" => match parse_number(value).or_else(|| parse_time(value)) {
+                Some(n) => n,
+                None => return false,
+            },
+            _ => return true,
+        };
+        let Some(a) = self.bound(sheet, kind, &v.source) else { return true };
+        let eps = 1e-9;
+        match v.op.as_str() {
+            "between" | "" | "notBetween" => {
+                let Some(b) = self.bound(sheet, kind, &v.source2) else { return true };
+                let inside = x >= a.min(b) - eps && x <= a.max(b) + eps;
+                inside == (v.op != "notBetween")
+            }
+            "equal" => (x - a).abs() <= eps,
+            "notEqual" => (x - a).abs() > eps,
+            "greaterThan" => x > a + eps,
+            "lessThan" => x < a - eps,
+            "greaterThanOrEqual" => x >= a - eps,
+            "lessThanOrEqual" => x <= a + eps,
+            _ => true,
+        }
+    }
+
+    /// Error if `value` may not be typed into the cell (the rule has the "stop" style and the value breaks it).
+    pub(crate) fn check_validation(&self, sheet: u32, row: i32, column: i32, value: &str) -> Result<(), String> {
+        match self.violated(sheet, row, column, value) {
+            Some(v) if v.error_style == 0 => Err(self.validation_error(&v)),
+            _ => Ok(()),
+        }
+    }
+
+    /// For the "warning" and "information" styles: what to tell the user before the value is kept.
+    pub fn get_validation_notice(&self, sheet: u32, row: i32, column: i32, value: &str) -> Option<ValidationMessage> {
+        let v = self.violated(sheet, row, column, value).filter(|v| v.error_style != 0)?;
+        Some(ValidationMessage { style: v.error_style, title: v.error_title.clone(), message: self.validation_error(&v) })
+    }
+
+    /// The hint to show when the cell is selected.
+    pub fn get_validation_prompt(&self, sheet: u32, row: i32, column: i32) -> Option<ValidationMessage> {
+        let v = self.validation_at(sheet, row, column)?;
+        (!v.prompt.is_empty() || !v.prompt_title.is_empty()).then(|| ValidationMessage { style: 0, title: v.prompt_title, message: v.prompt })
+    }
+
     fn validation_error(&self, v: &Validation) -> String {
-        if v.error.is_empty() { "Значение не входит в список допустимых.".to_string() } else { v.error.clone() }
+        if !v.error.is_empty() {
+            return v.error.clone();
+        }
+        match v.kind.as_str() {
+            "" | "list" => "Значение не входит в список допустимых.".to_string(),
+            _ => "Введённое значение недопустимо.".to_string(),
+        }
     }
 
     /// After rows or columns were inserted or deleted: the lists follow their cells. Returns the steps for undo.

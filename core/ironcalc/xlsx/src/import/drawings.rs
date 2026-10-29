@@ -355,6 +355,7 @@ fn load_shape(anchor: &XmlNode, node: &XmlNode) -> Option<Shape> {
         bold,
         align,
         flip: flag("flipV") != flag("flipH"),
+        rotation: xfrm.and_then(|x| x.attribute("rot")).and_then(|v| v.parse::<i64>().ok()).map_or(0, |v| (v / 60000).rem_euclid(360) as i32),
         row: number(from, "row") as i32 + 1,
         column: number(from, "col") as i32 + 1,
         dx: (number(from, "colOff") / EMU_PER_PX) as i32,

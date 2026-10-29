@@ -4,6 +4,7 @@
 import { command, keyLabel, run } from './commands';
 import { ICONS } from './icons';
 import { OFFICE_FONTS } from './fonts';
+import { saveSettings, settings } from './settings';
 
 /** Вызывается после перерисовки вкладки: кнопки с живым видом (например, «Границы») обновляют значок. */
 let afterDraw: () => void = () => {};
@@ -19,6 +20,8 @@ export type RibbonItem =
   | { type: 'split'; command: string; icon: string }
   /** Кнопка с палитрой: основная часть применяет последний цвет, стрелка открывает палитру. */
   | { type: 'color'; command: string; icon: string; kind: 'fill' | 'font' }
+  /** Ползунок «Правила отмены»: что отменяют кнопки отмены и повтора (вся книга, один лист, остальные листы). */
+  | { type: 'undoScope' }
   | { type: 'select'; command: string; options: { value: string; label: string }[]; width?: number }
   | { type: 'separator' };
 
@@ -134,6 +137,7 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'medium', command: 'edit.undo', icon: 'arrow_undo' },
           { type: 'medium', command: 'edit.redo', icon: 'arrow_redo' },
+          { type: 'undoScope' },
         ],
       },
       {
@@ -223,6 +227,12 @@ export const TABS: RibbonTab[] = [
         { type: 'large', command: 'shape.line', icon: 'shape_line', label: 'Линия' },
         { type: 'large', command: 'shape.arrow', icon: 'shape_arrow', label: 'Стрелка' },
       ] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'link.edit', icon: 'link', label: 'Ссылка' }] },
+      { name: 'Расположение фигуры', items: [
+        { type: 'large', command: 'shape.front', icon: 'arrange_front', label: 'На передний план' },
+        { type: 'large', command: 'shape.back', icon: 'arrange_back', label: 'На задний план' },
+        { type: 'large', command: 'shape.rotateRight', icon: 'rotate_cw', label: 'Повернуть 90°' },
+      ] },
       { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
@@ -264,7 +274,7 @@ export const TABS: RibbonTab[] = [
           { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
         ],
       },
-      { name: 'Проверка данных', items: [{ type: 'large', command: 'data.validation', icon: 'dropdown_list', label: 'Список' }] },
+      { name: 'Проверка данных', items: [{ type: 'large', command: 'data.validation', icon: 'dropdown_list', label: 'Проверка' }] },
       {
         name: 'Структура',
         items: [
@@ -401,12 +411,50 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
     afterDraw();
   }
 
+  /** Три положения: вся книга / только этот лист / остальные листы; под ползунком — действующее правило. */
+  const RULES: { key: 'book' | 'sheet' | 'others'; short: string; name: string; hint: string }[] = [
+    { key: 'book', short: 'Книга', name: 'Вся книга', hint: 'Кнопки отмены и повтора идут по всем действиям в книге, на любых листах, как в Excel.' },
+    { key: 'sheet', short: 'Лист', name: 'Только этот лист', hint: 'Отменяются и повторяются только действия на открытом листе; остальное не затрагивается.' },
+    { key: 'others', short: 'Другие', name: 'Только другие листы, не этот', hint: 'Отменяются действия на других листах, а на открытом листе всё остаётся как есть.' },
+  ];
+  let scopeAbort: AbortController | null = null;
+  function renderUndoScope(): HTMLElement {
+    scopeAbort?.abort();
+    scopeAbort = new AbortController();
+    const wrap = document.createElement('div');
+    wrap.className = 'undo-scope';
+    wrap.innerHTML = `<div class="us-caption">Правила отмены</div>
+      <div class="us-track" role="radiogroup" aria-label="Правила отмены"><span class="us-thumb"></span>${RULES.map((r) => `<button class="us-stop" role="radio" data-k="${r.key}" tabindex="-1">${r.short}</button>`).join('')}</div>
+      <div class="us-rule"></div>`;
+    const thumb = wrap.querySelector<HTMLElement>('.us-thumb')!;
+    const rule = wrap.querySelector<HTMLElement>('.us-rule')!;
+    const show = () => {
+      const i = Math.max(0, RULES.findIndex((r) => r.key === settings.undoScope));
+      thumb.style.transform = `translateY(${i * 100}%)`;
+      wrap.querySelectorAll<HTMLElement>('.us-stop').forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-checked', String(k === i)); });
+      rule.textContent = RULES[i].name;
+      wrap.title = RULES[i].hint;
+    };
+    wrap.querySelectorAll<HTMLButtonElement>('.us-stop').forEach((b) => {
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', () => {
+        settings.undoScope = b.dataset.k as typeof settings.undoScope;
+        saveSettings();
+        document.dispatchEvent(new Event('ens-undo-scope-set')); // главное окно обновит стрелку у кнопок отмены
+      });
+    });
+    document.addEventListener('ens-undo-scope', show, { signal: scopeAbort.signal });
+    show();
+    return wrap;
+  }
+
   function renderItem(item: RibbonItem): HTMLElement {
     if (item.type === 'separator') {
       const s = document.createElement('div');
       s.className = 'sep';
       return s;
     }
+    if (item.type === 'undoScope') return renderUndoScope();
     const cmd = command(item.command);
     if (item.type === 'color') {
       const wrap = document.createElement('div');

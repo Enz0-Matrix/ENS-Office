@@ -28,11 +28,19 @@ export interface Chart { kind: number; title: string; range: string; row: number
 /** Фигура или надпись: kind 0 — прямоугольник, 1 — скруглённый, 2 — эллипс, 3 — линия, 4 — стрелка, 5 — надпись. Цвета «#RRGGBB», пусто — нет. */
 export interface Shape {
   kind: number; text: string; fill: string; line_color: string; line_width: number; text_color: string; font_size: number;
-  bold: boolean; align: number; flip: boolean; row: number; column: number; dx: number; dy: number; width: number; height: number;
+  bold: boolean; align: number; flip: boolean; rotation: number; row: number; column: number; dx: number; dy: number; width: number; height: number;
 }
 
 /** Раскрывающийся список: ячейки (как в xlsx, «B2:B10 D4») и источник (`"Да,Нет"` или диапазон `Лист1!$A$1:$A$5`). */
-export interface Validation { sqref: string; source: string; allow_blank: boolean; no_arrow: boolean; error: string }
+export interface Validation {
+  sqref: string; source: string; allow_blank: boolean; no_arrow: boolean; error: string;
+  kind?: string; op?: string; source2?: string; prompt_title?: string; prompt?: string; error_title?: string; error_style?: number;
+}
+/** Гиперссылка ячейки: на сайт, почту или файл — External; на место в этой книге — Internal. */
+export type CellLinkInfo =
+  | { type: 'External'; target: string; tooltip?: string | null }
+  | { type: 'Internal'; location: string; tooltip?: string | null };
+export interface ValidationMessage { style: number; title: string; message: string }
 
 export interface CellStyle {
   num_fmt: string;
@@ -142,9 +150,15 @@ export interface Model {
   addImage(sheet: number, row: number, column: number, width: number, height: number, ext: string, name: string, data: Uint8Array): number;
   placeImage(sheet: number, index: number, row: number, column: number, dx: number, dy: number, width: number, height: number): void;
   deleteImage(sheet: number, index: number): void;
+  getCellLink(sheet: number, row: number, column: number): CellLinkInfo | undefined;
+  /** Привязывает ссылку к ячейке; label — новый текст ячейки (одно действие отмены). */
+  setCellLink(sheet: number, row: number, column: number, link: CellLinkInfo, label?: string | null): void;
+  deleteCellLink(sheet: number, row: number, column: number): void;
   getValidations(sheet: number): Validation[];
   /** Заменяет все списки листа (одно действие отмены). */
   setValidations(sheet: number, list: Validation[]): void;
+  getValidationNotice(sheet: number, row: number, column: number, value: string): ValidationMessage | null;
+  getValidationPrompt(sheet: number, row: number, column: number): ValidationMessage | null;
   /** У ячейки есть список со стрелкой. */
   hasDropdown(sheet: number, row: number, column: number): boolean;
   getDropdownItems(sheet: number, row: number, column: number): string[];
@@ -209,6 +223,8 @@ export interface Model {
   setSelectedCell(row: number, column: number): void;
   setSelectedRange(startRow: number, startColumn: number, endRow: number, endColumn: number): void;
   copyToClipboard(): EngineClipboard;
+  /** Вставка ячеек, скопированных в другой книге (значения, формулы, стили, ссылки). */
+  pasteFromOtherBook(sourceRange: [number, number, number, number], data: unknown): void;
   pasteFromClipboard(sourceSheet: number, sourceRange: [number, number, number, number], data: unknown, isCut: boolean): void;
   autoFillRows(source: Area, toRow: number): void;
   autoFillColumns(source: Area, toColumn: number): void;

@@ -9,7 +9,7 @@ export function newShape(kind: number, row: number, column: number): Shape {
   const line = kind === 3 || kind === 4;
   return {
     kind, text: '', fill: kind === 5 || line ? '' : '#DDEBF7', line_color: kind === 5 ? '' : line ? '#000000' : '#2F75B5',
-    line_width: line ? 2 : 1, text_color: '', font_size: 0, bold: false, align: kind === 5 ? 0 : 1, flip: false,
+    line_width: line ? 2 : 1, text_color: '', font_size: 0, bold: false, align: kind === 5 ? 0 : 1, flip: false, rotation: 0,
     row, column, dx: 4, dy: 4, width: line ? 140 : kind === 5 ? 160 : 140, height: line ? 0 : kind === 5 ? 50 : 80,
   };
 }

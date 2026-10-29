@@ -71,6 +71,7 @@ pub fn run() {
             startup_file,
             files::inspect_file,
             files::user_name,
+            files::open_target,
             files::read_file,
             files::save_file,
             recovery::recovery_heartbeat,

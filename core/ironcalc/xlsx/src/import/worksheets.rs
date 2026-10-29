@@ -1097,12 +1097,12 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     ))
 }
 
-/// ENS-Office: the drop-down lists (`<dataValidation type="list">`); other kinds of validation are not kept.
+/// ENS-Office: data validation (`<dataValidation>`): lists, numbers, dates, times, text length, custom formulas.
 fn load_validations(ws: &XmlNode) -> Vec<Validation> {
     ws.children()
         .filter(|n| n.has_tag_name("dataValidations"))
         .flat_map(|n| n.children())
-        .filter(|n| n.has_tag_name("dataValidation") && n.attribute("type") == Some("list"))
+        .filter(|n| n.has_tag_name("dataValidation") && matches!(n.attribute("type"), Some("list" | "whole" | "decimal" | "date" | "time" | "textLength" | "custom")))
         .filter_map(|n| {
             let source = n.children().find(|c| c.has_tag_name("formula1"))?.text()?.trim().to_string();
             let flag = |a: &str| n.attribute(a).is_some_and(|v| v == "1" || v == "true");
@@ -1112,6 +1112,17 @@ fn load_validations(ws: &XmlNode) -> Vec<Validation> {
                 allow_blank: flag("allowBlank"),
                 no_arrow: flag("showDropDown"),
                 error: n.attribute("error").unwrap_or_default().to_string(),
+                kind: n.attribute("type").filter(|t| *t != "list").unwrap_or_default().to_string(),
+                op: n.attribute("operator").unwrap_or_default().to_string(),
+                source2: n.children().find(|c| c.has_tag_name("formula2")).and_then(|c| c.text()).unwrap_or_default().trim().to_string(),
+                prompt_title: n.attribute("promptTitle").unwrap_or_default().to_string(),
+                prompt: n.attribute("prompt").unwrap_or_default().to_string(),
+                error_title: n.attribute("errorTitle").unwrap_or_default().to_string(),
+                error_style: match n.attribute("errorStyle") {
+                    Some("warning") => 1,
+                    Some("information") => 2,
+                    _ => 0,
+                },
             })
         })
         .collect()

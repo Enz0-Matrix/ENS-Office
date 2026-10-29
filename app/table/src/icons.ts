@@ -31,6 +31,10 @@ import i_shape_line_24 from '@fluentui/svg-icons/icons/line_24_regular.svg?raw';
 import i_shape_arrow_24 from '@fluentui/svg-icons/icons/arrow_up_right_24_regular.svg?raw';
 import i_text_box_24 from '@fluentui/svg-icons/icons/textbox_24_regular.svg?raw';
 import i_dropdown_list_24 from '@fluentui/svg-icons/icons/text_bullet_list_square_24_regular.svg?raw';
+import i_link_24 from '@fluentui/svg-icons/icons/link_24_regular.svg?raw';
+import i_arrange_front_24 from '@fluentui/svg-icons/icons/arrow_up_24_regular.svg?raw';
+import i_arrange_back_24 from '@fluentui/svg-icons/icons/arrow_down_24_regular.svg?raw';
+import i_rotate_cw_24 from '@fluentui/svg-icons/icons/arrow_rotate_clockwise_24_regular.svg?raw';
 import i_symbols_24 from '@fluentui/svg-icons/icons/symbols_24_regular.svg?raw';
 import textUnderline20 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import paintBucket20 from '@fluentui/svg-icons/icons/paint_bucket_20_regular.svg?raw';
@@ -112,6 +116,10 @@ export const ICONS: Record<string, string> = {
   'text_underline_20': textUnderline20,
   'symbols_24': i_symbols_24,
   'dropdown_list_24': i_dropdown_list_24,
+  'link_24': i_link_24,
+  'arrange_front_24': i_arrange_front_24,
+  'arrange_back_24': i_arrange_back_24,
+  'rotate_cw_24': i_rotate_cw_24,
   'shape_rect_24': i_shape_rect_24,
   'shape_ellipse_24': i_shape_ellipse_24,
   'shape_line_24': i_shape_line_24,

@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog } from './changelog';
@@ -17,14 +17,14 @@ import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
 import { THEMES, allThemes, applyTheme, setHiddenThemes, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
 import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
-import { copyText, readText } from './platform';
+import { copyText, openTarget, pickOpen, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
 import { FUNCTION_CATEGORIES } from './funclib';
 import { openSymbols } from './symbols';
 import { defineFromSelection, initNames, nameFormula, openNameManager } from './names';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { FUNCTIONS } from './functions';
-import { localeId, saveSettings, settings } from './settings';
+import { localeId, refreshShared, saveSettings, settings } from './settings';
 import * as desk from './desktop';
 import { isDesktop, isTauri } from './platform';
 
@@ -247,6 +247,11 @@ function commitEdit(dRow: number, dCol: number): void {
   const s = editCell;
   const value = activeValue();
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
+  const notice = value.startsWith('=') ? null : model.getValidationNotice(s.sheet, s.row, s.column, value);
+  if (notice && !confirm(`${notice.title ? `${notice.title}\n\n` : ''}${notice.message}\n\n${notice.style === 1 ? 'Продолжить?' : 'ОК — оставить значение, Отмена — править.'}`)) {
+    (editor.classList.contains('away') ? formula : editor).focus();
+    return;
+  }
   try {
     // «1 1/2» — число 1,5 с форматом «Дробный» (# ?/?), как в Excel; в ячейке «Общий» и только такой ввод.
     const frac = /^(-?)(\d+) +(\d+)\/(\d+)$/.exec(value.trim());
@@ -1092,6 +1097,14 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: has ? 'Изменить примечание…' : 'Вставить примечание…', separator: true, run: () => editComment(s.row, s.column) });
     if (has) items.push({ label: 'Удалить примечание', run: () => deleteComment(s.row, s.column) });
   }
+  if (!header) {
+    const has = !!linkOf(s.row, s.column);
+    items.push({ label: has ? 'Изменить ссылку…' : 'Ссылка…', keys: 'Ctrl+K', separator: true, run: () => linkDialog() });
+    if (has) {
+      items.push({ label: 'Открыть ссылку', run: () => openLink(s.row, s.column) });
+      items.push({ label: 'Удалить ссылку', run: () => deleteLink(s.row, s.column) });
+    }
+  }
   if (!header) items.push({ label: 'Формат ячеек…', keys: keysOf('format.cells'), run: () => run('format.cells') });
   if (!header && (rows > 1 || cols > 1)) {
     items.push({ label: 'Объединить и поместить в центр', separator: true, run: () => merge('center') });
@@ -1182,7 +1195,33 @@ grid.onDropdown = (x, y) => setTimeout(() => {
   })), x, y);
 });
 
-/** «Проверка данных» → список: ячейки, источник (перечень или диапазон), пустые значения, стрелка, сообщение об ошибке. */
+const VAL_KINDS: [string, string][] = [
+  ['list', 'Список'], ['whole', 'Целое число'], ['decimal', 'Действительное число'], ['date', 'Дата'], ['time', 'Время'],
+  ['textLength', 'Длина текста'], ['custom', 'Другой (формула, только сохраняется)'],
+];
+const VAL_OPS: [string, string][] = [
+  ['between', 'между'], ['notBetween', 'вне'], ['equal', 'равно'], ['notEqual', 'не равно'], ['greaterThan', 'больше'],
+  ['lessThan', 'меньше'], ['greaterThanOrEqual', 'больше или равно'], ['lessThanOrEqual', 'меньше или равно'],
+];
+/** Дата ГГГГ-ММ-ДД ↔ порядковый номер дня (как в xlsx); время чч:мм ↔ доля суток. */
+const dateToSerial = (iso: string): string => {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const r = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(iso);
+  const [y, mo, da] = d ? [d[1], d[2], d[3]] : r ? [r[3], r[2], r[1]] : [undefined, undefined, undefined];
+  return y && mo && da ? String(Math.round(Date.UTC(+y, +mo - 1, +da) / 86400000) + 25569) : iso;
+};
+const serialToDate = (v: string): string => /^\d{5}$/.test(v) ? new Date((+v - 25569) * 86400000).toISOString().slice(0, 10) : v;
+const timeToFraction = (t: string): string => {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t);
+  return m ? String(+((+m[1] * 3600 + +m[2] * 60 + +(m[3] ?? 0)) / 86400).toFixed(10)) : t;
+};
+const fractionToTime = (v: string): string => {
+  if (!/^0?[.,]\d+$/.test(v) && v !== '0' && v !== '1') return v;
+  const sec = Math.round(parseFloat(v.replace(',', '.')) * 86400), p = (n: number) => String(n).padStart(2, '0');
+  return `${p(Math.floor(sec / 3600) % 24)}:${p(Math.floor(sec / 60) % 60)}`;
+};
+
+/** «Проверка данных»: список, числа, даты, время, длина текста; сообщения ввода и ошибки. */
 function validationDialog(): void {
   if (editing) commitEdit(0, 0);
   const s = grid.sel, cell = (r: number, c: number) => `${columnName(c)}${r}`;
@@ -1197,26 +1236,62 @@ function validationDialog(): void {
   });
   const found = list.find((v) => covers(v.sqref));
   const literal = (src: string) => src.startsWith('"') ? src.replace(/^"|"$/g, '').split(',').join('; ') : src.replace(/^=/, '');
+  const opts = (items: [string, string][]) => items.map(([k, t]) => `<option value="${k}">${t}</option>`).join('');
   const overlay = $('recovery');
-  overlay.innerHTML = `<div class="modal"><h2>Раскрывающийся список</h2>
-    <p>Ячейка получит стрелку со списком; другое значение ввести нельзя.</p>
+  overlay.innerHTML = `<div class="modal"><h2>Проверка данных</h2>
     <p><label>Ячейки: <input data-f="cells" style="width:55%"></label></p>
-    <p><label>Источник: <input data-f="source" style="width:55%" placeholder="Да; Нет; Возможно  или  A1:A5"></label></p>
-    <p style="margin:0 0 8px;color:var(--muted)">Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).</p>
+    <p><label>Тип данных: <select data-f="kind">${opts(VAL_KINDS)}</select></label>
+      <label data-row="op" style="margin-left:10px"><select data-f="op">${opts(VAL_OPS)}</select></label></p>
+    <p data-row="source"><label><span data-l="source">Источник</span>: <input data-f="source" style="width:55%"></label></p>
+    <p data-row="source2"><label>Максимум: <input data-f="source2" style="width:55%"></label></p>
+    <p data-row="hint" style="margin:0 0 8px;color:var(--muted)"></p>
     <p><label><input type="checkbox" data-f="blank"> Игнорировать пустые ячейки</label>
-      <label style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
-    <p><label>Сообщение об ошибке: <input data-f="error" style="width:55%" placeholder="по умолчанию"></label></p>
-    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать список</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+      <label data-row="arrow" style="margin-left:14px"><input type="checkbox" data-f="arrow"> Показывать стрелку</label></p>
+    <fieldset style="border:1px solid var(--border);margin:0 0 8px"><legend>Подсказка при выделении ячейки</legend>
+      <p><input data-f="ptitle" placeholder="Заголовок" style="width:90%"></p>
+      <p><input data-f="prompt" placeholder="Текст подсказки" style="width:90%"></p></fieldset>
+    <fieldset style="border:1px solid var(--border);margin:0 0 8px"><legend>Сообщение об ошибке</legend>
+      <p><label>Вид: <select data-f="style"><option value="0">Останов (запретить ввод)</option><option value="1">Предупреждение (спросить)</option><option value="2">Сообщение (предупредить)</option></select></label></p>
+      <p><input data-f="etitle" placeholder="Заголовок" style="width:90%"></p>
+      <p><input data-f="error" placeholder="Текст (по умолчанию стандартный)" style="width:90%"></p></fieldset>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Убрать проверку</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
-  const f = (n: string) => box.querySelector<HTMLInputElement>(`[data-f="${n}"]`)!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
+  const row = (n: string) => box.querySelector<HTMLElement>(`[data-row="${n}"]`)!;
+  const kindNow = () => f('kind').value;
+  const refresh = () => {
+    const k = kindNow(), isList = k === 'list', isCustom = k === 'custom';
+    row('op').hidden = isList || isCustom;
+    const two = !isList && !isCustom && ['between', 'notBetween'].includes(f('op').value);
+    row('source2').hidden = !two;
+    row('arrow').hidden = !isList;
+    box.querySelector('[data-l="source"]')!.textContent = isList ? 'Источник' : isCustom ? 'Формула' : two ? 'Минимум' : 'Значение';
+    row('source2').querySelector('label')!.firstChild!.textContent = 'Максимум: ';
+    row('hint').textContent = isList ? 'Перечислите значения через «;» или укажите диапазон на листе (в том числе кнопкой справа).'
+      : k === 'date' ? 'Дата ГГГГ-ММ-ДД, ДД.ММ.ГГГГ или ссылка на ячейку.' : k === 'time' ? 'Время чч:мм или ссылка на ячейку.'
+        : isCustom ? 'Формула сохраняется в файле и работает в Excel, но здесь пока не проверяется.' : 'Число или ссылка на ячейку (например, $A$1).';
+  };
+  f('kind').addEventListener('change', refresh);
+  f('op').addEventListener('change', refresh);
+  const k0 = found?.kind || 'list';
   f('cells').value = found?.sqref ?? sel;
-  f('source').value = found ? literal(found.source) : '';
+  f('kind').value = k0;
+  f('op').value = found?.op || 'between';
+  const show = (v: string) => k0 === 'date' ? serialToDate(v) : k0 === 'time' ? fractionToTime(v) : k0 === 'list' ? literal(v) : v;
+  f('source').value = found ? show(found.source) : '';
+  f('source2').value = found ? show(found.source2 ?? '') : '';
   f('blank').checked = found?.allow_blank ?? true;
   f('arrow').checked = !(found?.no_arrow ?? false);
   f('error').value = found?.error ?? '';
+  f('etitle').value = found?.error_title ?? '';
+  f('ptitle').value = found?.prompt_title ?? '';
+  f('prompt').value = found?.prompt ?? '';
+  f('style').value = String(found?.error_style ?? 0);
+  refresh();
   addRangePicker(f('cells'));
   addRangePicker(f('source'), 'sheet');
+  addRangePicker(f('source2'), 'sheet');
   f('source').focus();
   const close = () => { overlay.hidden = true; focusGrid(); };
   box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });
@@ -1226,15 +1301,183 @@ function validationDialog(): void {
     try {
       if (act === 'delete' && found) model.setValidations(grid.sheet, list.filter((v) => v !== found));
       if (act === 'ok') {
+        const kind = kindNow();
         const text = f('source').value.trim();
-        const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
-        const source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
-        if (!text) { showToast('Укажите значения списка или диапазон.'); return; }
-        const next = { sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: !f('arrow').checked, error: f('error').value.trim() };
+        if (!text) { showToast(kind === 'list' ? 'Укажите значения списка или диапазон.' : 'Укажите значение.'); return; }
+        const norm = (raw: string): string => {
+          const t = raw.trim();
+          if (kind === 'date') return dateToSerial(t);
+          if (kind === 'time') return timeToFraction(t);
+          if (kind === 'whole' || kind === 'decimal' || kind === 'textLength') return t.replace(',', '.');
+          return t;
+        };
+        let source: string, source2 = '';
+        if (kind === 'list') {
+          const isRange = /^=?(?:'[^']+'|[^'!;,"]+)?!?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$/.test(text) && /\d/.test(text) && !/[;,]/.test(text);
+          source = isRange ? text.replace(/^=/, '') : `"${text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).join(',')}"`;
+        } else {
+          source = kind === 'custom' ? text.replace(/^=/, '') : norm(text);
+          if (kind !== 'custom' && ['between', 'notBetween'].includes(f('op').value)) {
+            source2 = norm(f('source2').value);
+            if (!source2) { showToast('Укажите максимум.'); return; }
+          }
+        }
+        const plain = kind === 'list' || kind === 'custom';
+        const next: Validation = {
+          sqref: f('cells').value.trim().toUpperCase(), source, allow_blank: f('blank').checked, no_arrow: kind === 'list' && !f('arrow').checked,
+          error: f('error').value.trim(), kind: kind === 'list' ? '' : kind, op: plain ? '' : (f('op').value === 'between' ? '' : f('op').value), source2,
+          prompt_title: f('ptitle').value.trim(), prompt: f('prompt').value.trim(), error_title: f('etitle').value.trim(), error_style: Number(f('style').value),
+        };
+        if (!plain && f('op').value === 'between') next.op = '';
         model.setValidations(grid.sheet, found ? list.map((v) => (v === found ? next : v)) : [...list, next]);
       }
     } catch (err) { showToast(String(err)); return; }
     grid.render();
+    close();
+  });
+}
+
+// --- Гиперссылки ---
+
+const linkOf = (row: number, column: number): CellLinkInfo | undefined => {
+  try { return model.getCellLink(grid.sheet, row, column) ?? undefined; } catch { return undefined; }
+};
+
+/** Адрес, как его вводят: «ivan@mail.ru» → mailto:, «www.site.ru» → https://. */
+function normalizeAddress(text: string): string {
+  const t = text.trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(t) && !/^[a-z]:[\\/]/i.test(t)) return t;
+  if (/^[^\s@/\\]+@[^\s@/\\]+\.[^\s@/\\]+$/.test(t)) return `mailto:${t}`;
+  if (/^www\./i.test(t)) return `https://${t}`;
+  return t;
+}
+
+/** Место в этой книге, как в Excel: «Лист 2!A1» (имя листа с пробелами — в кавычках) или имя диапазона. */
+function locationText(sheet: string, cell: string): string {
+  const c = cell.trim().replace(/\$/g, '').toUpperCase();
+  if (!/^[A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?$/.test(c)) return cell.trim();
+  return `${/^[\p{L}\p{N}_]+$/u.test(sheet) ? sheet : `'${sheet.replace(/'/g, "''")}'`}!${c}`;
+}
+
+function splitLocation(loc: string): { sheet: string; cell: string } {
+  const i = loc.lastIndexOf('!');
+  if (i < 0) return { sheet: '', cell: loc };
+  return { sheet: loc.slice(0, i).replace(/^'|'$/g, '').replace(/''/g, "'"), cell: loc.slice(i + 1) };
+}
+
+/** Относительные пути файлов считаются от папки книги. */
+function resolveFile(target: string): string {
+  if (!doc.path || /^([a-z]:[\\/]|[\\/]|[a-z][a-z0-9+.-]*:)/i.test(target)) return target;
+  const dir = doc.path.replace(/[\\/][^\\/]*$/, '');
+  return `${dir}${doc.path.includes('\\') ? '\\' : '/'}${target}`;
+}
+
+function openLink(row: number, column: number): void {
+  const link = linkOf(row, column);
+  if (!link) { showToast('В этой ячейке нет ссылки.'); return; }
+  if (link.type === 'Internal') {
+    const { sheet, cell } = splitLocation(link.location);
+    const props = model.getWorksheetsProperties();
+    if (sheet) { goToArea(sheet, cell.replace(/\$/g, '')); return; }
+    const named = model.getDefinedNameList().find((n) => n.name.toLowerCase() === cell.toLowerCase());
+    if (named) {
+      const f = splitLocation(named.formula.replace(/^=/, ''));
+      goToArea(f.sheet || props[grid.sheet].name, f.cell.replace(/\$/g, ''));
+    } else goToArea(props[grid.sheet].name, cell.replace(/\$/g, ''));
+    return;
+  }
+  const url = link.target;
+  if (/^(https?:|mailto:|tel:)/i.test(url)) {
+    if (isDesktop) openTarget(url).catch((e) => showToast(String((e as Error)?.message ?? e)));
+    else window.open(url, '_blank', 'noopener');
+    return;
+  }
+  if (!isDesktop) { showToast('Файлы по ссылке открываются только в приложении.'); return; }
+  openTarget(resolveFile(url.replace(/^file:\/\/\/?/i, '').split('#')[0])).catch((e) => showToast(String((e as Error)?.message ?? e)));
+}
+
+grid.onLinkClick = (row, column) => {
+  if (!linkOf(row, column)) return false;
+  openLink(row, column);
+  return true;
+};
+
+function deleteLink(row: number, column: number): void {
+  try { model.deleteCellLink(grid.sheet, row, column); } catch (e) { showToast(String(e)); }
+  grid.render();
+}
+
+/** «Вставка» → «Ссылка» (Ctrl+K): на сайт, почту, файл или место в книге; текст ячейки и подсказка. */
+function linkDialog(): void {
+  if (editing) commitEdit(0, 0);
+  const { row, column } = grid.sel;
+  const found = linkOf(row, column);
+  const props = model.getWorksheetsProperties();
+  const names = model.getDefinedNameList().map((n) => n.name);
+  const cur = model.getFormattedCellValue(grid.sheet, row, column);
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Ссылка</h2>
+    <p><label><input type="radio" name="lk" data-f="ext"> На сайт, почту или файл</label>
+      <label style="margin-left:14px"><input type="radio" name="lk" data-f="int"> На место в этой книге</label></p>
+    <p><label>Текст: <input data-f="text" style="width:70%" placeholder="как будет выглядеть в ячейке"></label></p>
+    <div data-row="ext"><p><label>Адрес: <input data-f="target" style="width:70%" placeholder="https://… , имя@почта или путь к файлу"></label>
+      ${isDesktop ? '<button data-act="browse">Файл…</button>' : ''}</p></div>
+    <div data-row="int"><p><label>Лист: <select data-f="sheet">${props.map((p) => `<option>${p.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('')}</select></label>
+      <label style="margin-left:10px">Ячейка: <input data-f="cell" style="width:90px" placeholder="A1"></label></p>
+      <p><label>или имя диапазона: <input data-f="name" list="lk-names" style="width:40%"></label><datalist id="lk-names">${names.map((n) => `<option value="${n}">`).join('')}</datalist></p></div>
+    <p><label>Подсказка: <input data-f="tip" style="width:70%" placeholder="показывается при наведении"></label></p>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Удалить ссылку</button>' : ''}${found ? '<button data-act="open">Открыть</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
+  const row_ = (n: string) => box.querySelector<HTMLElement>(`[data-row="${n}"]`)!;
+  const refresh = () => { row_('ext').hidden = !f('ext').checked; row_('int').hidden = !f('int').checked; };
+  f('ext').addEventListener('change', refresh);
+  f('int').addEventListener('change', refresh);
+  const internal = found?.type === 'Internal';
+  f('ext').checked = !internal; f('int').checked = internal;
+  f('text').value = cur;
+  f('tip').value = found?.tooltip ?? '';
+  f('sheet').value = props[grid.sheet].name;
+  if (found?.type === 'External') f('target').value = found.target;
+  if (found?.type === 'Internal') {
+    const { sheet, cell } = splitLocation(found.location);
+    if (sheet) { f('sheet').value = sheet; f('cell').value = cell; } else if (names.includes(cell)) f('name').value = cell; else f('cell').value = cell;
+  } else f('cell').value = 'A1';
+  refresh();
+  (internal ? f('cell') : f('target')).focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); if (e.key === 'Enter') box.querySelector<HTMLElement>('[data-act="ok"]')!.click(); });
+  box.addEventListener('click', async (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (act === 'browse') {
+      const p = await pickOpen();
+      if (p) { f('target').value = p; if (!f('text').value.trim()) f('text').value = p.replace(/^.*[\\/]/, ''); }
+      return;
+    }
+    if (act === 'open') { close(); openLink(row, column); return; }
+    try {
+      if (act === 'delete') deleteLink(row, column);
+      if (act === 'ok') {
+        const tooltip = f('tip').value.trim() || null;
+        let link: CellLinkInfo, fallback: string;
+        if (f('int').checked) {
+          const loc = f('name').value.trim() || locationText(f('sheet').value, f('cell').value);
+          if (!f('name').value.trim() && !/!/.test(loc)) { showToast('Укажите ячейку, например A1.'); return; }
+          link = { type: 'Internal', location: loc, tooltip };
+          fallback = loc;
+        } else {
+          const target = normalizeAddress(f('target').value);
+          if (!target) { showToast('Укажите адрес ссылки.'); return; }
+          link = { type: 'External', target, tooltip };
+          fallback = target;
+        }
+        const text = f('text').value.trim();
+        model.setCellLink(grid.sheet, row, column, link, text || (cur ? null : fallback));
+      }
+    } catch (err) { showToast(String(err)); return; }
+    grid.render(); updateFormulaBar();
     close();
   });
 }
@@ -1249,6 +1492,43 @@ function insertShape(kind: number): void {
     grid.selObj = grid.images.length + grid.charts.length + list.length;
     grid.render();
   } catch (e) { showToast(String(e)); }
+}
+
+type ShapeOrder = 'front' | 'forward' | 'backward' | 'back';
+
+/** Выделенная фигура и её номер среди фигур листа. */
+function selectedShape(): number {
+  const o = grid.objAt(grid.selObj);
+  if (o?.kind !== 'shape') { showToast('Сначала выделите фигуру: щёлкните по ней.'); return -1; }
+  return o.index;
+}
+
+/** Порядок наложения фигур: чем позже в списке, тем выше (так же рисуется и сохраняется в xlsx). */
+function orderShape(op: ShapeOrder): void {
+  const i = selectedShape();
+  if (i < 0) return;
+  try {
+    const list = [...model.getShapes(grid.sheet)];
+    const to = op === 'front' ? list.length - 1 : op === 'back' ? 0 : op === 'forward' ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1);
+    if (to === i) return;
+    const [sh] = list.splice(i, 1);
+    list.splice(to, 0, sh);
+    model.setShapes(grid.sheet, list);
+    grid.selObj = grid.images.length + grid.charts.length + to;
+  } catch (e) { showToast(String(e)); }
+  grid.render();
+}
+
+grid.onShapeRotate = (index, degrees) => {
+  try { model.setShapes(grid.sheet, model.getShapes(grid.sheet).map((x, k) => (k === index ? { ...x, rotation: degrees } : x))); } catch (e) { showToast(String(e)); }
+  grid.render();
+};
+
+function rotateShape(delta: number): void {
+  const i = selectedShape();
+  if (i < 0) return;
+  const sh = model.getShapes(grid.sheet)[i];
+  grid.onShapeRotate(i, (((sh.rotation || 0) + delta) % 360 + 360) % 360);
 }
 
 /** Окно фигуры: текст, заливка, контур, шрифт; «Удалить». */
@@ -1269,6 +1549,10 @@ function shapeDialog(index: number): void {
     <p><label>Размер шрифта: <input type="number" data-f="fs" min="6" max="96" style="width:60px"></label>
       <label style="margin-left:14px"><input type="checkbox" data-f="bold"> Жирный</label>
       <label style="margin-left:14px">Выравнивание: <select data-f="align"><option value="0">слева</option><option value="1">по центру</option><option value="2">справа</option></select></label></p>`}
+    <p><label>Поворот: <input type="number" data-f="rot" min="0" max="359" style="width:60px">°</label>
+      <button data-act="rot90" title="Повернуть на 90° по часовой стрелке">↻ 90°</button></p>
+    <p>Порядок: <button data-act="front">На передний план</button> <button data-act="forward">Вперёд</button>
+      <button data-act="backward">Назад</button> <button data-act="back">На задний план</button></p>
     <div class="rec-actions"><button data-act="delete" class="danger">Удалить</button><button data-act="cancel">Отмена</button><button data-act="ok" class="primary">Применить</button></div></div>`;
   overlay.hidden = false;
   const box = overlay.querySelector<HTMLElement>('.modal')!;
@@ -1278,6 +1562,7 @@ function shapeDialog(index: number): void {
   if (f('text')) f('text')!.value = sh.text;
   f('lw')!.value = String(sh.line_width || 1);
   if (f('flip')) f('flip')!.checked = sh.flip;
+  f('rot')!.value = String(sh.rotation || 0);
   if (f('fs')) f('fs')!.value = String(sh.font_size || 11);
   if (f('bold')) f('bold')!.checked = sh.bold;
   if (f('align')) f('align')!.value = String(sh.align);
@@ -1287,6 +1572,8 @@ function shapeDialog(index: number): void {
   box.addEventListener('click', (e) => {
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
+    if (act === 'rot90') { f('rot')!.value = String(((Number(f('rot')!.value) || 0) + 90) % 360); return; }
+    if (['front', 'forward', 'backward', 'back'].includes(act)) { close(); grid.selObj = grid.images.length + grid.charts.length + index; orderShape(act as ShapeOrder); return; }
     try {
       if (act === 'delete') model.setShapes(grid.sheet, list.filter((_, k) => k !== index));
       if (act === 'ok') {
@@ -1298,6 +1585,7 @@ function shapeDialog(index: number): void {
           line_color: line ? (pick('line') || '#000000') : pick('line'),
           line_width: Math.max(1, Math.min(20, Math.round(Number(f('lw')!.value) || 1))),
           flip: f('flip') ? f('flip')!.checked : sh.flip,
+          rotation: (((Math.round(Number(f('rot')!.value)) || 0) % 360) + 360) % 360,
           text_color: line ? '' : pick('text'),
           font_size: f('fs') ? Math.max(0, Math.min(96, Number(f('fs')!.value) || 0)) : sh.font_size,
           bold: f('bold') ? f('bold')!.checked : sh.bold,
@@ -1602,6 +1890,19 @@ document.body.appendChild(commentTip);
 let tipCell = '';
 grid.onCellHover = (row, column, x, y) => {
   const c = row ? commentOf(row, column) : undefined;
+  const lk = row && !c ? linkOf(row, column) : undefined;
+  if (lk) {
+    const key = `L${row}:${column}`;
+    if (key !== tipCell) {
+      tipCell = key;
+      const where = lk.type === 'Internal' ? lk.location : lk.target;
+      commentTip.textContent = `${lk.tooltip ? `${lk.tooltip}\n` : ''}${where}\nCtrl+щелчок — открыть`;
+    }
+    commentTip.style.left = `${Math.min(x + 14, window.innerWidth - 280)}px`;
+    commentTip.style.top = `${Math.min(y + 14, window.innerHeight - 120)}px`;
+    commentTip.hidden = false;
+    return;
+  }
   if (!c) { commentTip.hidden = true; tipCell = ''; return; }
   const key = `${row}:${column}`;
   if (key !== tipCell) {
@@ -1615,6 +1916,25 @@ grid.onCellHover = (row, column, x, y) => {
   commentTip.hidden = false;
 };
 document.addEventListener('mouseleave', () => { commentTip.hidden = true; tipCell = ''; });
+
+/** Подсказка проверки данных у выделенной ячейки. */
+const valTip = Object.assign(document.createElement('div'), { className: 'comment-tip', hidden: true });
+document.body.appendChild(valTip);
+function showValidationPrompt(): void {
+  valTip.hidden = true;
+  if (editing) return;
+  let p: { title: string; message: string } | null = null;
+  try { p = model.getValidationPrompt(grid.sheet, grid.sel.row, grid.sel.column); } catch { /* нет подсказки */ }
+  if (!p) return;
+  valTip.textContent = '';
+  if (p.title) valTip.append(Object.assign(document.createElement('b'), { textContent: p.title }), document.createElement('br'));
+  valTip.append(p.message);
+  const r = grid.activeRect(), host = grid.scroller.getBoundingClientRect();
+  valTip.style.left = `${Math.min(host.left + r.x + 4, window.innerWidth - 280)}px`;
+  valTip.style.top = `${Math.min(host.top + r.y + r.h + 4, window.innerHeight - 100)}px`;
+  valTip.hidden = false;
+}
+document.addEventListener('keydown', () => { valTip.hidden = true; }, true);
 
 /** Разрыв страницы выше и левее активной ячейки (как в Excel). */
 function pageBreak(on: boolean): void {
@@ -1698,9 +2018,11 @@ function rotatedHeight(text: string, st: CellStyle, rot: number): number {
   const px = Math.round((f.sz ?? 11) * 1.33);
   if (rot === 255) return Math.min(409, [...text.replace(/\n/g, '')].length * Math.round(px * 1.1) + 8);
   measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${px}px ${fontStack(f.name)}`;
-  const tw = measure.measureText(text.replace(/\n/g, ' ')).width;
+  // Строки, разделённые Alt+Enter, идут рядом друг с другом поперёк наклонной базовой линии.
+  const lines = text.split('\n');
+  const tw = Math.max(...lines.map((l) => measure.measureText(l).width));
   const rad = ((rot <= 90 ? rot : rot - 90) * Math.PI) / 180;
-  return Math.min(409, Math.ceil(tw * Math.sin(rad) + px * Math.cos(rad) + 8));
+  return Math.min(409, Math.ceil(tw * Math.sin(rad) + lines.length * Math.round(px * 1.22) * Math.cos(rad) + 8));
 }
 
 /** Высота строк с переносом текста — по содержимому, как в Excel; строки с ручной высотой не трогаем. */
@@ -1713,8 +2035,9 @@ function fitRows(r1: number, r2: number): void {
     });
     if (!wrapped) continue;
     const now = Math.round(model.getRowHeight(grid.sheet, r) * 22 / 25);
-    if (!isAutoHeight(r, now)) continue;
     const need = fitRow(r);
+    // Высота не от подгонки (задана вручную или осталась от прежнего оформления): только увеличиваем, если текст не помещается.
+    if (!isAutoHeight(r, now) && need <= now) continue;
     if (need === now) continue;
     setSize('row', r, r, need);
     let rows = autoHeights.get(grid.sheet);
@@ -2007,15 +2330,18 @@ function wink(kind: 'undo' | 'redo'): void {
 }
 
 const SCOPES: ['book' | 'sheet' | 'others', string][] = [
-  ['book', 'Вся книга'], ['sheet', 'Только этот лист'], ['others', 'Все листы, кроме этого'],
+  ['book', 'Вся книга'], ['sheet', 'Только этот лист'], ['others', 'Только другие листы, не этот'],
 ];
 const qaScope = $<HTMLButtonElement>('qa-scope');
 function showScope(): void {
   const label = SCOPES.find(([k]) => k === settings.undoScope)![1];
   qaScope.textContent = settings.undoScope === 'book' ? '▾' : `▾ ${settings.undoScope === 'sheet' ? 'лист' : 'др.'}`;
   qaScope.title = `Что отменяют стрелки: ${label}`;
+  // Ползунок «Правила отмены» на ленте показывает то же правило.
+  document.dispatchEvent(new Event('ens-undo-scope'));
 }
 showScope();
+document.addEventListener('ens-undo-scope-set', () => { showScope(); syncUndoState(); });
 qaScope.addEventListener('mousedown', (e) => e.preventDefault());
 qaScope.addEventListener('click', () => {
   const r = qaScope.getBoundingClientRect();
@@ -2446,6 +2772,7 @@ function takeClip(cut: boolean): string {
     : fullRows ? { kind: 'row' as const, start: s.r1, count: s.r2 - s.r1 + 1 }
     : { kind: 'column' as const, start: s.c1, count: s.c2 - s.c1 + 1 };
   clip = { data: c.data, sheet: grid.sheet, range: c.range, text, cut, lines };
+  shareClip(clip);
   grid.clipRange = { r1: s.r1, c1: s.c1, r2: Math.min(s.r2, c.range[2]), c2: Math.min(s.c2, c.range[3]), sheet: grid.sheet };
   grid.render();
   return text;
@@ -2468,6 +2795,23 @@ function insertCutLines(before: number): void {
   });
   dropClip();
   if (ok) grid.selectLines(L.kind, L.start + delta, L.start + delta + L.count - 1);
+}
+
+/** Другое окно (другая книга) той же программы видит скопированное через общее хранилище. */
+const SHARED_CLIP = 'ens-clip';
+function shareClip(c: Clip): void {
+  try {
+    const json = JSON.stringify({ text: c.text, data: c.data, range: c.range }, (_k, v) => (v instanceof Map ? { __map: [...v] } : v));
+    if (json.length < 4_000_000) localStorage.setItem(SHARED_CLIP, json); else localStorage.removeItem(SHARED_CLIP);
+  } catch { /* общий буфер недоступен: останется текст */ }
+}
+function foreignClip(text: string): { data: unknown; range: [number, number, number, number] } | null {
+  try {
+    const raw = localStorage.getItem(SHARED_CLIP);
+    if (!raw) return null;
+    const c = JSON.parse(raw, (_k, v) => (v && typeof v === 'object' && Array.isArray(v.__map) ? new Map(v.__map) : v)) as { text: string; data: unknown; range: [number, number, number, number] };
+    return sameText(text, c.text) ? c : null;
+  } catch { return null; }
 }
 
 function dropClip(): void {
@@ -2516,7 +2860,17 @@ function pasteHere(text: string): void {
     if (c.cut) dropClip(); // вырезанное вставляется один раз
   } else {
     if (clip) dropClip();
-    pasteText(text);
+    const other = foreignClip(text);
+    if (other) {
+      // Скопировано в другой книге: значения, формулы и оформление переносятся, как в Excel.
+      const [r1, c1, r2, c2] = other.range;
+      const area = selectionArea();
+      try {
+        model.setSelectedCell(area.row, area.column);
+        model.pasteFromOtherBook(other.range, other.data);
+        grid.selectRange(area.row, area.column, area.row + r2 - r1, area.column + c2 - c1);
+      } catch (e) { showToast(`Не удалось вставить: ${e}`); }
+    } else pasteText(text);
   }
   grid.render();
   updateFormulaBar();
@@ -2882,7 +3236,7 @@ function rotationMenu(x: number, y: number): void {
   showMenu([
     ...ROTATIONS.map(([v, label]) => ({
       label, checked: v === cur,
-      run: () => { style('alignment.text_rotation', () => String(v)); fitRows(grid.sel.r1, grid.sel.r2); },
+      run: () => { style('alignment.text_rotation', () => String(v)); const { r1, r2 } = grid.sel; setTimeout(() => fitRows(r1, r2), 0); },
     })),
     {
       label: 'Свой угол…', separator: true,
@@ -2891,7 +3245,8 @@ function rotationMenu(x: number, y: number): void {
         const n = Math.round(Number(a?.replace(',', '.')));
         if (a === null || !Number.isFinite(n) || n < -90 || n > 90) return;
         style('alignment.text_rotation', () => String(n >= 0 ? n : 90 - n));
-        fitRows(grid.sel.r1, grid.sel.r2);
+        const { r1, r2 } = grid.sel;
+        setTimeout(() => fitRows(r1, r2), 0);
       },
     },
   ], x, y);
@@ -2989,7 +3344,13 @@ register(
       showMenu(items, b ? b.left : lastPointer.x, b ? b.bottom + 2 : lastPointer.y + 8);
     },
   })),
-  { id: 'data.validation', label: 'Раскрывающийся список (проверка данных)', keywords: ['validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
+  { id: 'data.validation', label: 'Проверка данных', keywords: ['числа', 'даты', 'длина текста', 'ограничить ввод', 'validation', 'dropdown', 'drop-down', 'list', 'список', 'выпадающий', 'раскрывающийся', 'проверка данных'], run: () => validationDialog() },
+  { id: 'shape.front', label: 'Фигура: на передний план', keywords: ['bring to front', 'порядок', 'наложение', 'наверх'], run: () => orderShape('front') },
+  { id: 'shape.forward', label: 'Фигура: на уровень вперёд', keywords: ['bring forward', 'вперёд'], run: () => orderShape('forward') },
+  { id: 'shape.backward', label: 'Фигура: на уровень назад', keywords: ['send backward', 'назад'], run: () => orderShape('backward') },
+  { id: 'shape.back', label: 'Фигура: на задний план', keywords: ['send to back', 'вниз', 'под всё'], run: () => orderShape('back') },
+  { id: 'shape.rotateRight', label: 'Фигура: повернуть на 90° по часовой', keywords: ['rotate', 'поворот', 'повернуть'], run: () => rotateShape(90) },
+  { id: 'shape.rotateLeft', label: 'Фигура: повернуть на 90° против часовой', keywords: ['rotate left', 'поворот'], run: () => rotateShape(-90) },
   { id: 'shape.rect', label: 'Фигура: прямоугольник', keywords: ['shape', 'rectangle', 'фигура', 'прямоугольник'], run: () => insertShape(0) },
   { id: 'shape.round', label: 'Фигура: скруглённый прямоугольник', keywords: ['rounded', 'скруглённый'], run: () => insertShape(1) },
   { id: 'shape.ellipse', label: 'Фигура: эллипс', keywords: ['ellipse', 'oval', 'круг', 'овал', 'эллипс'], run: () => insertShape(2) },
@@ -3008,6 +3369,12 @@ register(
     checked: () => model.isStructureLocked(), run: () => void toggleBookProtection() },
   { id: 'protect.cells', label: 'Защита ячеек…', keywords: ['locked', 'hidden', 'скрыть формулы', 'защищаемая ячейка'],
     run: () => cellProtectionDialog() },
+  { id: 'link.edit', label: 'Ссылка (вставить или изменить)', keywords: ['hyperlink', 'link', 'гиперссылка', 'ссылка', 'сайт', 'ссылка на файл'], keys: ['Ctrl+KeyK'],
+    run: () => linkDialog() },
+  { id: 'link.open', label: 'Открыть ссылку ячейки', keywords: ['open link', 'перейти по ссылке'],
+    run: () => openLink(grid.sel.row, grid.sel.column) },
+  { id: 'link.delete', label: 'Удалить ссылку', keywords: ['remove hyperlink', 'убрать ссылку'],
+    run: () => deleteLink(grid.sel.row, grid.sel.column) },
   { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
     run: () => editComment(grid.sel.row, grid.sel.column) },
   { id: 'comment.delete', label: 'Удалить примечание', keywords: ['delete comment', 'удалить комментарий'],
@@ -3432,7 +3799,7 @@ function syncNumberFormat(): void {
   select.value = fmt;
 }
 
-grid.onSelect = () => { updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
+grid.onSelect = () => { showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
 grid.scroller.addEventListener('focus', () => { if (!editing) focusGrid(); });
@@ -3498,7 +3865,13 @@ async function newBook(): Promise<void> {
 
 initBackstage({
   docInfo: () => ({ title: doc.title, path: doc.path, dirty: doc.dirty }),
-  recent: () => settings.recent,
+  recent: () => { refreshShared(); return settings.recent; },
+  pinned: () => { refreshShared(); return settings.pinned; },
+  pin: desk.pin,
+  unpin: desk.unpin,
+  pinFile: desk.pinFile,
+  pinFolder: desk.pinFolder,
+  openFromFolder: (d) => void desk.openFromFolder(d),
   newBook: () => void newBook(),
   open: () => void desk.openDialog(),
   openPath: (p) => void desk.openPath(p),

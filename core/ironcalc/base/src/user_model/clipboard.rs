@@ -184,6 +184,13 @@ impl<'a> UserModel<'a> {
         })
     }
 
+    /// ENS-Office: paste cells copied in another workbook: values, formulas and styles come
+    /// with the clipboard; merged cells and conditional formatting of the source are not
+    /// known here, so they are not copied.
+    pub fn paste_from_other_book(&mut self, source_range: ClipboardTuple, clipboard: &ClipboardData) -> Result<(), String> {
+        self.paste_clipboard_impl(None, source_range, clipboard, false)
+    }
+
     /// Paste text that we copied
     pub fn paste_from_clipboard(
         &mut self,
@@ -192,6 +199,17 @@ impl<'a> UserModel<'a> {
         clipboard: &ClipboardData,
         is_cut: bool,
     ) -> Result<(), String> {
+        self.paste_clipboard_impl(Some(source_sheet), source_range, clipboard, is_cut)
+    }
+
+    fn paste_clipboard_impl(
+        &mut self,
+        source: Option<u32>,
+        source_range: ClipboardTuple,
+        clipboard: &ClipboardData,
+        is_cut: bool,
+    ) -> Result<(), String> {
+        let source_sheet = source.unwrap_or(0);
         self.guard_selection()?;
         let mut diff_list = Vec::new();
         let view = self.get_selected_view();
@@ -222,7 +240,7 @@ impl<'a> UserModel<'a> {
         // step below can remove target merges: when the paste overlaps its
         // own source, a source merge can also be a replaced target merge and
         // must still be recreated.
-        let source_merges: Vec<MergedCell> = self
+        let source_merges: Vec<MergedCell> = if source.is_none() { Vec::new() } else { self
             .model
             .get_merged_cells(source_sheet)?
             .iter()
@@ -235,7 +253,7 @@ impl<'a> UserModel<'a> {
                 )
             })
             .copied()
-            .collect();
+            .collect() };
 
         // Merged cells in the target are replaced by the paste (or reject it)
         let pasted_merges: Vec<MergedCell> = source_merges
@@ -641,7 +659,7 @@ impl<'a> UserModel<'a> {
             }
 
             // Copy-paste: duplicate CF rules from the source area to the target.
-            let cf_copies = self.model.get_cf_rules_to_copy(
+            let cf_copies = if source.is_none() { Vec::new() } else { self.model.get_cf_rules_to_copy(
                 source_sheet,
                 source_first_row,
                 source_first_column,
@@ -649,7 +667,7 @@ impl<'a> UserModel<'a> {
                 source_last_column,
                 selected_row,
                 selected_column,
-            );
+            ) };
             for (new_range, new_rule) in cf_copies {
                 let priority = self
                     .model

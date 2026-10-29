@@ -493,12 +493,12 @@ fn test_ens_shapes_export() {
     use ironcalc_base::types::Shape;
     let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
     model.set_user_input(0, 1, 1, "x").unwrap();
-    let base = Shape { kind: 0, text: String::new(), fill: String::new(), line_color: String::new(), line_width: 0, text_color: String::new(), font_size: 0.0, bold: false, align: 0, flip: false, row: 3, column: 2, dx: 4, dy: 5, width: 120, height: 60 };
+    let base = Shape { kind: 0, text: String::new(), fill: String::new(), line_color: String::new(), line_width: 0, text_color: String::new(), font_size: 0.0, bold: false, align: 0, flip: false, rotation: 0, row: 3, column: 2, dx: 4, dy: 5, width: 120, height: 60 };
     let rect = Shape { text: "Итог & проверка\nвторая строка".to_string(), fill: "#FFE699".to_string(), line_color: "#7F6000".to_string(), line_width: 2, text_color: "#C00000".to_string(), font_size: 14.0, bold: true, align: 1, ..base.clone() };
-    let round = Shape { kind: 1, fill: "#DDEBF7".to_string(), line_color: "#2F75B5".to_string(), line_width: 1, ..base.clone() };
+    let round = Shape { kind: 1, fill: "#DDEBF7".to_string(), line_color: "#2F75B5".to_string(), line_width: 1, rotation: 45, ..base.clone() };
     let ellipse = Shape { kind: 2, fill: "#E2EFDA".to_string(), row: 8, ..base.clone() };
     let line = Shape { kind: 3, line_color: "#000000".to_string(), line_width: 3, width: 100, height: 0, row: 10, ..base.clone() };
-    let arrow = Shape { kind: 4, line_color: "#FF0000".to_string(), line_width: 2, flip: true, width: 80, height: 80, row: 12, ..base.clone() };
+    let arrow = Shape { kind: 4, line_color: "#FF0000".to_string(), line_width: 2, flip: true, rotation: 270, width: 80, height: 80, row: 12, ..base.clone() };
     let tbox = Shape { kind: 5, text: "Надпись".to_string(), align: 2, row: 14, ..base.clone() };
     let all = vec![rect, round, ellipse, line, arrow, tbox];
     assert!(model.set_shapes(0, vec![Shape { kind: 9, ..base.clone() }]).is_err());
@@ -515,7 +515,7 @@ fn test_ens_shapes_export() {
     zip.by_name("xl/drawings/drawing1.xml").unwrap().read_to_string(&mut drawing).unwrap();
     let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
     std::fs::remove_file(name).unwrap();
-    assert!(drawing.contains("prst=\"roundRect\"") && drawing.contains("prst=\"ellipse\"") && drawing.contains("<a:tailEnd type=\"triangle\"/>") && drawing.contains("txBox=\"1\"") && drawing.contains("Итог &amp; проверка"), "{drawing}");
+    assert!(drawing.contains("prst=\"roundRect\"") && drawing.contains("prst=\"ellipse\"") && drawing.contains("<a:tailEnd type=\"triangle\"/>") && drawing.contains("txBox=\"1\"") && drawing.contains("rot=\"2700000\"") && drawing.contains("rot=\"16200000\"") && drawing.contains("Итог &amp; проверка"), "{drawing}");
     let mut back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_shapes(0).unwrap(), all);
     back.insert_rows(0, 1, 2).unwrap();
@@ -532,8 +532,8 @@ fn test_ens_validation_lists() {
     for (i, v) in ["Москва", "Тверь", "Омск"].iter().enumerate() {
         model.set_user_input(0, i as i32 + 1, 1, v).unwrap();
     }
-    let literal = Validation { sqref: "C2:C5 E2".to_string(), source: "\"Да,Нет,Возможно\"".to_string(), allow_blank: true, no_arrow: false, error: "Только да или нет".to_string() };
-    let ranged = Validation { sqref: "D2:D5".to_string(), source: "$A$1:$A$3".to_string(), allow_blank: false, no_arrow: true, error: String::new() };
+    let literal = Validation { sqref: "C2:C5 E2".to_string(), source: "\"Да,Нет,Возможно\"".to_string(), allow_blank: true, no_arrow: false, error: "Только да или нет".to_string(), ..Default::default() };
+    let ranged = Validation { sqref: "D2:D5".to_string(), source: "$A$1:$A$3".to_string(), allow_blank: false, no_arrow: true, error: String::new(), ..Default::default() };
     assert!(model.set_validations(0, vec![Validation { sqref: "zz".to_string(), ..literal.clone() }]).is_err());
     model.set_validations(0, vec![literal.clone(), ranged.clone()]).unwrap();
     assert_eq!(model.get_dropdown_items(0, 3, 3).unwrap(), vec!["Да", "Нет", "Возможно"]);
@@ -560,4 +560,54 @@ fn test_ens_validation_lists() {
     assert!(sheet.contains("<dataValidations count=\"2\">") && sheet.contains("<formula1>&quot;Да,Нет,Возможно&quot;</formula1>") && sheet.contains("showDropDown=\"1\""), "{sheet}");
     let back = ironcalc_base::UserModel::from_model(back);
     assert_eq!(back.get_validations(0).unwrap(), vec![literal, ranged]);
+}
+
+// ENS-Office: data validation of numbers, dates and text length: operators, bounds from cells, warning styles, hints, xlsx round trip.
+#[test]
+fn test_ens_validation_numbers_dates_length() {
+    use ironcalc_base::types::Validation;
+    let mut model = ironcalc_base::UserModel::new_empty("Book1", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "100").unwrap();
+    let rule = |sqref: &str, kind: &str, op: &str, a: &str, b: &str| Validation {
+        sqref: sqref.to_string(), kind: kind.to_string(), op: op.to_string(), source: a.to_string(), source2: b.to_string(), allow_blank: true, ..Default::default()
+    };
+    let whole = rule("C1", "whole", "", "1", "10");
+    let dec = Validation { error_style: 1, error_title: "Внимание".to_string(), error: "Больше 0,5?".to_string(), prompt_title: "Доля".to_string(), prompt: "От 0 до 0,5".to_string(), ..rule("D1", "decimal", "lessThanOrEqual", "0,5", "") };
+    let cell = rule("E1", "whole", "lessThan", "$A$1", "");
+    let date = rule("F1", "date", "greaterThanOrEqual", "45000", "");
+    let len = rule("G1", "textLength", "lessThanOrEqual", "5", "");
+    let custom = rule("H1", "custom", "", "LEN(H1)>1", "");
+    let all = vec![whole, dec, cell, date, len, custom];
+    model.set_validations(0, all.clone()).unwrap();
+    assert!(model.set_user_input(0, 1, 3, "5").is_ok());
+    assert!(model.set_user_input(0, 1, 3, "11").is_err());
+    assert!(model.set_user_input(0, 1, 3, "2.5").is_err());
+    assert!(model.set_user_input(0, 1, 3, "abc").is_err());
+    // A warning does not refuse the value, but is reported.
+    assert!(model.set_user_input(0, 1, 4, "0.7").is_ok());
+    let notice = model.get_validation_notice(0, 1, 4, "0.7").unwrap();
+    assert_eq!((notice.style, notice.message.as_str()), (1, "Больше 0,5?"));
+    assert!(model.get_validation_notice(0, 1, 4, "0,3").is_none());
+    assert_eq!(model.get_validation_prompt(0, 1, 4).unwrap().title, "Доля");
+    assert!(model.get_validation_prompt(0, 1, 3).is_none());
+    // The bound is a cell.
+    assert!(model.set_user_input(0, 1, 5, "99").is_ok() && model.set_user_input(0, 1, 5, "100").is_err());
+    // Dates: serial numbers and typed dates.
+    assert!(model.set_user_input(0, 1, 6, "45001").is_ok() && model.set_user_input(0, 1, 6, "44000").is_err());
+    assert!(model.set_user_input(0, 1, 6, "2023-06-01").is_ok() && model.set_user_input(0, 1, 6, "2020-01-01").is_err());
+    // Length; custom is not checked; no arrow for non-list kinds.
+    assert!(model.set_user_input(0, 1, 7, "12345").is_ok() && model.set_user_input(0, 1, 7, "123456").is_err());
+    assert!(model.set_user_input(0, 1, 8, "x").is_ok());
+    assert!(!model.has_dropdown(0, 1, 3) && model.get_dropdown_items(0, 1, 3).is_none());
+    let name = "temp_ens_validation2.xlsx";
+    save_to_xlsx(model.get_model(), name).unwrap();
+    let f = std::fs::File::open(name).unwrap();
+    let mut zip = zip::ZipArchive::new(f).unwrap();
+    let mut sheet = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut sheet).unwrap();
+    let back = load_from_xlsx(name, "en", "UTC", "en").unwrap();
+    std::fs::remove_file(name).unwrap();
+    assert!(sheet.contains("type=\"whole\"") && sheet.contains("operator=\"lessThanOrEqual\"") && sheet.contains("errorStyle=\"warning\"") && sheet.contains("<formula2>10</formula2>"), "{sheet}");
+    let back = ironcalc_base::UserModel::from_model(back);
+    assert_eq!(back.get_validations(0).unwrap(), all);
 }

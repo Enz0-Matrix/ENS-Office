@@ -31,6 +31,8 @@ export interface Settings {
   recoveryRoot: string;
   /** Последние открытые книги (для «Файл → Открыть»). */
   recent: { path: string; title: string }[];
+  /** Закреплённые в «Файл → Открыть» файлы и папки. */
+  pinned: { path: string; title: string; kind: 'file' | 'folder' }[];
   /** Что отменяют стрелки: вся книга, только этот лист или все листы, кроме этого. */
   undoScope: 'book' | 'sheet' | 'others';
   /** Шрифт по умолчанию для новых книг. */
@@ -46,7 +48,7 @@ export interface Settings {
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], userName: '', chartTemplates: [], lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], pinned: [], userName: '', chartTemplates: [], lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {
@@ -57,12 +59,40 @@ export const settings: Settings = (() => {
   }
 })();
 
+/** Списки, общие для всех окон программы: файл, открытый в другом окне, сразу виден в «Последних». */
+const SHARED = ['recent', 'pinned'] as const;
+
+function readStored(): Partial<Settings> {
+  try { return JSON.parse(localStorage.getItem(KEY) ?? '{}'); } catch { return {}; }
+}
+
+/** Подтянуть общие списки, которые изменили другие окна. */
+export function refreshShared(): void {
+  const stored = readStored();
+  for (const k of SHARED) if (Array.isArray(stored[k])) (settings as unknown as Record<string, unknown>)[k] = stored[k];
+}
+
 export function saveSettings(): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(settings));
+    // Общие списки берём из хранилища: чужие окна могли их изменить, а у этого окна они устарели.
+    const stored = readStored();
+    const out: Record<string, unknown> = { ...settings };
+    for (const k of SHARED) if (Array.isArray(stored[k])) out[k] = stored[k];
+    localStorage.setItem(KEY, JSON.stringify(out));
+    refreshShared();
   } catch {
     /* хранилище недоступно — настройки действуют до закрытия */
   }
+}
+
+/** Изменить общий список (последние, закреплённые) и сразу записать, не затирая правки других окон. */
+export function updateShared<K extends (typeof SHARED)[number]>(key: K, change: (list: Settings[K]) => Settings[K]): void {
+  refreshShared();
+  settings[key] = change(settings[key]);
+  try {
+    const out = { ...readStored(), [key]: settings[key] };
+    localStorage.setItem(KEY, JSON.stringify({ ...settings, ...out }));
+  } catch { /* хранилище недоступно */ }
 }
 
 export function localeId(): string {

@@ -6,7 +6,7 @@ import { fromBytes, openXlsx, type Model } from './engine';
 import { APP_VERSION } from './version';
 import { afterSave, beforeSave, onOpened, userName } from './changelog';
 import { ask, beaconClose, inspectFile, isDesktop, osUserName, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
-import { localeId, saveSettings, settings } from './settings';
+import { localeId, saveSettings, settings, updateShared } from './settings';
 
 export interface Doc {
   /** Идентификатор для папки восстановления: латиница, цифры, дефис. */
@@ -284,8 +284,34 @@ async function writeBytes(path: string, isNew: boolean): Promise<boolean> {
 
 /** Список «Последние» в меню «Файл». */
 export function rememberRecent(path: string, title: string): void {
-  settings.recent = [{ path, title }, ...settings.recent.filter((r) => r.path !== path)].slice(0, 12);
-  saveSettings();
+  updateShared('recent', (list) => [{ path, title }, ...list.filter((r) => r.path !== path)].slice(0, 12));
+}
+
+/** Закрепить файл или папку в «Файл → Открыть». */
+export function pin(path: string, title: string, kind: 'file' | 'folder'): void {
+  updateShared('pinned', (list) => [...list.filter((p) => p.path !== path), { path, title, kind }]);
+}
+
+export function unpin(path: string): void {
+  updateShared('pinned', (list) => list.filter((p) => p.path !== path));
+}
+
+const folderName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+
+export async function pinFile(): Promise<void> {
+  const path = await pickOpen();
+  if (path) pin(path, baseName(path), 'file');
+}
+
+export async function pinFolder(): Promise<void> {
+  const path = await pickFolder('Папка для закрепления');
+  if (path) pin(path, folderName(path), 'folder');
+}
+
+/** Открыть книгу из закреплённой папки: окно выбора файла начинается в ней. */
+export async function openFromFolder(dir: string): Promise<void> {
+  const path = await pickOpen(dir);
+  if (path) await openPath(path);
 }
 
 async function download(): Promise<boolean> {

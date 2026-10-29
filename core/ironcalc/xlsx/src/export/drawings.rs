@@ -222,7 +222,8 @@ fn shape_anchor_xml(sh: &Shape, id: usize) -> String {
         Some(f) => format!("<a:ln w=\"{width}\">{f}{}</a:ln>", if sh.kind == 4 { "<a:tailEnd type=\"triangle\"/>" } else { "" }),
         None => "<a:ln><a:noFill/></a:ln>".to_string(),
     };
-    let flip = if sh.flip { " flipV=\"1\"" } else { "" };
+    let rot = if sh.rotation.rem_euclid(360) != 0 { format!(" rot=\"{}\"", sh.rotation.rem_euclid(360) * 60000) } else { String::new() };
+    let flip = format!("{rot}{}", if sh.flip { " flipV=\"1\"" } else { "" });
     let raw_name = format!("Фигура {id}");
     let name = escape_xml(&raw_name);
     if is_line {
@@ -255,7 +256,7 @@ fn shape_anchor_xml(sh: &Shape, id: usize) -> String {
     let anchor = if sh.kind == 5 { "t" } else { "ctr" };
     format!(
         "<xdr:oneCellAnchor>{from}<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"{name}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr>\
-<xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>{fill}{ln}</xdr:spPr>\
+<xdr:spPr><a:xfrm{rot}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>{fill}{ln}</xdr:spPr>\
 <xdr:txBody><a:bodyPr vertOverflow=\"clip\" wrap=\"square\" rtlCol=\"0\" anchor=\"{anchor}\"/><a:lstStyle/>{paragraphs}</xdr:txBody></xdr:sp><xdr:clientData/></xdr:oneCellAnchor>",
         if sh.kind == 5 { " txBox=\"1\"" } else { "" }
     )

@@ -72,10 +72,11 @@ const XLSX_FILTER = [
   { name: 'Все файлы', extensions: ['*'] },
 ];
 
-export async function pickOpen(): Promise<string | null> {
-  if (isLocalApp) return call<string | null>('pick_open', { title: 'Открыть книгу' });
+/** Окно выбора книги; dir — папка, с которой оно начинается. */
+export async function pickOpen(dir?: string): Promise<string | null> {
+  if (isLocalApp) return call<string | null>('pick_open', { title: 'Открыть книгу', dir: dir ?? null });
   const { open } = await import('@tauri-apps/plugin-dialog');
-  const path = await open({ multiple: false, directory: false, filters: XLSX_FILTER, title: 'Открыть книгу' });
+  const path = await open({ multiple: false, directory: false, filters: XLSX_FILTER, title: 'Открыть книгу', defaultPath: dir });
   return typeof path === 'string' ? path : null;
 }
 
@@ -93,6 +94,8 @@ export async function ask(message: string, ok: string, cancel: string): Promise<
 
 /** Файл, с которым запустили программу («Открыть с помощью»). */
 /** Имя пользователя в системе (для журнала изменений). */
+/** Открыть адрес ссылки (сайт, почта, файл, папка) в программе по умолчанию. */
+export const openTarget = (target: string) => call<void>('open_target', { target });
 export const osUserName = () => (isDesktop ? call<string>('user_name').catch(() => '') : Promise.resolve(''));
 export const startupFile = () => (isTauri ? invoke<string | null>('startup_file') : Promise.resolve(null));
 

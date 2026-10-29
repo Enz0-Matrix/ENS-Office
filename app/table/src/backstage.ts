@@ -17,6 +17,12 @@ const hfOptions = (presets: [string, string][], v: string) => {
 export interface BackstageHost {
   docInfo(): { title: string; path: string; dirty: boolean };
   recent(): { path: string; title: string }[];
+  pinned(): { path: string; title: string; kind: 'file' | 'folder' }[];
+  pin(path: string, title: string, kind: 'file' | 'folder'): void;
+  unpin(path: string): void;
+  pinFile(): Promise<void>;
+  pinFolder(): Promise<void>;
+  openFromFolder(dir: string): void;
   newBook(): void;
   open(): void;
   openPath(path: string): void;
@@ -121,20 +127,40 @@ function render(section: Section): void {
       <button class="bs-tile" data-act="blank"><span class="bs-blank"></span>Пустая книга</button>`;
     body.querySelector('[data-act="blank"]')!.addEventListener('click', () => { hideBackstage(); host.newBook(); });
   } else if (section === 'open') {
-    const recent = host.recent();
     body.innerHTML = `<h1>Открыть</h1>
       <button class="bs-wide" data-act="browse">${icon('folder_open', 24)}Обзор…</button>
+      <h2>Закреплённые</h2>
+      <div class="bs-pinned"></div>
+      <div class="bs-pin-actions"><button data-act="pinFile">☆ Закрепить файл…</button><button data-act="pinFolder">☆ Закрепить папку…</button></div>
       <h2>Последние</h2>
-      <div class="bs-recent">${recent.length ? '' : '<p class="bs-muted">Здесь появятся книги, которые вы открывали.</p>'}</div>`;
+      <div class="bs-recent"></div>`;
     body.querySelector('[data-act="browse"]')!.addEventListener('click', () => { hideBackstage(); host.open(); });
-    const list = body.querySelector('.bs-recent')!;
-    for (const r of recent) {
+    const redraw = () => showBackstage('open');
+    body.querySelector('[data-act="pinFile"]')!.addEventListener('click', () => void host.pinFile().then(redraw));
+    body.querySelector('[data-act="pinFolder"]')!.addEventListener('click', () => void host.pinFolder().then(redraw));
+    const row = (title: string, path: string, kind: 'file' | 'folder', pinned: boolean) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'bs-recent-row';
       const b = document.createElement('button');
       b.className = 'bs-recent-item';
-      b.innerHTML = `${icon('document', 24)}<span><b>${esc(r.title)}</b><br><small>${esc(r.path)}</small></span>`;
-      b.addEventListener('click', () => { hideBackstage(); host.openPath(r.path); });
-      list.append(b);
-    }
+      b.innerHTML = `${icon(kind === 'folder' ? 'folder_open' : 'document', 24)}<span><b>${esc(title)}</b><br><small>${esc(path)}</small></span>`;
+      b.addEventListener('click', () => { hideBackstage(); if (kind === 'folder') host.openFromFolder(path); else host.openPath(path); });
+      const star = document.createElement('button');
+      star.className = 'bs-pin';
+      star.textContent = pinned ? '★' : '☆';
+      star.title = pinned ? 'Открепить' : 'Закрепить';
+      star.addEventListener('click', () => { if (pinned) host.unpin(path); else host.pin(path, title, kind); redraw(); });
+      wrap.append(b, star);
+      return wrap;
+    };
+    const pinnedList = host.pinned();
+    const pinBox = body.querySelector('.bs-pinned')!;
+    if (!pinnedList.length) pinBox.innerHTML = '<p class="bs-muted">Закрепите важные книги и папки: они всегда будут здесь. Звёздочка у книги в «Последних» тоже закрепляет её.</p>';
+    for (const p of pinnedList) pinBox.append(row(p.title, p.path, p.kind, true));
+    const recent = host.recent();
+    const recentBox = body.querySelector('.bs-recent')!;
+    if (!recent.length) recentBox.innerHTML = '<p class="bs-muted">Здесь появятся книги, которые вы открывали или сохраняли.</p>';
+    for (const r of recent) recentBox.append(row(r.title, r.path, 'file', pinnedList.some((p) => p.path === r.path)));
   } else if (section === 'print') {
     body.innerHTML = `<h1>Печать</h1>
       <div class="print-layout">

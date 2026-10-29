@@ -835,11 +835,27 @@ pub(crate) fn get_worksheet_xml(
             .ens_validations
             .iter()
             .map(|v| {
+                let kind = if v.kind.is_empty() { "list" } else { v.kind.as_str() };
+                let attr = |name: &str, val: &str| if val.is_empty() { String::new() } else { format!(" {name}=\"{}\"", escape_xml(val)) };
+                let style = match v.error_style {
+                    1 => " errorStyle=\"warning\"",
+                    2 => " errorStyle=\"information\"",
+                    _ => "",
+                };
+                let operator = if v.op.is_empty() || v.op == "between" || kind == "list" || kind == "custom" { String::new() } else { attr("operator", &v.op) };
+                let formula2 = if !v.source2.is_empty() && matches!(v.op.as_str(), "" | "between" | "notBetween") && !matches!(kind, "list" | "custom") {
+                    format!("<formula2>{}</formula2>", escape_xml(&v.source2))
+                } else {
+                    String::new()
+                };
                 format!(
-                    "<dataValidation type=\"list\"{}{} showInputMessage=\"1\" showErrorMessage=\"1\"{} sqref=\"{}\"><formula1>{}</formula1></dataValidation>",
+                    "<dataValidation type=\"{kind}\"{operator}{style}{}{} showInputMessage=\"1\" showErrorMessage=\"1\"{}{}{}{} sqref=\"{}\"><formula1>{}</formula1>{formula2}</dataValidation>",
                     if v.allow_blank { " allowBlank=\"1\"" } else { "" },
                     if v.no_arrow { " showDropDown=\"1\"" } else { "" },
-                    if v.error.is_empty() { String::new() } else { format!(" error=\"{}\"", escape_xml(&v.error)) },
+                    attr("errorTitle", &v.error_title),
+                    attr("error", &v.error),
+                    attr("promptTitle", &v.prompt_title),
+                    attr("prompt", &v.prompt),
                     escape_xml(&v.sqref),
                     escape_xml(&v.source)
                 )

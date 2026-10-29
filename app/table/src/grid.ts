@@ -204,10 +204,12 @@ export class Grid {
   shapes: Shape[] = [];
   selObj = -1;
   private imgCache = new Map<string, HTMLImageElement | null>();
-  private imgDrag: { mode: 'move' | 'resize'; i: number; sx: number; sy: number; orig: { x: number; y: number; w: number; h: number }; cur: { x: number; y: number; w: number; h: number } } | null = null;
+  private imgDrag: { mode: 'move' | 'resize' | 'rotate'; rot?: number; i: number; sx: number; sy: number; orig: { x: number; y: number; w: number; h: number }; cur: { x: number; y: number; w: number; h: number } } | null = null;
   /** Рисунок перенесён или изменён: индекс, ячейка левого верхнего угла, сдвиг и размер (px). */
   onImagePlace: (kind: 'image' | 'chart' | 'shape', index: number, row: number, column: number, dx: number, dy: number, width: number, height: number) => void = () => {};
   onImageSelect: (index: number) => void = () => {};
+  /** Фигуру повернули мышью: номер среди фигур и угол по часовой стрелке (0–359). */
+  onShapeRotate: (index: number, degrees: number) => void = () => {};
   private dropdownBtn: { x: number; y: number; w: number; h: number; bottom: number; left: number } | null = null;
   /** Щелчок по стрелке раскрывающегося списка: экранные координаты нижнего левого угла ячейки. */
   onDropdown: (clientX: number, clientY: number) => void = () => {};
@@ -219,6 +221,8 @@ export class Grid {
   pageBreaks: [number[], number[]] = [[], []];
   /** Указатель над ячейкой (row 0 — не над ячейкой); для всплывающего примечания. */
   onCellHover: (row: number, column: number, clientX: number, clientY: number) => void = () => {};
+  /** Ctrl+щелчок по ячейке со ссылкой: `true` — ссылка открыта, выделение не меняем. */
+  onLinkClick: (row: number, column: number) => boolean = () => false;
   onContextMenu: (x: number, y: number, header: 'row' | 'column' | 'corner' | null) => void = () => {};
   /** Протягивание маркера заполнения: куда дотянули. */
   onFill: (target: { r1: number; c1: number; r2: number; c2: number }) => void = () => {};
@@ -907,13 +911,16 @@ export class Grid {
       const cr1 = this.canvas.getBoundingClientRect();
       const px = (e.clientX - cr1.left) / this.zoom, py = (e.clientY - cr1.top) / this.zoom;
       const sel = this.selObj >= 0 ? this.imageRect(this.selObj) : null;
-      const onHandle = sel && Math.abs(px - (sel.x + sel.w)) <= 7 && Math.abs(py - (sel.y + sel.h)) <= 7;
-      const hit = onHandle ? this.selObj : this.imageAt(px, py);
+      const selRot = this.selObj >= 0 ? this.rotOf(this.selObj) : 0;
+      const near = (q: { x: number; y: number }, x: number, y: number) => Math.abs(q.x - x) <= 7 && Math.abs(q.y - y) <= 7;
+      const onHandle = !!sel && near(this.turn(px, py, sel, -selRot), sel.x + sel.w, sel.y + sel.h);
+      const onKnob = !!sel && this.selObj >= 0 && this.objs()[this.selObj].kind === 'shape' && near(this.turn(px, py, sel, -selRot), sel.x + sel.w / 2, sel.y - 22);
+      const hit = onHandle || onKnob ? this.selObj : this.imageAt(px, py);
       if (hit >= 0 && px > this.headerW && py > this.headerH) {
         e.preventDefault();
         this.selObj = hit;
         const orig = { ...this.imageRect(hit) };
-        this.imgDrag = { mode: onHandle ? 'resize' : 'move', i: hit, sx: px, sy: py, orig, cur: orig };
+        this.imgDrag = { mode: onKnob ? 'rotate' : onHandle ? 'resize' : 'move', i: hit, sx: px, sy: py, orig, cur: orig, rot: this.rotOf(hit) };
         this.onImageSelect(hit);
         this.render();
         return;
@@ -968,6 +975,7 @@ export class Grid {
     this.scroller.focus();
     // Ctrl+щелчок: прежнее выделение остаётся, новое добавляется к нему.
     const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey;
+    if (ctrl && !h.header && h.row >= 1 && h.column >= 1 && this.onLinkClick(h.row, h.column)) { e.preventDefault(); return; }
     if (ctrl) {
       const s = this.sel;
       this.extraRanges = [...this.extraRanges, { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
@@ -992,6 +1000,12 @@ export class Grid {
     const d = this.imgDrag;
     if (!d) return;
     this.imgDrag = null;
+    if (d.mode === 'rotate') {
+      const o = this.objs()[d.i];
+      if (o?.kind === 'shape' && (d.rot ?? 0) !== (this.shapes[o.index].rotation || 0)) this.onShapeRotate(o.index, d.rot ?? 0);
+      this.render();
+      return;
+    }
     const c = d.cur, moved = Math.abs(c.x - d.orig.x) + Math.abs(c.y - d.orig.y) + Math.abs(c.w - d.orig.w) + Math.abs(c.h - d.orig.h) > 1;
     if (!moved) { this.render(); return; }
     const row = Math.max(1, this.rowAt(this.sheetY(Math.max(c.y, this.headerH + 1))));
@@ -1007,9 +1021,20 @@ export class Grid {
     if (d) {
       const cr = this.canvas.getBoundingClientRect();
       const px = (e.clientX - cr.left) / this.zoom, py = (e.clientY - cr.top) / this.zoom;
+      if (d.mode === 'rotate') {
+        const cx = d.orig.x + d.orig.w / 2, cy = d.orig.y + d.orig.h / 2;
+        let deg = Math.atan2(py - cy, px - cx) * 180 / Math.PI + 90;
+        deg = ((Math.round(e.shiftKey ? Math.round(deg / 15) * 15 : deg) % 360) + 360) % 360;
+        d.rot = deg;
+        this.render();
+        return;
+      }
+      // Повёрнутую фигуру тянем за угол в её собственных осях.
+      const rot = this.rotOf(d.i) * Math.PI / 180, ddx = px - d.sx, ddy = py - d.sy;
+      const lx = ddx * Math.cos(rot) + ddy * Math.sin(rot), ly = -ddx * Math.sin(rot) + ddy * Math.cos(rot);
       d.cur = d.mode === 'move'
-        ? { ...d.orig, x: d.orig.x + px - d.sx, y: d.orig.y + py - d.sy }
-        : { ...d.orig, w: Math.max(12, d.orig.w + px - d.sx), h: Math.max(12, d.orig.h + py - d.sy) };
+        ? { ...d.orig, x: d.orig.x + ddx, y: d.orig.y + ddy }
+        : { ...d.orig, w: Math.max(12, d.orig.w + lx), h: Math.max(12, d.orig.h + ly) };
       this.render();
       return;
     }
@@ -1479,16 +1504,25 @@ export class Grid {
         for (const ch of chars) { ctx.fillText(ch, cx, y + lh / 2); y += lh; }
       } else {
         const deg = rot <= 90 ? rot : -(rot - 90);
-        const tw = ctx.measureText(text).width;
         const rad = (-deg * Math.PI) / 180;
-        // Повёрнутая строка: по горизонтали — по выравниванию ячейки, по вертикали — по центру.
-        const span = Math.abs(Math.cos(rad)) * tw;
+        const sin = Math.abs(Math.sin(rad)), cos = Math.abs(Math.cos(rad));
+        // Строки идут вдоль наклонной базовой линии; перенос — по её доступной длине в ячейке.
+        const room = Math.max(20, Math.min(sin > 0.01 ? (cell.h - 6) / sin : Infinity, cos > 0.01 ? (cell.w - 6) / cos : Infinity));
+        const lines = style?.alignment?.wrap_text ? wrapLines(ctx, text, room) : text.split('\n');
+        const lh = Math.round(px * 1.22);
+        const along = Math.max(...lines.map((l) => ctx.measureText(l).width));
+        const across = lines.length * lh;
+        // Занятое блоком место на экране: по горизонтали — по выравниванию ячейки, по вертикали — по центру.
+        const span = cos * along + sin * across;
         const cx = align === 'left' ? cell.x + 3 + span / 2 : align === 'right' ? cell.x + cell.w - 3 - span / 2 : cell.x + cell.w / 2;
         ctx.translate(cx, cell.y + cell.h / 2);
         ctx.rotate(rad);
-        ctx.fillText(text.replace(/\n/g, ' '), 0, 0);
-        if (f?.u) ctx.fillRect(-tw / 2, px / 2 - 1, tw, 1);
-        if (f?.strike) ctx.fillRect(-tw / 2, 0, tw, 1);
+        lines.forEach((line, i) => {
+          const oy = (i - (lines.length - 1) / 2) * lh, tw = ctx.measureText(line).width;
+          ctx.fillText(line, 0, oy);
+          if (f?.u) ctx.fillRect(-tw / 2, oy + px / 2 - 1, tw, 1);
+          if (f?.strike) ctx.fillRect(-tw / 2, oy, tw, 1);
+        });
       }
       ctx.restore();
       return;
@@ -1793,11 +1827,26 @@ export class Grid {
     return { x: c.x + im.dx, y: c.y + im.dy, w: im.width, h: im.height };
   }
 
+  /** Угол поворота объекта (у фигур; остальные не вращаются). */
+  private rotOf(i: number): number {
+    if (this.imgDrag?.i === i && this.imgDrag.mode === 'rotate') return this.imgDrag.rot ?? 0;
+    const o = this.objs()[i];
+    return o?.kind === 'shape' ? this.shapes[o.index].rotation || 0 : 0;
+  }
+
+  /** Точка, повёрнутая вокруг центра прямоугольника на `deg` градусов по часовой стрелке. */
+  private turn(px: number, py: number, r: { x: number; y: number; w: number; h: number }, deg: number): { x: number; y: number } {
+    if (!deg) return { x: px, y: py };
+    const a = deg * Math.PI / 180, cx = r.x + r.w / 2, cy = r.y + r.h / 2, dx = px - cx, dy = py - cy;
+    return { x: cx + dx * Math.cos(a) - dy * Math.sin(a), y: cy + dx * Math.sin(a) + dy * Math.cos(a) };
+  }
+
   private imageAt(px: number, py: number): number {
     for (let i = this.objs().length - 1; i >= 0; i--) {
       const r = this.imageRect(i), o = this.objs()[i];
+      const q = this.turn(px, py, r, -this.rotOf(i));
       const pad = o.kind === 'shape' && (this.shapes[o.index].kind === 3 || this.shapes[o.index].kind === 4) ? 6 : 0;
-      if (px >= r.x - pad && px <= r.x + r.w + pad && py >= r.y - pad && py <= r.y + r.h + pad) return i;
+      if (q.x >= r.x - pad && q.x <= r.x + r.w + pad && q.y >= r.y - pad && q.y <= r.y + r.h + pad) return i;
     }
     return -1;
   }
@@ -1810,14 +1859,25 @@ export class Grid {
     all.forEach((o, i) => {
       const r = this.imageRect(i);
       if (r.x > this.viewW || r.y > this.viewH || r.x + r.w < this.headerW || r.y + r.h < this.headerH) return;
-      const drawFrame = () => {
+      const rot = this.rotOf(i);
+      const turned = (draw: () => void) => {
+        if (!rot) { draw(); return; }
+        ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h / 2); ctx.rotate(rot * Math.PI / 180); ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
+        draw(); ctx.restore();
+      };
+      const drawFrame = () => turned(() => {
         if (i !== this.selObj) return;
         ctx.strokeStyle = '#1f4e9c'; ctx.lineWidth = 2; ctx.strokeRect(r.x, r.y, r.w, r.h);
         ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
         ctx.fillRect(r.x + r.w - 5, r.y + r.h - 5, 10, 10); ctx.strokeRect(r.x + r.w - 5.5, r.y + r.h - 5.5, 10, 10);
-      };
+        if (o.kind === 'shape') {
+          // Круглая ручка над фигурой — повернуть (Shift — шагами по 15°).
+          ctx.beginPath(); ctx.moveTo(r.x + r.w / 2, r.y); ctx.lineTo(r.x + r.w / 2, r.y - 17); ctx.stroke();
+          ctx.beginPath(); ctx.arc(r.x + r.w / 2, r.y - 22, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+      });
       if (o.kind === 'shape') {
-        drawShape(ctx, r, this.shapes[o.index], this.theme.textColor ? '#000000' : '#000000');
+        turned(() => drawShape(ctx, r, this.shapes[o.index], '#000000'));
         drawFrame();
         return;
       }
