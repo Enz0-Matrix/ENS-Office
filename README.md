@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.png" alt="ENS-Office" width="160"></p>
+
 # ENS-Office
 Альтернатива офисному пакету: **ENS-Tekst** (текстовый редактор) и **ENS-Table** (таблицы)
 для РЕД ОС, других Linux, Windows, позже — Android и iOS.
