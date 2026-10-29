@@ -418,6 +418,67 @@ export function findStep(view: EditorView, dir: 1 | -1): void {
   view.dispatch(tr);
 }
 
+// --- Метки на полях (как метки в ENS-Table) и режим «Фокус абзаца»
+
+export type Flag = 'red' | 'green';
+
+/** Поставить или снять метку у абзацев выделения: та же метка повторно — снимает. */
+export function toggleFlag(flag: Flag): Command {
+  return (state, dispatch) => {
+    if (dispatch) {
+      const tr = state.tr;
+      const blocks: [PMNode, number][] = [];
+      eachTextblock(state, (n, p) => blocks.push([n, p]));
+      const allSet = blocks.every(([n]) => n.attrs.flag === flag);
+      for (const [n, p] of blocks) if (n.type === paragraph || n.type === heading) tr.setNodeMarkup(p, undefined, { ...n.attrs, flag: allSet ? null : flag });
+      dispatch(tr);
+    }
+    return true;
+  };
+}
+
+/** Все помеченные абзацы: позиция, метка, начало текста. */
+export function listFlags(doc: PMNode): { pos: number; flag: Flag; text: string }[] {
+  const out: { pos: number; flag: Flag; text: string }[] = [];
+  doc.descendants((n, pos) => {
+    if (n.isTextblock && n.attrs.flag) out.push({ pos, flag: n.attrs.flag as Flag, text: n.textContent.slice(0, 80) });
+    return !n.isTextblock;
+  });
+  return out;
+}
+
+export function jumpFlag(dir: 1 | -1, only?: Flag): Command {
+  return (state, dispatch) => {
+    const flags = listFlags(state.doc).filter((f) => !only || f.flag === only);
+    if (!flags.length) return false;
+    const at = state.selection.from;
+    const next = dir > 0 ? flags.find((f) => f.pos > at) ?? flags[0] : [...flags].reverse().find((f) => f.pos + 1 < at) ?? flags[flags.length - 1];
+    if (dispatch) dispatch(state.tr.setSelection(TextSelection.create(state.doc, next.pos + 1)).scrollIntoView());
+    return true;
+  };
+}
+
+export const focusKey = new PluginKey<boolean>('focusPara');
+
+const focusPlugin = new Plugin<boolean>({
+  key: focusKey,
+  state: {
+    init: () => false,
+    apply: (tr, on) => (tr.getMeta(focusKey) as boolean | undefined) ?? on,
+  },
+  props: {
+    attributes: (state): Record<string, string> => (focusKey.getState(state) ? { class: 'focus-mode' } : {}),
+    decorations(state) {
+      if (!focusKey.getState(state)) return null;
+      const { $from } = state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        if ($from.node(d).isTextblock) return DecorationSet.create(state.doc, [Decoration.node($from.before(d), $from.after(d), { class: 'in-focus' })]);
+      }
+      return null;
+    },
+  },
+});
+
 // ---------------------------------------------------------------- сборка
 
 /** Вид таблицы: признак «с границами» хранится в узле, а столбцы рисует плагин изменения ширины. */
@@ -457,6 +518,7 @@ export function createState(doc: PMNode, extra: Plugin[] = []): EditorState {
       gapCursor(),
       findPlugin,
       numberingPlugin,
+      focusPlugin,
     ],
   });
 }

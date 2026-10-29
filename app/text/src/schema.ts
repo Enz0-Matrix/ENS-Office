@@ -27,6 +27,8 @@ const paraAttrs = {
   after: { default: null },
   line: { default: null },
   pageBreakBefore: { default: false },
+  /** Метка на полях: 'red' — проверить, 'green' — готово. Живёт в документе и версиях, в docx не сохраняется. */
+  flag: { default: null },
 };
 
 function paraStyle(a: ParaAttrs): string {
@@ -47,6 +49,7 @@ function paraDom(tag: string, node: PMNode): DOMOutputSpec {
   const style = paraStyle(a);
   if (style) attrs.style = style;
   if (a.pageBreakBefore) attrs['data-page-break'] = '1';
+  if ((a as ParaAttrs & { flag?: string | null }).flag) attrs['data-flag'] = String((a as ParaAttrs & { flag?: string }).flag);
   return [tag, attrs, 0];
 }
 

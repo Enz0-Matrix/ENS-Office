@@ -153,3 +153,22 @@
 .sp-line { display: flex; align-items: baseline; }
 .sp-ind { display: inline-block; }
 .sp-line b { min-width: 64px; display: inline-block; }
+
+/* Метки на полях */
+.ProseMirror p[data-flag], .ProseMirror h1[data-flag], .ProseMirror h2[data-flag], .ProseMirror h3[data-flag], .ProseMirror h4[data-flag], .ProseMirror h5[data-flag], .ProseMirror h6[data-flag] { position: relative; }
+.ProseMirror [data-flag]::after { content: ""; position: absolute; left: -22px; top: .45em; width: 10px; height: 10px; border-radius: 50%; background: var(--flag); box-shadow: 0 0 0 2px rgba(255,255,255,.7); pointer-events: none; }
+.ProseMirror [data-flag="red"] { --flag: #d13438; }
+.ProseMirror [data-flag="green"] { --flag: #2e9b4b; }
+.ProseMirror li > [data-flag]::after { left: -34px; }
+/* Фокус абзаца */
+.ProseMirror.focus-mode p, .ProseMirror.focus-mode h1, .ProseMirror.focus-mode h2, .ProseMirror.focus-mode h3, .ProseMirror.focus-mode h4, .ProseMirror.focus-mode h5, .ProseMirror.focus-mode h6 { opacity: .3; transition: opacity .15s; }
+.ProseMirror.focus-mode .in-focus { opacity: 1; }
+@media print { .ProseMirror [data-flag]::after { display: none !important; } .ProseMirror.focus-mode * { opacity: 1 !important; } }
+/* Поиск команд */
+.titlebar .search { margin: 0 auto; }
+.search-results { position: fixed; z-index: 60; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.25); min-width: 420px; max-height: 60vh; overflow: auto; padding: 4px; }
+.search-results[hidden] { display: none; }
+.search-results button { display: flex; justify-content: space-between; gap: 16px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font: inherit; color: inherit; }
+.search-results button.on, .search-results button:hover { background: var(--hover); }
+.search-results .k { color: var(--muted); font-size: 12px; }
+.flag-row { display: block; width: 100%; text-align: left; margin: 2px 0; }

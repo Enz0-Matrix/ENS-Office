@@ -5,6 +5,7 @@ import './text.css';
 import './icons';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { TextSelection } from 'prosemirror-state';
 import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import {
   addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, isInTable, mergeCells, splitCell,
@@ -33,6 +34,9 @@ import { initThemes, themeDialog } from './themes-ui';
 import { applyScheme, continueList, convertManual, currentStart, setListStart } from './listtools';
 import { PRESETS, presetOf, type Scheme } from './numbering';
 import { schemeDialog } from './lists-ui';
+import { describe as describeTypo, liveQuotes, typograph } from './typograph';
+import { focusKey, jumpFlag, listFlags, toggleFlag } from './editor';
+import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
@@ -362,9 +366,11 @@ function setZoom(z: number): void {
 // ---------------------------------------------------------------- редактор
 
 const paginationPlugin = pagination(effPage, (n) => drawPapers(n));
+let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
+const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
@@ -543,6 +549,29 @@ register(
       active().focus();
     },
   },
+  {
+    id: 'typo.apply', label: 'Типограф: кавычки, тире, неразрывные пробелы', keywords: ['типограф', 'кавычки', 'ёлочки', 'тире', 'пробелы', 'typography'],
+    run: () => {
+      const { tr, report } = typograph(active().state);
+      if (report.total) { snap('before', 'Перед типографом'); active().dispatch(tr); }
+      toast(describeTypo(report));
+      active().focus();
+    },
+  },
+  {
+    id: 'typo.live', label: 'Кавычки «ёлочки» при наборе', checked: () => liveQuotesOn,
+    run: () => { liveQuotesOn = !liveQuotesOn; try { localStorage.setItem('ens-text.liveQuotes', liveQuotesOn ? '1' : '0'); } catch { /* без памяти браузера */ } updateUi(); },
+  },
+  { id: 'mark.red', label: 'Метка «проверить» (красная)', keywords: ['метка', 'флажок', 'проверить'], keys: ['Ctrl+Alt+KeyR'], run: () => dispatchCmd(toggleFlag('red')) },
+  { id: 'mark.green', label: 'Метка «готово» (зелёная)', keywords: ['метка', 'флажок', 'готово'], keys: ['Ctrl+Alt+KeyG'], run: () => dispatchCmd(toggleFlag('green')) },
+  { id: 'mark.next', label: 'К следующей метке', keys: ['Ctrl+Alt+ArrowDown'], run: () => dispatchCmd(jumpFlag(1)) },
+  { id: 'mark.prev', label: 'К предыдущей метке', keys: ['Ctrl+Alt+ArrowUp'], run: () => dispatchCmd(jumpFlag(-1)) },
+  { id: 'mark.list', label: 'Список меток', run: () => flagsDialog() },
+  {
+    id: 'view.focusPara', label: 'Фокус абзаца', keywords: ['фокус', 'читать', 'вычитка'], keys: ['Ctrl+Shift+KeyK'],
+    checked: () => !!focusKey.getState(view.state),
+    run: () => { view.dispatch(view.state.tr.setMeta(focusKey, !focusKey.getState(view.state))); updateUi(); },
+  },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
   { id: 'ver.named', label: 'Записать именную версию', run: () => askNamedVersion(historyHost) },
@@ -583,6 +612,77 @@ function startAtDialog(): void {
     box.append(el('h2', { textContent: 'Начать нумерацию с' }), el('div', { class: 'dlg-row' }, el('label', { textContent: 'Номер' }), n),
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Применить', onclick: go })));
   });
+}
+
+function flagsDialog(): void {
+  dialog((box, close) => {
+    const flags = listFlags(view.state.doc);
+    box.append(el('h2', { textContent: 'Метки в документе' }),
+      el('p', { textContent: 'Красная — проверить, зелёная — готово. Метки ставит двойной щелчок на левом поле (Shift — зелёная) или Ctrl+Alt+R / Ctrl+Alt+G. В файл .docx и в печать метки не попадают.' }));
+    if (!flags.length) box.append(el('p', { textContent: 'Меток нет.' }));
+    for (const f of flags) {
+      box.append(el('button', {
+        class: 'flag-row', textContent: `${f.flag === 'red' ? '🔴' : '🟢'}  ${f.text || '(пустой абзац)'}`,
+        onclick: () => { close(); view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, f.pos + 1)).scrollIntoView()); view.focus(); },
+      }));
+    }
+    box.append(el('div', { class: 'dlg-actions' }, el('button', { class: 'primary', textContent: 'Закрыть', onclick: close })));
+  });
+}
+
+/** Поиск команд в заголовке окна (Alt+Q): по-русски и по-английски, с терпимостью к опечаткам — общий поиск с ENS-Table. */
+function initCommandSearch(): void {
+  const input = $('search') as HTMLInputElement;
+  const box = document.createElement('div');
+  box.className = 'search-results';
+  box.hidden = true;
+  document.body.append(box);
+  let hits: { id: string; label: string; keys?: string }[] = [];
+  let on = 0;
+  const render = () => {
+    box.replaceChildren(...hits.map((h, i) => {
+      const b = document.createElement('button');
+      b.className = i === on ? 'on' : '';
+      const l = document.createElement('span');
+      l.textContent = h.label;
+      const k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = h.keys ?? '';
+      b.append(l, k);
+      b.addEventListener('mousedown', (e) => { e.preventDefault(); choose(i); });
+      return b;
+    }));
+    box.hidden = !hits.length;
+    const r = input.getBoundingClientRect();
+    box.style.left = `${r.left}px`;
+    box.style.top = `${r.bottom + 4}px`;
+  };
+  const choose = (i: number) => {
+    const h = hits[i];
+    box.hidden = true;
+    input.value = '';
+    input.blur();
+    if (h) setTimeout(() => run(h.id), 0);
+  };
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    hits = q ? allCommands()
+      .map((c) => ({ c, score: Math.max(matchScore(q, c.label), ...(c.keywords ?? []).map((k) => matchScore(q, k) * 0.9)) }))
+      .filter((x) => x.score > 0 && !x.c.id.includes(':menu'))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 9)
+      .map(({ c }) => ({ id: c.id, label: c.label, keys: c.keys?.[0]?.replace(/Key|Digit/g, '').replaceAll('+', '+') })) : [];
+    on = 0;
+    render();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { on = Math.min(hits.length - 1, on + 1); render(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { on = Math.max(0, on - 1); render(); e.preventDefault(); }
+    else if (e.key === 'Enter') { choose(on); e.preventDefault(); }
+    else if (e.key === 'Escape') { box.hidden = true; input.value = ''; input.blur(); view.focus(); }
+  });
+  input.addEventListener('blur', () => setTimeout(() => { box.hidden = true; }, 150));
+  register({ id: 'search.focus', label: 'Поиск команд', keys: ['Alt+KeyQ'], run: () => { input.focus(); input.select(); } });
 }
 
 // ---------------------------------------------------------------- вкладки ленты
@@ -740,6 +840,28 @@ const TABS: RibbonTab[] = [
         name: 'Закрытие',
         items: [{ type: 'large', command: 'hf.close', icon: 'close_circle', label: 'Закрыть колонтитулы' }],
       },
+    ],
+  },
+  {
+    id: 'review', label: 'Проверка',
+    groups: [
+      {
+        name: 'Типограф',
+        items: [
+          { type: 'large', command: 'typo.apply', icon: 'wand', label: 'Типограф' },
+          { type: 'large', command: 'typo.live', icon: 'text_font', label: 'Кавычки при наборе' },
+        ],
+      },
+      {
+        name: 'Метки',
+        items: [
+          { type: 'large', command: 'mark.red', icon: 'info', label: 'Проверить' },
+          { type: 'large', command: 'mark.green', icon: 'checkmark', label: 'Готово' },
+          { type: 'large', command: 'mark.next', icon: 'arrow_redo', label: 'Следующая' },
+          { type: 'large', command: 'mark.list', icon: 'book_open', label: 'Список меток' },
+        ],
+      },
+      { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }] },
     ],
   },
   {
@@ -1040,6 +1162,14 @@ $('sheet').addEventListener('dblclick', (e) => {
   if (inPage < eff.top * PX - 4) { e.preventDefault(); openHf('header', i); }
   else if (inPage > g.H - eff.bottom * PX + 4) { e.preventDefault(); openHf('footer', i); }
   else if (hfSession) closeHf();
+  else if (e.clientX < rect.left + eff.left * PX * scale - 2 && e.clientX > rect.left + i * 0) {
+    // Двойной щелчок на левом поле листа — метка у этого абзаца (Shift — зелёная, как в таблицах).
+    const at = view.posAtCoords({ left: rect.left + (eff.left * PX + 12) * scale, top: e.clientY });
+    if (!at) return;
+    e.preventDefault();
+    view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at.pos))));
+    dispatchCmd(toggleFlag(e.shiftKey ? 'green' : 'red'));
+  }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && hfSession && document.getElementById('dialog')!.hidden) closeHf(); });
 
@@ -1150,7 +1280,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
   applyPage();
-  view.updateState(createState(doc, [paginationPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin]));
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
   hideNotice();
@@ -1378,6 +1508,7 @@ window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, 
 $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
+initCommandSearch();
 applyPage();
 setZoom(1);
 updateStats();

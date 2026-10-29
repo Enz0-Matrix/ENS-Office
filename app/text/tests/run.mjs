@@ -841,6 +841,113 @@ await test('списки: настройка схемы в окне и гото�
   await p.context().close();
 });
 
+
+// ---- Типограф, метки, фокус, поиск команд ----
+const typoRun = (p, text, opts = {}) => p.evaluate(({ text, opts }) => {
+  const E = window.ens, s = E.schema;
+  E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text(text))]), E.getMeta(), 't');
+  E.run('typo.apply');
+  return E.view.state.doc.textContent;
+}, { text, opts });
+
+await test('типограф: кавычки, вложенные кавычки, тире, многоточие', async () => {
+  const p = await page();
+  const norm = (s) => s.replaceAll('\u00A0', ' ');
+  eq(norm(await typoRun(p, 'Он сказал "привет" и ушёл')), 'Он сказал «привет» и ушёл', 'ёлочки');
+  eq(norm(await typoRun(p, 'Компания "Рога и "Копыта" и К" открылась')), 'Компания «Рога и „Копыта“ и К» открылась', 'вложенные лапки');
+  eq(await typoRun(p, 'слово - слово'), 'слово — слово', 'тире с неразрывным пробелом');
+  eq(await typoRun(p, 'Ждём...'), 'Ждём…', 'многоточие');
+  await p.context().close();
+});
+
+await test('типограф: неразрывные пробелы (предлоги, «г. Москва», «№ 5», единицы, инициалы, разряды, даты)', async () => {
+  const p = await page();
+  const r = await typoRun(p, 'Он живёт в лесу, г. Москва, № 5, весит 70 кг, А. С. Пушкин, 1 000 000 руб., 5 мая 2026 г. и т. д.');
+  const NB = ' ';
+  for (const need of [`в${NB}лесу`, `г.${NB}Москва`, `№${NB}5`, `70${NB}кг`, `А.${NB}С.${NB}Пушкин`, `1${NB}000${NB}000`, `5${NB}мая`, `2026${NB}г.`, `т.${NB}д.`]) ok(r.includes(need), `нет «${need.replaceAll(NB, '␣')}» в «${r.replaceAll(NB, '␣')}»`);
+  await p.context().close();
+});
+
+await test('типограф: лишние пробелы, пробел после запятой; числа, адреса и ссылки не трогаются', async () => {
+  const p = await page();
+  eq((await typoRun(p, '  слово  ,слово ,слово.Слово  ')).replaceAll('\u00A0', ' '), 'слово, слово, слово. Слово', 'пробелы');
+  eq((await typoRun(p, 'Цена 3,5 и 1,25; адрес https://ens.example/a,b почта a@b.ru')).replaceAll('\u00A0', ' '), 'Цена 3,5 и 1,25; адрес https://ens.example/a,b почта a@b.ru', 'числа и адреса целы');
+  await p.context().close();
+});
+
+await test('типограф: форматирование сохраняется, ссылки не трогаются, один шаг отмены, страховочная версия', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const bold = s.text('"жирный" текст', [s.marks.strong.create()]);
+    const link = s.text('"адрес"', [s.marks.link.create({ href: 'https://x.y' })]);
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Это '), bold, s.text(' и '), link])]), E.getMeta(), 't');
+    E.run('typo.apply');
+    const para = E.view.state.doc.firstChild;
+    const parts = []; para.forEach((n) => parts.push([n.text, n.marks.map((m) => m.type.name).join('+')]));
+    return { parts, versions: E.hist().versions.map((v) => v.kind) };
+  });
+  ok(r.parts.some(([t, m]) => t.includes('«жирный»') && m.includes('strong')), JSON.stringify(r.parts));
+  ok(r.parts.some(([t, m]) => t === '"адрес"' && m.includes('link')), 'ссылка не изменена');
+  ok(r.versions.includes('before'), 'страховочная версия');
+  await p.keyboard.press('Control+KeyZ');
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('"жирный"'), 'отмена одним шагом');
+  await p.context().close();
+});
+
+await test('типограф: кавычки при наборе («ёлочки» по контексту)', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Он сказал "привет "там" всем" и ушёл');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Он сказал «привет „там“ всем» и ушёл', 'кавычки при наборе');
+  await p.context().close();
+});
+
+await test('метки: двойной щелчок на левом поле, Shift — зелёная, переход, список, в docx не попадают', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 30 }, (_, i) => P(`Абзац ${i + 1}`)));
+  const pt = await p.evaluate(() => { const r = document.querySelectorAll('.ProseMirror p')[2].getBoundingClientRect(), s = document.getElementById('sheet').getBoundingClientRect(); return { x: s.left + 30, y: r.top + r.height / 2 }; });
+  await p.mouse.dblclick(pt.x, pt.y);
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(2).attrs.flag), 'red', 'красная метка');
+  await p.keyboard.down('Shift');
+  const pt2 = await p.evaluate(() => { const r = document.querySelectorAll('.ProseMirror p')[5].getBoundingClientRect(), s = document.getElementById('sheet').getBoundingClientRect(); return { x: s.left + 30, y: r.top + r.height / 2 }; });
+  await p.mouse.dblclick(pt2.x, pt2.y);
+  await p.keyboard.up('Shift');
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(5).attrs.flag), 'green', 'зелёная метка');
+  await p.evaluate(() => window.ens.view.dispatch(window.ens.view.state.tr.setSelection(window.ens.view.state.selection.constructor.atStart(window.ens.view.state.doc))));
+  await p.keyboard.press('Control+Alt+ArrowDown');
+  eq(await p.evaluate(() => window.ens.view.state.doc.resolve(window.ens.view.state.selection.from).parent.textContent), 'Абзац 3', 'к следующей метке');
+  ok(await p.evaluate(() => getComputedStyle(document.querySelectorAll('.ProseMirror p')[2], '::after').backgroundColor !== 'rgba(0, 0, 0, 0)'), 'метка нарисована');
+  const back = await p.evaluate(() => { const E = window.ens; return JSON.stringify(E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'x')).doc.toJSON()).includes('"flag":"'); });
+  eq(back, false, 'метки не попадают в docx');
+  await p.context().close();
+});
+
+await test('фокус абзаца: остальной текст затемняется', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 5 }, (_, i) => P(`Абзац ${i + 1}`)));
+  await p.click('.ProseMirror p >> nth=1');
+  await p.waitForFunction(() => window.ens.view.state.selection.from > 1);
+  await p.keyboard.press('Control+Shift+KeyK');
+  await p.waitForTimeout(300);
+  const ops = await p.evaluate(() => [...document.querySelectorAll('.ProseMirror p')].map((e) => getComputedStyle(e).opacity));
+  eq(ops.map((o) => +o < 0.9), [true, false, true, true, true], 'затемнены все, кроме текущего');
+  await p.keyboard.press('Control+Shift+KeyK');
+  await p.context().close();
+});
+
+await test('поиск команд Alt+Q: находит по-русски и с опечаткой, запускает', async () => {
+  const p = await page();
+  await p.keyboard.press('Alt+KeyQ');
+  await p.keyboard.type('типограв');
+  await p.waitForSelector('.search-results button');
+  ok((await p.textContent('.search-results')).includes('Типограф'), await p.textContent('.search-results'));
+  await p.keyboard.press('Escape');
+  await p.keyboard.press('Alt+KeyQ');
+  await p.keyboard.type('история верс');
+  await p.keyboard.press('Enter');
+  await p.waitForSelector('.history-modal');
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
