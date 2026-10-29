@@ -891,7 +891,7 @@ export class Grid {
       const cr0 = this.canvas.getBoundingClientRect();
       if (this.outlineClick((e.clientX - cr0.left) / this.zoom, (e.clientY - cr0.top) / this.zoom)) { e.preventDefault(); return; }
     }
-    if (this.images.length || this.charts.length) {
+    if (this.images.length || this.charts.length || this.shapes.length) {
       const cr1 = this.canvas.getBoundingClientRect();
       const px = (e.clientX - cr1.left) / this.zoom, py = (e.clientY - cr1.top) / this.zoom;
       const sel = this.selObj >= 0 ? this.imageRect(this.selObj) : null;
