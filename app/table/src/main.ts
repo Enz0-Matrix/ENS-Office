@@ -1168,7 +1168,7 @@ function deleteSelectedObject(): void {
 
 // --- Раскрывающиеся списки ---
 
-grid.onDropdown = (x, y) => {
+grid.onDropdown = (x, y) => setTimeout(() => {
   const s = grid.sel;
   const items = model.getDropdownItems(grid.sheet, s.row, s.column);
   if (!items.length) { showToast('Список пуст: проверьте источник в «Данные → Список…».'); return; }
@@ -1180,7 +1180,7 @@ grid.onDropdown = (x, y) => {
       grid.render(); updateFormulaBar(); updateStatus(); focusGrid();
     },
   })), x, y);
-};
+});
 
 /** «Проверка данных» → список: ячейки, источник (перечень или диапазон), пустые значения, стрелка, сообщение об ошибке. */
 function validationDialog(): void {
