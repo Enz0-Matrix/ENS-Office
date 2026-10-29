@@ -1025,6 +1025,9 @@ await test('мастер документов: приказ по ГОСТ, но�
   await p.evaluate(() => localStorage.removeItem('ens-text.journal'));
   const make = async (subject) => {
     await p.evaluate(() => window.ens.run('file.wizard'));
+    await p.waitForTimeout(100);
+    const unsaved = await p.$('.modal button.danger'); // «Не сохранять», если в документе есть несохранённое
+    if (unsaved) await unsaved.click();
     await p.selectOption('.modal select', 'order');
     await p.fill('.wiz-form textarea >> nth=0', 'ООО «Ромашка»');
     await p.fill('input[placeholder^="О назначении"]', subject);
