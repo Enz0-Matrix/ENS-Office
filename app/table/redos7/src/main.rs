@@ -186,6 +186,10 @@ fn api(app: &App, cmd: &str, headers: &[(String, String)], body: Vec<u8>) -> Rep
     let rec = &app.recovery;
     match cmd {
         "user_name" => json_reply(json!(files::user_name())),
+        "open_target" => {
+            files::open_target(arg(&j(), "target")?)?;
+            json_reply(json!(null))
+        }
         "inspect_file" => json_reply(json!(files::inspect_file(arg(&j(), "path")?)?)),
         "read_file" => {
             let p = PathBuf::from(arg(&j(), "path")?);

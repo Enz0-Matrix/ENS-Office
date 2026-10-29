@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type Model, type Validation } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { showLog } from './changelog';
@@ -17,7 +17,7 @@ import { changeDecimals, formatCellsDialog, toggleGrouping } from './numfmt';
 import { THEMES, allThemes, applyTheme, setHiddenThemes, parseThemeFile, setCustomThemes, systemReducesMotion, themeTemplate } from './themes';
 import { addFilter, filterAt, filtersOf, initFilter, openFilterPopup, removeFilter, resetFilters, type SheetFilter } from './filter';
 import { hideBackstage, initBackstage, showBackstage } from './backstage';
-import { copyText, readText } from './platform';
+import { copyText, openTarget, pickOpen, readText } from './platform';
 import { Grid, type OutlineGroup } from './grid';
 import { FUNCTION_CATEGORIES } from './funclib';
 import { openSymbols } from './symbols';
@@ -1097,6 +1097,14 @@ function cellMenu(x: number, y: number, header: 'row' | 'column' | 'corner' | nu
     items.push({ label: has ? 'Изменить примечание…' : 'Вставить примечание…', separator: true, run: () => editComment(s.row, s.column) });
     if (has) items.push({ label: 'Удалить примечание', run: () => deleteComment(s.row, s.column) });
   }
+  if (!header) {
+    const has = !!linkOf(s.row, s.column);
+    items.push({ label: has ? 'Изменить ссылку…' : 'Ссылка…', keys: 'Ctrl+K', separator: true, run: () => linkDialog() });
+    if (has) {
+      items.push({ label: 'Открыть ссылку', run: () => openLink(s.row, s.column) });
+      items.push({ label: 'Удалить ссылку', run: () => deleteLink(s.row, s.column) });
+    }
+  }
   if (!header) items.push({ label: 'Формат ячеек…', keys: keysOf('format.cells'), run: () => run('format.cells') });
   if (!header && (rows > 1 || cols > 1)) {
     items.push({ label: 'Объединить и поместить в центр', separator: true, run: () => merge('center') });
@@ -1325,6 +1333,151 @@ function validationDialog(): void {
       }
     } catch (err) { showToast(String(err)); return; }
     grid.render();
+    close();
+  });
+}
+
+// --- Гиперссылки ---
+
+const linkOf = (row: number, column: number): CellLinkInfo | undefined => {
+  try { return model.getCellLink(grid.sheet, row, column) ?? undefined; } catch { return undefined; }
+};
+
+/** Адрес, как его вводят: «ivan@mail.ru» → mailto:, «www.site.ru» → https://. */
+function normalizeAddress(text: string): string {
+  const t = text.trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(t) && !/^[a-z]:[\\/]/i.test(t)) return t;
+  if (/^[^\s@/\\]+@[^\s@/\\]+\.[^\s@/\\]+$/.test(t)) return `mailto:${t}`;
+  if (/^www\./i.test(t)) return `https://${t}`;
+  return t;
+}
+
+/** Место в этой книге, как в Excel: «Лист 2!A1» (имя листа с пробелами — в кавычках) или имя диапазона. */
+function locationText(sheet: string, cell: string): string {
+  const c = cell.trim().replace(/\$/g, '').toUpperCase();
+  if (!/^[A-Z]{1,3}\d+(:[A-Z]{1,3}\d+)?$/.test(c)) return cell.trim();
+  return `${/^[\p{L}\p{N}_]+$/u.test(sheet) ? sheet : `'${sheet.replace(/'/g, "''")}'`}!${c}`;
+}
+
+function splitLocation(loc: string): { sheet: string; cell: string } {
+  const i = loc.lastIndexOf('!');
+  if (i < 0) return { sheet: '', cell: loc };
+  return { sheet: loc.slice(0, i).replace(/^'|'$/g, '').replace(/''/g, "'"), cell: loc.slice(i + 1) };
+}
+
+/** Относительные пути файлов считаются от папки книги. */
+function resolveFile(target: string): string {
+  if (!doc.path || /^([a-z]:[\\/]|[\\/]|[a-z][a-z0-9+.-]*:)/i.test(target)) return target;
+  const dir = doc.path.replace(/[\\/][^\\/]*$/, '');
+  return `${dir}${doc.path.includes('\\') ? '\\' : '/'}${target}`;
+}
+
+function openLink(row: number, column: number): void {
+  const link = linkOf(row, column);
+  if (!link) { showToast('В этой ячейке нет ссылки.'); return; }
+  if (link.type === 'Internal') {
+    const { sheet, cell } = splitLocation(link.location);
+    const props = model.getWorksheetsProperties();
+    if (sheet) { goToArea(sheet, cell.replace(/\$/g, '')); return; }
+    const named = model.getDefinedNameList().find((n) => n.name.toLowerCase() === cell.toLowerCase());
+    if (named) {
+      const f = splitLocation(named.formula.replace(/^=/, ''));
+      goToArea(f.sheet || props[grid.sheet].name, f.cell.replace(/\$/g, ''));
+    } else goToArea(props[grid.sheet].name, cell.replace(/\$/g, ''));
+    return;
+  }
+  const url = link.target;
+  if (/^(https?:|mailto:|tel:)/i.test(url)) {
+    if (isDesktop) openTarget(url).catch((e) => showToast(String((e as Error)?.message ?? e)));
+    else window.open(url, '_blank', 'noopener');
+    return;
+  }
+  if (!isDesktop) { showToast('Файлы по ссылке открываются только в приложении.'); return; }
+  openTarget(resolveFile(url.replace(/^file:\/\/\/?/i, '').split('#')[0])).catch((e) => showToast(String((e as Error)?.message ?? e)));
+}
+
+grid.onLinkClick = (row, column) => {
+  if (!linkOf(row, column)) return false;
+  openLink(row, column);
+  return true;
+};
+
+function deleteLink(row: number, column: number): void {
+  try { model.deleteCellLink(grid.sheet, row, column); } catch (e) { showToast(String(e)); }
+  grid.render();
+}
+
+/** «Вставка» → «Ссылка» (Ctrl+K): на сайт, почту, файл или место в книге; текст ячейки и подсказка. */
+function linkDialog(): void {
+  if (editing) commitEdit(0, 0);
+  const { row, column } = grid.sel;
+  const found = linkOf(row, column);
+  const props = model.getWorksheetsProperties();
+  const names = model.getDefinedNameList().map((n) => n.name);
+  const cur = model.getFormattedCellValue(grid.sheet, row, column);
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal"><h2>Ссылка</h2>
+    <p><label><input type="radio" name="lk" data-f="ext"> На сайт, почту или файл</label>
+      <label style="margin-left:14px"><input type="radio" name="lk" data-f="int"> На место в этой книге</label></p>
+    <p><label>Текст: <input data-f="text" style="width:70%" placeholder="как будет выглядеть в ячейке"></label></p>
+    <div data-row="ext"><p><label>Адрес: <input data-f="target" style="width:70%" placeholder="https://… , имя@почта или путь к файлу"></label>
+      ${isDesktop ? '<button data-act="browse">Файл…</button>' : ''}</p></div>
+    <div data-row="int"><p><label>Лист: <select data-f="sheet">${props.map((p) => `<option>${p.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('')}</select></label>
+      <label style="margin-left:10px">Ячейка: <input data-f="cell" style="width:90px" placeholder="A1"></label></p>
+      <p><label>или имя диапазона: <input data-f="name" list="lk-names" style="width:40%"></label><datalist id="lk-names">${names.map((n) => `<option value="${n}">`).join('')}</datalist></p></div>
+    <p><label>Подсказка: <input data-f="tip" style="width:70%" placeholder="показывается при наведении"></label></p>
+    <div class="rec-actions">${found ? '<button data-act="delete" class="danger">Удалить ссылку</button>' : ''}${found ? '<button data-act="open">Открыть</button>' : ''}<button data-act="cancel">Отмена</button><button data-act="ok" class="primary">${found ? 'Применить' : 'Создать'}</button></div></div>`;
+  overlay.hidden = false;
+  const box = overlay.querySelector<HTMLElement>('.modal')!;
+  const f = (n: string) => box.querySelector<HTMLInputElement & HTMLSelectElement>(`[data-f="${n}"]`)!;
+  const row_ = (n: string) => box.querySelector<HTMLElement>(`[data-row="${n}"]`)!;
+  const refresh = () => { row_('ext').hidden = !f('ext').checked; row_('int').hidden = !f('int').checked; };
+  f('ext').addEventListener('change', refresh);
+  f('int').addEventListener('change', refresh);
+  const internal = found?.type === 'Internal';
+  f('ext').checked = !internal; f('int').checked = internal;
+  f('text').value = cur;
+  f('tip').value = found?.tooltip ?? '';
+  f('sheet').value = props[grid.sheet].name;
+  if (found?.type === 'External') f('target').value = found.target;
+  if (found?.type === 'Internal') {
+    const { sheet, cell } = splitLocation(found.location);
+    if (sheet) { f('sheet').value = sheet; f('cell').value = cell; } else if (names.includes(cell)) f('name').value = cell; else f('cell').value = cell;
+  } else f('cell').value = 'A1';
+  refresh();
+  (internal ? f('cell') : f('target')).focus();
+  const close = () => { overlay.hidden = true; focusGrid(); };
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); if (e.key === 'Enter') box.querySelector<HTMLElement>('[data-act="ok"]')!.click(); });
+  box.addEventListener('click', async (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (!act) return;
+    if (act === 'browse') {
+      const p = await pickOpen();
+      if (p) { f('target').value = p; if (!f('text').value.trim()) f('text').value = p.replace(/^.*[\\/]/, ''); }
+      return;
+    }
+    if (act === 'open') { close(); openLink(row, column); return; }
+    try {
+      if (act === 'delete') deleteLink(row, column);
+      if (act === 'ok') {
+        const tooltip = f('tip').value.trim() || null;
+        let link: CellLinkInfo, fallback: string;
+        if (f('int').checked) {
+          const loc = f('name').value.trim() || locationText(f('sheet').value, f('cell').value);
+          if (!f('name').value.trim() && !/!/.test(loc)) { showToast('Укажите ячейку, например A1.'); return; }
+          link = { type: 'Internal', location: loc, tooltip };
+          fallback = loc;
+        } else {
+          const target = normalizeAddress(f('target').value);
+          if (!target) { showToast('Укажите адрес ссылки.'); return; }
+          link = { type: 'External', target, tooltip };
+          fallback = target;
+        }
+        const text = f('text').value.trim();
+        model.setCellLink(grid.sheet, row, column, link, text || (cur ? null : fallback));
+      }
+    } catch (err) { showToast(String(err)); return; }
+    grid.render(); updateFormulaBar();
     close();
   });
 }
@@ -1692,6 +1845,19 @@ document.body.appendChild(commentTip);
 let tipCell = '';
 grid.onCellHover = (row, column, x, y) => {
   const c = row ? commentOf(row, column) : undefined;
+  const lk = row && !c ? linkOf(row, column) : undefined;
+  if (lk) {
+    const key = `L${row}:${column}`;
+    if (key !== tipCell) {
+      tipCell = key;
+      const where = lk.type === 'Internal' ? lk.location : lk.target;
+      commentTip.textContent = `${lk.tooltip ? `${lk.tooltip}\n` : ''}${where}\nCtrl+щелчок — открыть`;
+    }
+    commentTip.style.left = `${Math.min(x + 14, window.innerWidth - 280)}px`;
+    commentTip.style.top = `${Math.min(y + 14, window.innerHeight - 120)}px`;
+    commentTip.hidden = false;
+    return;
+  }
   if (!c) { commentTip.hidden = true; tipCell = ''; return; }
   const key = `${row}:${column}`;
   if (key !== tipCell) {
@@ -3124,6 +3290,12 @@ register(
     checked: () => model.isStructureLocked(), run: () => void toggleBookProtection() },
   { id: 'protect.cells', label: 'Защита ячеек…', keywords: ['locked', 'hidden', 'скрыть формулы', 'защищаемая ячейка'],
     run: () => cellProtectionDialog() },
+  { id: 'link.edit', label: 'Ссылка (вставить или изменить)', keywords: ['hyperlink', 'link', 'гиперссылка', 'ссылка', 'сайт', 'ссылка на файл'], keys: ['Ctrl+KeyK'],
+    run: () => linkDialog() },
+  { id: 'link.open', label: 'Открыть ссылку ячейки', keywords: ['open link', 'перейти по ссылке'],
+    run: () => openLink(grid.sel.row, grid.sel.column) },
+  { id: 'link.delete', label: 'Удалить ссылку', keywords: ['remove hyperlink', 'убрать ссылку'],
+    run: () => deleteLink(grid.sel.row, grid.sel.column) },
   { id: 'comment.edit', label: 'Примечание (создать или изменить)', keywords: ['comment', 'note', 'примечание', 'комментарий'], keys: ['Shift+F2'],
     run: () => editComment(grid.sel.row, grid.sel.column) },
   { id: 'comment.delete', label: 'Удалить примечание', keywords: ['delete comment', 'удалить комментарий'],

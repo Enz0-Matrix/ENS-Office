@@ -94,6 +94,8 @@ export async function ask(message: string, ok: string, cancel: string): Promise<
 
 /** Файл, с которым запустили программу («Открыть с помощью»). */
 /** Имя пользователя в системе (для журнала изменений). */
+/** Открыть адрес ссылки (сайт, почта, файл, папка) в программе по умолчанию. */
+export const openTarget = (target: string) => call<void>('open_target', { target });
 export const osUserName = () => (isDesktop ? call<string>('user_name').catch(() => '') : Promise.resolve(''));
 export const startupFile = () => (isTauri ? invoke<string | null>('startup_file') : Promise.resolve(null));
 

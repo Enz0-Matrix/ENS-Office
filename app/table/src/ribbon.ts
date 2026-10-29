@@ -227,6 +227,7 @@ export const TABS: RibbonTab[] = [
         { type: 'large', command: 'shape.line', icon: 'shape_line', label: 'Линия' },
         { type: 'large', command: 'shape.arrow', icon: 'shape_arrow', label: 'Стрелка' },
       ] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'link.edit', icon: 'link', label: 'Ссылка' }] },
       { name: 'Иллюстрации', items: [{ type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' }] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },

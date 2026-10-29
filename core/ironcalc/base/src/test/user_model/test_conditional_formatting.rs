@@ -1220,3 +1220,24 @@ fn test_undo_redo_lower_priority() {
     model.redo().unwrap();
     assert_eq!(priorities(&model), vec![2, 1]);
 }
+
+// ENS-Office: ranges and references in rules follow rows and columns being inserted and deleted.
+#[test]
+fn test_ens_cf_follows_rows_and_columns() {
+    let mut model = new_empty_user_model();
+    let rule = CfRuleInput::Formula { formula: "$C3>$E$1".to_string(), format: Dxf::default(), stop_if_true: false };
+    model.add_conditional_formatting(0, "B3:B8", rule).unwrap();
+    model.insert_rows(0, 2, 2).unwrap();
+    let l = model.get_conditional_formatting_list(0).unwrap();
+    assert_eq!(l[0].range, "B5:B10");
+    assert!(format!("{:?}", l[0].cf_rule).contains("$C5>$E$1"));
+    model.delete_rows(0, 1, 1).unwrap();
+    let l = model.get_conditional_formatting_list(0).unwrap();
+    assert_eq!(l[0].range, "B4:B9");
+    assert!(format!("{:?}", l[0].cf_rule).contains("$C4>#REF!"));
+    model.insert_columns(0, 1, 1).unwrap();
+    assert_eq!(model.get_conditional_formatting_list(0).unwrap()[0].range, "C4:C9");
+    model.delete_columns(0, 1, 1).unwrap();
+    model.undo().unwrap();
+    assert_eq!(model.get_conditional_formatting_list(0).unwrap()[0].range, "C4:C9");
+}

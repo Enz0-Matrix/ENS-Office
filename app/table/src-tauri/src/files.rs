@@ -98,6 +98,49 @@ fn explain(err: &std::io::Error, path: &Path, action: &str) -> String {
     format!("Не удалось {action} «{name}»: {reason}. Попробуйте «Сохранить как…» в другое место — данные в программе не потеряны.")
 }
 
+/// Открывает адрес ссылки в программе по умолчанию: сайт, почту, файл или папку.
+/// Программы и сценарии (exe, bat, ps1…) не запускаем, как и Excel без предупреждения.
+#[cfg_attr(feature = "tauri-shell", tauri::command)]
+pub fn open_target(target: String) -> Result<(), String> {
+    let t = target.trim();
+    if t.is_empty() || t.starts_with('-') || t.contains('\n') || t.contains('\0') {
+        return Err("Неверный адрес ссылки.".to_string());
+    }
+    let lower = t.to_lowercase();
+    let is_url = ["http://", "https://", "mailto:", "tel:"].iter().any(|p| lower.starts_with(p));
+    if !is_url {
+        const BLOCKED: [&str; 18] = [
+            "exe", "bat", "cmd", "com", "msi", "ps1", "vbs", "vbe", "js", "jse", "wsf", "scr", "pif", "lnk", "reg", "sh", "jar", "hta",
+        ];
+        let ext = Path::new(&lower).extension().and_then(|e| e.to_str()).unwrap_or_default().to_string();
+        if lower.contains("://") || BLOCKED.contains(&ext.as_str()) {
+            return Err("Эту ссылку открыть нельзя: программы и сценарии из таблицы не запускаются.".to_string());
+        }
+        if !Path::new(t).exists() {
+            return Err(format!("Файл или папка «{t}» не найдены."));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler").arg(t);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(t);
+        c
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(t);
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| format!("Не удалось открыть ссылку: {e}"))
+}
+
 /// Имя пользователя в системе — для журнала изменений книги («кто изменил»).
 #[cfg_attr(feature = "tauri-shell", tauri::command)]
 pub fn user_name() -> String {

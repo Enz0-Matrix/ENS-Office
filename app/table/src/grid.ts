@@ -219,6 +219,8 @@ export class Grid {
   pageBreaks: [number[], number[]] = [[], []];
   /** Указатель над ячейкой (row 0 — не над ячейкой); для всплывающего примечания. */
   onCellHover: (row: number, column: number, clientX: number, clientY: number) => void = () => {};
+  /** Ctrl+щелчок по ячейке со ссылкой: `true` — ссылка открыта, выделение не меняем. */
+  onLinkClick: (row: number, column: number) => boolean = () => false;
   onContextMenu: (x: number, y: number, header: 'row' | 'column' | 'corner' | null) => void = () => {};
   /** Протягивание маркера заполнения: куда дотянули. */
   onFill: (target: { r1: number; c1: number; r2: number; c2: number }) => void = () => {};
@@ -968,6 +970,7 @@ export class Grid {
     this.scroller.focus();
     // Ctrl+щелчок: прежнее выделение остаётся, новое добавляется к нему.
     const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey;
+    if (ctrl && !h.header && h.row >= 1 && h.column >= 1 && this.onLinkClick(h.row, h.column)) { e.preventDefault(); return; }
     if (ctrl) {
       const s = this.sel;
       this.extraRanges = [...this.extraRanges, { r1: s.r1, c1: s.c1, r2: s.r2, c2: s.c2 }];
