@@ -13,6 +13,11 @@ on:
     tags: ['v*', 'text-v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_text:
+        description: 'Выпустить ENS-Text: тег, например text-v0.0.2 (создастся сам на выбранной ветке; пусто — обычная проверка)'
+        required: false
+        default: ''
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -42,7 +47,7 @@ jobs:
     name: Сборка ${{ matrix.name }}
     needs: engine
     # Тег text-v* — выпуск ENS-Text: сборки ENS-Table для него не нужны.
-    if: ${{ !startsWith(github.ref, 'refs/tags/text-v') }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/text-v') && inputs.release_text == '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -313,7 +318,8 @@ jobs:
   release-text:
     name: Выпуск ENS-Text на GitHub
     needs: desktop-text
-    if: startsWith(github.ref, 'refs/tags/text-v')
+    # По тегу text-v* или по кнопке «Run workflow» с заполненным полем release_text (тег создастся сам).
+    if: ${{ startsWith(github.ref, 'refs/tags/text-v') || inputs.release_text != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -331,8 +337,12 @@ jobs:
       - name: Создать выпуск
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_INPUT: ${{ inputs.release_text }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="$RELEASE_INPUT"
+          target=""
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME}"; target="--verify-tag"; else target="--target ${GITHUB_SHA}"; fi
+          case "$tag" in text-v*) ;; *) echo "Тег должен начинаться с text-v"; exit 1;; esac
           ver="${tag#text-v}"
           notes="docs/releases/${tag}.md"
           [ -f "$notes" ] || notes=/dev/null
@@ -340,5 +350,5 @@ jobs:
             gh release upload "$tag" release/* --clobber
             [ "$notes" = /dev/null ] || gh release edit "$tag" --title "ENS-Text $ver" --notes-file "$notes"
           else
-            gh release create "$tag" release/* --title "ENS-Text $ver" --notes-file "$notes" --verify-tag --prerelease
+            gh release create "$tag" release/* --title "ENS-Text $ver" --notes-file "$notes" $target --prerelease
           fi
