@@ -44,11 +44,15 @@ export interface Settings {
   chartTemplates: { name: string; colors: string[]; legend: number; labels: boolean }[];
   /** Когда вы последний раз открывали или сохраняли файл (путь → мс): что изменилось с тех пор. */
   lastOpened: Record<string, number>;
+  /** Помощник «У. Болт» (выключен по умолчанию). */
+  helper: boolean;
+  /** Пасхалка с конфетти уже показана. */
+  bigBookCelebrated: boolean;
 }
 
 const KEY = 'ens-table.settings';
 const defaults: Settings = {
-  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], pinned: [], userName: '', chartTemplates: [], lastOpened: {}, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
+  decimal: 'comma', undoScope: 'book', defaultFont: 'Times New Roman', defaultFontSize: 12, expandEditor: false, autosaveMinutes: 10, recognizeDates: true, recoveryRoot: '', recent: [], pinned: [], userName: '', chartTemplates: [], lastOpened: {}, helper: false, bigBookCelebrated: false, sortBlanks: 'last', borderType: 'All', borderStyle: 'thin', theme: 'classic', themeMotion: true, themeMotionForced: false, hiddenPolicy: 'ask', customThemes: [], hiddenThemes: [], formulaHeight: 26, formulaExpanded: 80,
 };
 
 export const settings: Settings = (() => {
