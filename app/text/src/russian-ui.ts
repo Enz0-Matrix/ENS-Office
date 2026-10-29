@@ -2,6 +2,8 @@
 
 import type { EditorView } from 'prosemirror-view';
 import { CASES, CASE_LABELS, CURRENCIES, declineFullName, declinePosition, sumWords, type Case, type NameGender } from './russian';
+import { addCalendarDays, addWorkdays, fromYmd, parseCorrections, toYmd, workdaysBetween } from './calendar';
+import { dateRu } from './russian';
 import { dialog, el, toast } from './ui';
 
 type Host = () => EditorView;
@@ -81,6 +83,75 @@ export function nameDialog(host: Host): void {
     );
     render();
     fio.focus();
+    void toast;
+  });
+}
+
+const CAL_KEY = 'ens-text.calendar';
+const WEEKDAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+
+function loadCorrections(): string {
+  try { return localStorage.getItem(CAL_KEY) ?? ''; } catch { return ''; }
+}
+function saveCorrections(v: string): void {
+  try { localStorage.setItem(CAL_KEY, v); } catch { /* без хранилища поправки живут до закрытия окна */ }
+}
+
+/** Срок в рабочих или календарных днях с учётом праздников РФ; сколько рабочих дней между датами. */
+export function deadlineDialog(host: Host): void {
+  dialog((box, close) => {
+    const start = el('input', { type: 'date', value: toYmd(new Date()) });
+    const mode = el('select', {},
+      el('option', { value: 'work', textContent: 'через N рабочих дней' }),
+      el('option', { value: 'cal', textContent: 'через N календарных дней' }),
+      el('option', { value: 'between', textContent: 'рабочих дней до даты' }));
+    const n = el('input', { type: 'number', value: '10', step: '1' });
+    const end = el('input', { type: 'date', value: toYmd(new Date()) });
+    const roll = el('input', { type: 'checkbox', checked: true });
+    const corr = el('textarea', { rows: 3, placeholder: '+2026-05-04 — выходной; =2026-02-21 — рабочая суббота', value: loadCorrections() });
+    const out = el('div', { class: 'ru-out' });
+    let text = '';
+    const row = (label: string, ...kids: Node[]) => el('div', { class: 'dlg-row' }, el('label', { textContent: label }), ...kids);
+    const nRow = row('Сколько', n);
+    const endRow = row('До даты', end);
+    const rollRow = el('div', { class: 'dlg-row' }, el('label', {}, roll, ' Если срок выпал на нерабочий день — перенести на рабочий'));
+    const calc = () => {
+      nRow.hidden = mode.value === 'between';
+      endRow.hidden = mode.value !== 'between';
+      rollRow.hidden = mode.value !== 'cal';
+      text = '';
+      try {
+        const { corr: c, errors } = parseCorrections(corr.value);
+        const a = fromYmd(start.value);
+        if (mode.value === 'between') {
+          const b = fromYmd(end.value);
+          const k = workdaysBetween(a, b, c);
+          out.textContent = `Рабочих дней: ${k}`;
+          text = String(k);
+        } else {
+          const k = parseInt(n.value, 10);
+          if (!Number.isFinite(k)) throw new Error('Введите число дней');
+          const r = mode.value === 'work' ? addWorkdays(a, k, c) : addCalendarDays(a, k, c, roll.checked);
+          text = dateRu(r);
+          out.textContent = `${text} (${WEEKDAYS[r.getDay()]})`;
+        }
+        if (errors.length) out.textContent += `  ·  не понял поправки: ${errors.join(', ')}`;
+        out.classList.remove('bad');
+      } catch (e) { out.textContent = (e as Error).message; out.classList.add('bad'); }
+    };
+    for (const c of [start, mode, n, end, roll, corr]) { c.addEventListener('input', calc); c.addEventListener('change', calc); }
+    corr.addEventListener('change', () => saveCorrections(corr.value));
+    const ok = el('button', { class: 'primary', textContent: 'Вставить', onclick: () => { if (!text) return; saveCorrections(corr.value); close(); insertText(host, text); } });
+    box.append(
+      el('h2', { textContent: 'Срок в рабочих днях' }),
+      row('Начиная с', start), row('Вид', mode), nRow, endRow, rollRow,
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Поправки' }), corr),
+      out,
+      el('p', { textContent: 'Календарь расчётный: праздники РФ, выпавшие на выходные, переносятся по ст. 112 ТК РФ. Ежегодные постановления Правительства переносят дни иначе — для важных сроков сверьтесь с постановлением и внесите отличия в «Поправки» (+дата — выходной, =дата — рабочий день, через «;» или с новой строки). Поправки запоминаются.' }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Закрыть', onclick: close }), ok),
+    );
+    calc();
+    n.focus();
     void toast;
   });
 }

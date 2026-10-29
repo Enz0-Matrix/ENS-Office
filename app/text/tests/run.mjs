@@ -1005,6 +1005,21 @@ await test('сумма прописью и ФИО по падежам: окна 
   ok(fin.endsWith('Генерального директора Петровой Анны Сергеевны'), `вставлен родительный: ${fin}`);
 });
 
+await test('срок в рабочих днях: расчёт, поправки, вставка даты', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null)]), E.getMeta(), 'dl'); });
+  await p.evaluate(() => window.ens.run('insert.deadline'));
+  await p.fill('.modal input[type=date]', '2026-03-02'); // понедельник
+  await p.fill('.modal input[type=number]', '5');
+  let out = await p.textContent('.ru-out');
+  ok(out.includes('«10» марта 2026 г.') && out.includes('вторник'), `5 рабочих дней с 02.03.2026 (8 марта — воскресенье, выходной переносится на пн 9-е): ${out}`);
+  await p.fill('.modal textarea', '=2026-03-07');
+  out = await p.textContent('.ru-out');
+  ok(out.includes('«07» марта') && out.includes('суббота'), `рабочая суббота 7 марта: ${out}`);
+  await p.click('.modal button.primary');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), '«07» марта 2026 г.', 'вставлена дата');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

@@ -30,7 +30,7 @@ import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
-import { nameDialog, sumDialog } from './russian-ui';
+import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
@@ -519,6 +519,7 @@ register(
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
+  { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
   { id: 'insert.dateRu', label: 'Дата «29» октября 2026 г.', keywords: ['дата', 'сегодня'], run: () => { const v = active(); v.dispatch(v.state.tr.insertText(dateRu(new Date())).scrollIntoView()); v.focus(); } },
   { id: 'insert.pageBreak', label: 'Разрыв страницы', run: () => dispatchCmd(insertPageBreak) },
   { id: 'table.rowBefore', label: 'Вставить строку выше', run: () => dispatchCmd(addRowBefore) },
@@ -835,6 +836,7 @@ const TABS: RibbonTab[] = [
           { type: 'medium', command: 'insert.sumWords', icon: 'calculator' },
           { type: 'medium', command: 'insert.nameCases', icon: 'person' },
           { type: 'medium', command: 'insert.dateRu', icon: 'calendar_ltr' },
+          { type: 'medium', command: 'insert.deadline', icon: 'calendar_ltr' },
         ],
       },
       {
