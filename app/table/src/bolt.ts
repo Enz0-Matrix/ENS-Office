@@ -81,24 +81,28 @@ function build(): void {
   const body = root.querySelector<HTMLElement>('.bolt-body')!;
   root.querySelector('.bolt-x')!.addEventListener('click', () => { settings.helper = false; boltApply(); saveSettings(); });
   body.addEventListener('dblclick', () => lay(!lying));
-  body.addEventListener('click', () => { if (!bubble.hidden) bubble.hidden = true; else say(pick(IDLE), 6000); });
-  let drag: { dx: number; dy: number; moved: boolean } | null = null;
+  // Тянем за нижний правый угол (right/bottom), а не за верхний левый: облачко над
+  // болтом растёт вверх и не сдвигает его самого.
+  let drag: { x: number; y: number; right: number; bottom: number; moved: boolean } | null = null;
+  let justDragged = false;
   body.addEventListener('pointerdown', (e) => {
     const r = root!.getBoundingClientRect();
-    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    drag = { x: e.clientX, y: e.clientY, right: innerWidth - r.right, bottom: innerHeight - r.bottom, moved: false };
     body.setPointerCapture(e.pointerId);
   });
   body.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 8) return; // дрожание руки при щелчке — не перетаскивание
     drag.moved = true;
-    root!.style.left = `${Math.max(0, Math.min(innerWidth - 80, e.clientX - drag.dx))}px`;
-    root!.style.top = `${Math.max(0, Math.min(innerHeight - 100, e.clientY - drag.dy))}px`;
-    root!.style.right = root!.style.bottom = 'auto';
+    root!.style.right = `${Math.max(0, Math.min(innerWidth - 80, drag.right - dx))}px`;
+    root!.style.bottom = `${Math.max(0, Math.min(innerHeight - 100, drag.bottom - dy))}px`;
   });
   body.addEventListener('pointerup', () => {
-    if (drag?.moved) { drag = null; lay(true); } // перетащили и бросили — «положили»
+    if (drag?.moved) { justDragged = true; setTimeout(() => (justDragged = false), 0); lay(true); } // бросили — «положили»
     drag = null;
   });
+  body.addEventListener('click', () => { if (justDragged) return; if (!bubble.hidden) bubble.hidden = true; else say(pick(IDLE), 6000); });
   scheduleIdle();
   say('Ну, привет. Я У. Болт. Не обращай на меня внимания.', 6000);
 }
