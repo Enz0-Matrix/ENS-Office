@@ -424,7 +424,7 @@ export function renderRibbon(tabsEl: HTMLElement, bodyEl: HTMLElement, onFile: (
     const rule = wrap.querySelector<HTMLElement>('.us-rule')!;
     const show = () => {
       const i = Math.max(0, RULES.findIndex((r) => r.key === settings.undoScope));
-      thumb.style.transform = `translateX(${i * 100}%)`;
+      thumb.style.transform = `translateY(${i * 100}%)`;
       wrap.querySelectorAll<HTMLElement>('.us-stop').forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-checked', String(k === i)); });
       rule.textContent = RULES[i].name;
       wrap.title = RULES[i].hint;
