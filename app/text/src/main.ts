@@ -30,6 +30,8 @@ import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
 import { readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
+import { nameDialog, sumDialog } from './russian-ui';
+import { dateRu } from './russian';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
 import type { CheckHost } from './checks';
@@ -515,6 +517,9 @@ register(
   { id: 'insert.table', label: 'Таблица', run: () => tableDialog() },
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
+  { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
+  { id: 'insert.dateRu', label: 'Дата «29» октября 2026 г.', keywords: ['дата', 'сегодня'], run: () => { const v = active(); v.dispatch(v.state.tr.insertText(dateRu(new Date())).scrollIntoView()); v.focus(); } },
   { id: 'insert.pageBreak', label: 'Разрыв страницы', run: () => dispatchCmd(insertPageBreak) },
   { id: 'table.rowBefore', label: 'Вставить строку выше', run: () => dispatchCmd(addRowBefore) },
   { id: 'table.rowAfter', label: 'Вставить строку ниже', run: () => dispatchCmd(addRowAfter) },
@@ -824,6 +829,14 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      {
+        name: 'По-русски',
+        items: [
+          { type: 'medium', command: 'insert.sumWords', icon: 'calculator' },
+          { type: 'medium', command: 'insert.nameCases', icon: 'person' },
+          { type: 'medium', command: 'insert.dateRu', icon: 'calendar_ltr' },
+        ],
+      },
       {
         name: 'Колонтитулы',
         items: [

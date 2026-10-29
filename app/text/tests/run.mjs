@@ -985,6 +985,25 @@ await test('поиск по оформлению: шрифт/кегль/Ж, за
   ok(r.some((x) => x[0] === ' Арий' && !x[1].includes('strong')), 'не найденное не тронуто');
 });
 
+// ---- По-русски: сумма прописью, ФИО по падежам ----
+await test('сумма прописью и ФИО по падежам: окна вставляют текст', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null)]), E.getMeta(), 'ru'); });
+  await p.evaluate(() => window.ens.run('insert.sumWords'));
+  await p.fill('.modal input[type=text]', '12 345,67');
+  const out = await p.textContent('.ru-out');
+  eq(out, 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'сумма');
+  await p.click('button:has-text("Вставить")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Двенадцать тысяч триста сорок пять рублей 67 копеек', 'вставлено');
+  await p.evaluate(() => window.ens.run('insert.nameCases'));
+  await p.fill('input[placeholder="Иванов Иван Иванович"]', 'Петрова Анна Сергеевна');
+  await p.fill('input[placeholder^="Должность"]', 'Генеральный директор');
+  const rows = await p.$$eval('.ru-case', (e) => e.map((x) => x.textContent));
+  ok(rows[2].includes('Генеральному директору Петровой Анне Сергеевне'), `дательный: ${rows[2]}`);
+  await p.click('.ru-case:nth-child(2)');
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).endsWith('Генерального директора Петровой Анны Сергеевны'), 'вставлен родительный');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

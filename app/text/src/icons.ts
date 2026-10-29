@@ -33,8 +33,10 @@ import ccw24 from '@fluentui/svg-icons/icons/arrow_counterclockwise_24_regular.s
 import wand24 from '@fluentui/svg-icons/icons/wand_24_regular.svg?raw';
 import numRot24 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_24_regular.svg?raw';
 import check24 from '@fluentui/svg-icons/icons/checkmark_24_regular.svg?raw';
+import person24 from '@fluentui/svg-icons/icons/person_24_regular.svg?raw';
 
 Object.assign(ICONS, {
+  person_24: person24,
   checkmark_24: check24,
   arrow_counterclockwise_24: ccw24, wand_24: wand24, text_number_list_ltr_rotate_270_24: numRot24,
   history_24: history24,

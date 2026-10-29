@@ -197,3 +197,11 @@
 .check-row.ok .check-mark { color: #2e9b4b; }
 .check-row.bad .check-mark { color: #d13438; font-weight: 700; }
 .check-detail { font-size: 12px; color: var(--muted); }
+
+/* Окна «по-русски» */
+.ru-out { margin: 8px 0; padding: 8px 10px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; min-height: 22px; user-select: text; }
+.ru-out.bad { color: #b00020; }
+.ru-cases { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.ru-case { display: flex; gap: 10px; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-alt); font: inherit; cursor: pointer; }
+.ru-case:hover { background: #ececec; }
+.ru-case-label { color: var(--muted); min-width: 150px; }
