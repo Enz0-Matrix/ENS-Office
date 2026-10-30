@@ -467,7 +467,10 @@ footer { display: flex; flex-direction: column; }
 .bolt > * { pointer-events: auto; }
 .bolt-body { cursor: grab; touch-action: none; transition: transform .35s ease; transform-origin: 50% 90%; filter: drop-shadow(0 2px 3px rgba(0,0,0,.3)); }
 .bolt.lying .bolt-body { transform: rotate(90deg) translate(-18px, -6px); }
-.bolt-bubble { max-width: 260px; padding: 8px 10px; border-radius: 10px; background: var(--panel, #fff); color: var(--text, #222); border: 1px solid var(--border, #bbb); box-shadow: 0 2px 8px rgba(0,0,0,.2); font-size: 12.5px; line-height: 1.35; }
+.bolt-bubble { position: absolute; right: 0; bottom: calc(100% + 4px); width: max-content; max-width: min(260px, calc(100vw - 16px)); }
+.bolt-bubble.below { bottom: auto; top: calc(100% + 4px); }
+.bolt-bubble.left { right: auto; left: 0; }
+.bolt-bubble { padding: 8px 10px; border-radius: 10px; background: var(--panel, #fff); color: var(--text, #222); border: 1px solid var(--border, #bbb); box-shadow: 0 2px 8px rgba(0,0,0,.2); font-size: 12.5px; line-height: 1.35; }
 .bolt-x { position: absolute; right: -4px; bottom: 0; border: 0; background: none; font-size: 11px; color: var(--muted); cursor: pointer; opacity: .5; }
 .bolt-x:hover { opacity: 1; }
 .bolt-pupil { animation: bolt-look 9s ease-in-out infinite; }
@@ -500,4 +503,13 @@ footer { display: flex; flex-direction: column; }
   .bs-body * { overflow-wrap: anywhere; }
   .bs-row { flex-wrap: wrap; }
   .bs-row:has(> input[type="checkbox"]) { flex-wrap: nowrap; align-items: flex-start; }
+  /* Шапка: кнопок окна на телефоне нет, поиск ужимается. */
+  .window-buttons { display: none !important; }
+  .titlebar { gap: 8px; padding-right: 8px; }
+  .search { width: auto; flex: 1 1 0; min-width: 48px; margin: 0 0 0 auto; }
+  .doc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Вкладки и лента листаются вбок, группы не сжимаются в столбик. */
+  .tabs { overflow-x: auto; scrollbar-width: none; flex: none; }
+  .tab { flex: none; white-space: nowrap; }
+  .group { flex: none; }
 }

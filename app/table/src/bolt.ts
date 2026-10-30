@@ -54,6 +54,10 @@ function say(text: string, ms = 9000): void {
   if (!root) return;
   bubble.textContent = text;
   bubble.hidden = false;
+  // Облачко висит над Болтом и не сдвигает его; у края экрана — снизу или вправо.
+  const r = root.getBoundingClientRect();
+  bubble.classList.toggle('below', r.top < bubble.offsetHeight + 8);
+  bubble.classList.toggle('left', r.right < bubble.offsetWidth + 8);
   clearTimeout(bubbleTimer);
   bubbleTimer = window.setTimeout(() => (bubble.hidden = true), ms);
 }
