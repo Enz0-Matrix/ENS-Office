@@ -1217,6 +1217,64 @@ await test('разделы из настоящего docx (python-docx): три 
   eq(out, 'port,land,port', 'python-docx видит три раздела с теми же ориентациями');
 });
 
+await test('плавающие рисунки: логотип в колонтитуле «за текстом» от страницы, обтекание в тексте, запись обратно', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'floats.docx'));
+  await p.waitForSelector('.paper .hf img.fl-behind', { timeout: 5000 });
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => {
+    const paper = document.querySelector('.paper');
+    const img = paper.querySelector('.hf img.fl-behind');
+    const pr = paper.getBoundingClientRect(), ir = img.getBoundingClientRect();
+    const hf = paper.querySelector('.hf');
+    const body = document.querySelector('.ProseMirror img.fl-wrap');
+    return {
+      dx: Math.round(ir.left - pr.left), dy: Math.round(ir.top - pr.top), hfH: hf.offsetHeight, w: Math.round(ir.width), pos: getComputedStyle(img).position,
+      wrap: body ? getComputedStyle(body).float : null, lossy: window.ens.getMeta().lossy, effTop: Math.round(window.ens.effPage().top),
+    };
+  });
+  ok(Math.abs(r.dx - 76) <= 2 && Math.abs(r.dy - 38) <= 2, `логотип от угла страницы 76×38 px: ${r.dx}×${r.dy}`);
+  ok(r.hfH < 40, `колонтитул не раздут логотипом: высота ${r.hfH}`);
+  ok(r.w > 200, `логотип 6 см (≈227 px): ${r.w}`);
+  eq(r.wrap, 'left', 'картинка в тексте обтекается слева');
+  eq(r.lossy.filter((x) => /обтекание/.test(x)), [], 'об обтекании не предупреждает');
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'f'));
+    let f = null; b.doc.descendants((n) => { if (n.type.name === 'image' && n.attrs.float) f = n.attrs.float; });
+    const hdr = JSON.stringify(b.meta.hf.header);
+    return { f, hdr: hdr.includes('"mode":"behind"') };
+  });
+  ok(back.f && back.f.mode === 'wrap' && back.f.side === 'left' && back.hdr, `после записи и чтения: ${JSON.stringify(back)}`);
+});
+
+await test('обтекание рисунка из ленты: в тексте, за текстом, слева; запись в docx', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+    const img = s.nodes.image.create({ src: png, width: 80, height: 80 });
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Текст '), img, s.text(' ещё текст')])]), E.getMeta(), 'wrap');
+    const { NodeSelection } = E.pm;
+    E.view.dispatch(E.view.state.tr.setSelection(NodeSelection.create(E.view.state.doc, 7)));
+  });
+  await p.click('#tabs .tab:has-text("Макет")');
+  await p.waitForTimeout(100);
+  await p.selectOption('select[data-command="image.wrap"]', 'behind');
+  await p.waitForTimeout(300);
+  eq(await p.$eval('.ProseMirror img[data-crop], .ProseMirror img.fl-behind', (e) => getComputedStyle(e).position), 'absolute', 'за текстом — вне строки');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 7))); });
+  await p.selectOption('select[data-command="image.wrap"]', 'left');
+  await p.waitForTimeout(200);
+  eq(await p.$eval('.ProseMirror img.fl-wrap', (e) => getComputedStyle(e).float), 'left', 'слева с обтеканием');
+  const xml = await p.evaluate(() => { const E = window.ens; const b = E.exportDocx(E.view.state.doc, E.getMeta(), 'w'); return new TextDecoder().decode(E.unzip(b)['word/document.xml']); });
+  ok(xml.includes('<wp:anchor') && xml.includes('wrapSquare'), 'в docx записан якорь с обтеканием');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 7))); });
+  await p.selectOption('select[data-command="image.wrap"]', 'inline');
+  await p.waitForTimeout(200);
+  eq(await p.$$eval('.ProseMirror img.fl', (e) => e.length), 0, 'снова в тексте');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

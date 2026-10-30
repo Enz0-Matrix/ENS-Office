@@ -9,6 +9,7 @@ import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
 import type { Scheme } from './numbering';
+import type { Float } from './floats';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
@@ -301,6 +302,39 @@ function addText(acc: InlineAcc, text: string, marks: readonly Mark[]): void {
   if (text) acc.nodes.push(schema.text(text, marks));
 }
 
+const EMU = 9525;
+
+/** wp:anchor → плавающий рисунок. null — «сверху и снизу» и прочее, что остаётся в строке. */
+function parseAnchor(a: Element): Float | null {
+  const wrap = [...a.children].map((c) => c.localName).find((n) => /^wrap/.test(n ?? '')) ?? 'wrapNone';
+  if (wrap === 'wrapTopAndBottom') return null;
+  const dist = (n: string) => (num(a.getAttribute(n)) ?? 0) / EMU;
+  const pos = (tag: string) => {
+    const e = kid(a, tag);
+    const rel = e?.getAttribute('relativeFrom') ?? '';
+    const off = kid(e, 'posOffset');
+    const al = kid(e, 'align')?.textContent?.trim() ?? null;
+    return { rel, off: off ? (num(off.textContent) ?? 0) / EMU : null, align: al };
+  };
+  const h = pos('positionH');
+  const v = pos('positionV');
+  const hRel = (['page', 'margin', 'column', 'character'] as const).find((x) => x === h.rel) ?? (/margin/i.test(h.rel) ? 'margin' : 'margin');
+  const vRel = (['page', 'margin', 'paragraph', 'line'] as const).find((x) => x === v.rel) ?? (/margin/i.test(v.rel) ? 'margin' : 'paragraph');
+  const hAlign = (['left', 'center', 'right'] as const).find((x) => x === h.align) ?? (h.align === 'inside' ? 'left' : h.align === 'outside' ? 'right' : null);
+  const vAlign = (['top', 'center', 'bottom'] as const).find((x) => x === v.align) ?? (h.align === 'inside' ? 'top' : null);
+  const f: Float = {
+    mode: wrap === 'wrapNone' ? (a.getAttribute('behindDoc') === '1' ? 'behind' : 'front') : 'wrap',
+    hRel, hOff: h.off, hAlign, vRel, vOff: v.off, vAlign,
+    dist: [dist('distT'), dist('distB'), dist('distL'), dist('distR')],
+  };
+  if (f.mode === 'wrap') {
+    // Текст слева от рисунка — рисунок справа; «с обеих сторон» — по выравниванию или положению.
+    const wt = kid(a, wrap)?.getAttribute('wrapText');
+    f.side = wt === 'left' ? 'right' : wt === 'right' ? 'left' : hAlign === 'right' || (hAlign == null && (h.off ?? 0) > 280) ? 'right' : 'left';
+  }
+  return f;
+}
+
 function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mark[]): void {
   const blip = descendants(el, 'blip')[0];
   const embed = blip ? relAttr(blip, 'embed') : null;
@@ -318,14 +352,19 @@ function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mar
   // Обрезка рисунка: a:srcRect l/t/r/b — тысячные доли процента от исходной картинки; отрицательные (поля вокруг) не поддерживаем.
   const sr = descendants(el, 'srcRect')[0];
   const crop = sr ? (['l', 't', 'r', 'b'] as const).map((k) => Math.max(0, (num(sr.getAttribute(k)) ?? 0) / 100000)) : null;
-  const isAnchor = !!descendants(el, 'anchor').length;
-  if (isAnchor) lose(ctx, 'обтекание изображений (изображения стали строчными)');
+  const anchor = descendants(el, 'anchor')[0];
+  let float: Float | null = null;
+  if (anchor) {
+    float = parseAnchor(anchor);
+    if (!float) lose(ctx, 'обтекание изображений «сверху и снизу» (изображения стали строчными)');
+  }
   acc.nodes.push(schema.nodes.image.create({
     src: bytesToDataUrl(bytes, MIME[ext]),
     alt: docPr?.getAttribute('descr') ?? '',
     width: cx ? Math.round(cx / 9525) : null,
     height: cy ? Math.round(cy / 9525) : null,
     crop: crop && crop.some((x) => x > 0) && crop[0] + crop[2] < 1 && crop[1] + crop[3] < 1 ? crop : null,
+    float,
   }, null, marks));
 }
 
@@ -876,14 +915,24 @@ function imageXml(ctx: ExportCtx, node: PMNode): string {
   const cx = Math.round((node.attrs.width || 200) * 9525);
   const cy = Math.round((node.attrs.height || 150) * 9525);
   const n = ctx.docIds.n++;
-  return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>` +
+  const fl = node.attrs.float as Float | null;
+  const emu = (px: number) => Math.round(px * EMU);
+  const posXml = (tag: 'positionH' | 'positionV', rel: string, off: number | null, align: string | null) =>
+    `<wp:${tag} relativeFrom="${rel}">${align ? `<wp:align>${align}</wp:align>` : `<wp:posOffset>${emu(off ?? 0)}</wp:posOffset>`}</wp:${tag}>`;
+  const open = fl
+    ? `<wp:anchor distT="${emu(fl.dist[0])}" distB="${emu(fl.dist[1])}" distL="${emu(fl.dist[2])}" distR="${emu(fl.dist[3])}" simplePos="0" relativeHeight="251658240" behindDoc="${fl.mode === 'behind' ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>` +
+      posXml('positionH', fl.hRel, fl.hOff, fl.hAlign) + posXml('positionV', fl.vRel, fl.vOff, fl.vAlign) +
+      `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+      (fl.mode === 'wrap' ? `<wp:wrapSquare wrapText="${fl.side === 'right' ? 'left' : 'right'}"/>` : '<wp:wrapNone/>')
+    : `<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>`;
+  return `<w:r><w:drawing>${open}` +
     `<wp:docPr id="${n}" name="Рисунок ${n}" descr="${esc(node.attrs.alt || '')}"/>` +
     '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
     '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>' +
     `<pic:nvPicPr><pic:cNvPr id="${n}" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr>` +
     `<pic:blipFill><a:blip r:embed="${id}"/>${cropXml(node.attrs.crop as number[] | null)}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
     `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
-    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    `</pic:pic></a:graphicData></a:graphic></${fl ? 'wp:anchor' : 'wp:inline'}></w:drawing></w:r>`;
 }
 
 function runsXml(ctx: ExportCtx, para: PMNode): string {

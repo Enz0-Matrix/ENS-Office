@@ -266,3 +266,12 @@
 .ProseMirror .sect-break::after { content: attr(data-label); position: absolute; right: 0; top: -10px; font: 10px/1 sans-serif; color: var(--muted, #666); background: var(--paper, #fff); padding: 1px 6px; pointer-events: none; }
 .ProseMirror .sect-break.ProseMirror-selectednode::before { border-top: 2px solid var(--accent); }
 @media print { .ProseMirror .sect-break { display: none; } }
+
+/* Плавающие рисунки (floats.ts): за текстом, перед текстом, с обтеканием */
+.ProseMirror img.fl { max-width: none; }
+.ProseMirror img.fl-behind, .ProseMirror img.fl-front { position: absolute; }
+.ProseMirror img.fl-behind { z-index: -1; }
+.ProseMirror img.fl-front { z-index: 3; }
+.ProseMirror img.fl-wrap { position: static; }
+.paper .hf { isolation: isolate; }
+.hf-edit img.fl { position: static !important; float: none !important; margin: 0 !important; }

@@ -5,7 +5,8 @@ import './text.css';
 import './icons';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { TextSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
+import { unzipSync } from 'fflate';
 import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import {
   addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, isInTable, mergeCells, splitCell,
@@ -47,6 +48,7 @@ import { focusKey, jumpFlag, listFlags, toggleFlag } from './editor';
 import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
+import { placeFloats, type Float } from './floats';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -342,14 +344,25 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   $('sheet').style.minHeight = `${total}px`;
   $('sheet').style.setProperty('--sheet-h', `${total}px`);
   view.dom.style.minHeight = `${total}px`;
-  paintHf(pages);
+  paintHf(pages, list);
   updatePageStatus(pages);
+  layoutFloats();
+}
+
+/** Плавающие рисунки основного текста: положение считается после вёрстки страниц и после каждой правки. */
+let floatRaf = 0;
+function layoutFloats(): void {
+  cancelAnimationFrame(floatRaf);
+  floatRaf = requestAnimationFrame(() => {
+    const dom = view.dom as HTMLElement;
+    const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
+    placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale });
+  });
 }
 
 /** Колонтитулы на листах: свои на каждой странице (номер страницы подставляется). */
-function paintHf(pages = pageCount(view)): void {
+function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): void {
   const papers = $('papers');
-  const boxes = pageBoxes(view);
   [...papers.children].forEach((paper, i) => {
     const pg = boxes[i]?.page ?? meta.page;
     paper.querySelectorAll('.hf').forEach((e) => e.remove());
@@ -362,6 +375,10 @@ function paintHf(pages = pageCount(view)): void {
       if (kind === 'header') e.style.top = `${meta.hf.headerDist}pt`;
       else e.style.bottom = `${meta.hf.footerDist}pt`;
       paper.append(e);
+      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front')) {
+        const sc = e.getBoundingClientRect().width / (e.offsetWidth || 1) || 1;
+        placeFloats({ root: e, boxes: [], sheetW: 0, scale: sc, fixed: { box: boxes[i], originX: -e.offsetLeft, originY: -e.offsetTop } });
+      }
     }
   });
 }
@@ -445,6 +462,7 @@ function afterChange(docChanged: boolean): void {
   updateUi();
   renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
+    layoutFloats();
     // Появился, исчез или изменился раздел: перестроить поля и листы.
     if (sectionsSig(sectionsOf(view.state.doc, meta.page)) !== lastSecSig) queueMicrotask(() => { applyPage(); replan(view); updateUi(); });
     clearTimeout(statsTimer);
@@ -561,6 +579,7 @@ register(
   { id: 'table.merge', label: 'Объединить ячейки', run: () => dispatchCmd(mergeCells) },
   { id: 'table.split', label: 'Разделить ячейку', run: () => dispatchCmd(splitCell) },
   { id: 'table.borders', label: 'Границы таблицы', run: () => toggleBorders() },
+  { id: 'image.wrap', label: 'Обтекание рисунка', keywords: ['рисунок', 'логотип', 'за текстом', 'перед текстом', 'обтекание', 'в тексте'], run: (v) => setImageWrap(v ?? 'inline') },
   { id: 'page.size', label: 'Размер страницы', run: (v) => setPageSize(v ?? 'a4') },
   { id: 'page.orientation', label: 'Ориентация', run: (v) => setOrientation(v === 'landscape') },
   { id: 'page.margins', label: 'Поля', run: (v) => setMargins(v ?? 'normal') },
@@ -896,6 +915,10 @@ const TABS: RibbonTab[] = [
           { type: 'select', command: 'page.margins', options: MARGINS, width: 150 },
         ],
       },
+      {
+        name: 'Рисунок',
+        items: [{ type: 'select', command: 'image.wrap', width: 150, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] }],
+      },
       { name: 'Разделы', items: [{ type: 'large', command: 'insert.sectionBreak', icon: 'page_break', label: 'Разрыв раздела' }] },
       {
         name: 'Абзац',
@@ -1071,6 +1094,9 @@ function updateUi(): void {
   setSelect('page.orientation', curPage().w > curPage().h ? 'landscape' : 'portrait');
   setSelect('ver.reminder', String(settings.saveReminderMinutes));
   setSelect('list.scheme', presetOf(currentScheme()) === 'custom' ? '' : presetOf(currentScheme()) === 'simple' ? '' : presetOf(currentScheme()));
+  const imgSel = selectedImage();
+  const fl = imgSel?.node.attrs.float as Float | null | undefined;
+  setSelect('image.wrap', !imgSel ? '' : !fl ? 'inline' : fl.mode === 'wrap' ? (fl.side ?? 'left') : fl.mode);
   setSelect('page.size', sizeKey());
   setSelect('page.margins', marginsKey());
 }
@@ -1110,6 +1136,27 @@ function changePage(next: Partial<PageSetup>): void {
   replan(view);
   updateUi();
   scheduleRecovery();
+}
+
+/** Выделенный рисунок (NodeSelection) и его позиция. */
+function selectedImage(): { pos: number; node: PMNode } | null {
+  const sel = view.state.selection;
+  if (sel instanceof NodeSelection && sel.node.type === schema.nodes.image) return { pos: sel.from, node: sel.node };
+  return null;
+}
+
+/** Обтекание выделенного рисунка: в тексте, слева/справа с обтеканием, за текстом, перед текстом. */
+function setImageWrap(mode: string): void {
+  const img = selectedImage();
+  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  const old = img.node.attrs.float as Float | null;
+  let float: Float | null = null;
+  const base: Float = old ?? { mode: 'behind', hRel: 'column', hOff: 0, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
+  if (mode === 'behind' || mode === 'front') float = { ...base, mode };
+  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, dist: old?.dist ?? [0, 4, 8, 8] };
+  view.dispatch(view.state.tr.setNodeMarkup(img.pos, undefined, { ...img.node.attrs, float }));
+  view.focus();
+  updateUi();
 }
 
 /** Новый раздел со следующей страницы: после текущего блока; страница нового раздела сначала как у текущего. */
@@ -1725,6 +1772,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

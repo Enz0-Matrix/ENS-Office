@@ -110,3 +110,47 @@ s4c.orientation = WD_ORIENT.PORTRAIT
 s4c.page_width, s4c.page_height = s4c.page_height, s4c.page_width
 d4.add_paragraph('Третья страница, книжная')
 d4.save(os.path.join(out, 'sections.docx'))
+
+# Бланк с плавающими рисунками: логотип в колонтитуле «за текстом» от страницы и картинка с обтеканием в тексте.
+import struct, zlib
+from docx.shared import Cm
+from docx.oxml import parse_xml
+
+def png(path, w, h, rgb):
+    raw = b''.join(b'\x00' + bytes(rgb) * w for _ in range(h))
+    def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    with open(path, 'wb') as f:
+        f.write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+
+def to_anchor(run, behind, pos_h, pos_v, wrap):
+    inline = run._r.xpath('.//wp:inline')[0]
+    anchor = parse_xml(
+        f'<wp:anchor xmlns:wp="{WP}" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251658240" '
+        f'behindDoc="{1 if behind else 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>{pos_h}{pos_v}</wp:anchor>')
+    for ch in list(inline):
+        if ch.tag.endswith('}extent'):
+            anchor.append(ch); anchor.append(parse_xml(f'<wp:effectExtent xmlns:wp="{WP}" l="0" t="0" r="0" b="0"/>')); anchor.append(parse_xml(wrap))
+        else:
+            anchor.append(ch)
+    inline.getparent().replace(inline, anchor)
+
+d5 = Document()
+png(os.path.join(out, 'logo-blue.png'), 60, 30, (40, 90, 200))
+png(os.path.join(out, 'pic-red.png'), 40, 40, (200, 40, 40))
+h5 = d5.sections[0].header.paragraphs[0]
+r5 = h5.add_run(); r5.add_picture(os.path.join(out, 'logo-blue.png'), width=Cm(6))
+to_anchor(r5, True,
+    f'<wp:positionH xmlns:wp="{WP}" relativeFrom="page"><wp:posOffset>720000</wp:posOffset></wp:positionH>',
+    f'<wp:positionV xmlns:wp="{WP}" relativeFrom="page"><wp:posOffset>360000</wp:posOffset></wp:positionV>',
+    f'<wp:wrapNone xmlns:wp="{WP}"/>')
+h5.add_run('Шапка')
+p5 = d5.add_paragraph('Текст, который обтекает картинку справа. ' * 6)
+r5b = p5.add_run(); r5b.add_picture(os.path.join(out, 'pic-red.png'), width=Cm(3))
+to_anchor(r5b, False,
+    f'<wp:positionH xmlns:wp="{WP}" relativeFrom="margin"><wp:align>left</wp:align></wp:positionH>',
+    f'<wp:positionV xmlns:wp="{WP}" relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>',
+    f'<wp:wrapSquare xmlns:wp="{WP}" wrapText="right"/>')
+d5.save(os.path.join(out, 'floats.docx'))
+os.remove(os.path.join(out, 'logo-blue.png')); os.remove(os.path.join(out, 'pic-red.png'))
