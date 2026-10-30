@@ -479,3 +479,25 @@ footer { display: flex; flex-direction: column; }
 .credits-box h2 { margin: 0 0 8px; }
 .credits-box p { margin: 6px 0; }
 .credits-small { color: var(--muted); font-size: 12px; }
+
+/* Телефоны (Android). Вырез камеры и полоса жестов: env() равен 0 везде, кроме
+   полноэкранного окна с viewport-fit=cover, поэтому на ПК ничего не меняется. */
+.titlebar { height: calc(36px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); }
+.statusbar { height: calc(24px + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.backstage { padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); background: var(--brand-bg); }
+.bs-nav { overflow-y: auto; }
+.bs-body { min-width: 0; background: #fff; }
+@media (max-width: 600px) {
+  /* Меню «Файл» узкое: 412 px экрана — не 210 px под список команд. */
+  .bs-nav { width: 132px; flex: none; }
+  .bs-nav button, .bs-nav .bs-back { padding: 10px 10px; gap: 8px; font-size: 14px; }
+  .bs-nav hr { margin: 8px 10px; }
+  .bs-about { padding: 10px 10px 4px; font-size: 11px; overflow-wrap: anywhere; }
+  .bs-donate { margin: 8px 6px; padding: 8px 6px; }
+  .bs-body { padding: 16px 12px; }
+  .bs-body h1 { font-size: 24px; margin-bottom: 12px; }
+  .bs-body input, .bs-body select, .bs-body textarea { max-width: 100%; }
+  .bs-body * { overflow-wrap: anywhere; }
+  .bs-row { flex-wrap: wrap; }
+  .bs-row:has(> input[type="checkbox"]) { flex-wrap: nowrap; align-items: flex-start; }
+}

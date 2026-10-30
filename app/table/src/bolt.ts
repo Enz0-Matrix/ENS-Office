@@ -82,14 +82,17 @@ function build(): void {
   root.querySelector('.bolt-x')!.addEventListener('click', () => { settings.helper = false; boltApply(); saveSettings(); });
   body.addEventListener('dblclick', () => lay(!lying));
   body.addEventListener('click', () => { if (!bubble.hidden) bubble.hidden = true; else say(pick(IDLE), 6000); });
-  let drag: { dx: number; dy: number; moved: boolean } | null = null;
+  let drag: { dx: number; dy: number; x: number; y: number; moved: boolean } | null = null;
   body.addEventListener('pointerdown', (e) => {
     const r = root!.getBoundingClientRect();
-    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x: e.clientX, y: e.clientY, moved: false };
     body.setPointerCapture(e.pointerId);
   });
   body.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    // Палец при касании чуть дрожит: это ещё не перетаскивание, иначе Болт
+    // «убегает» и ложится от каждого нажатия, а двойное касание не ловится.
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 10) return;
     drag.moved = true;
     root!.style.left = `${Math.max(0, Math.min(innerWidth - 80, e.clientX - drag.dx))}px`;
     root!.style.top = `${Math.max(0, Math.min(innerHeight - 100, e.clientY - drag.dy))}px`;
