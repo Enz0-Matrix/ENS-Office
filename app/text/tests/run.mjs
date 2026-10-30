@@ -1078,6 +1078,36 @@ await test('совместимость с Word: шрифт без аналога
   await p.waitForSelector('.cmp-verdict.ok');
 });
 
+await test('читаемость: время, длинные предложения, повторы, канцеляризмы; ночной лист не трогает печать', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [
+      P('В целях осуществления контроля данный отдел производит проверку документов. Директор И. И. Иванов, г. Москва, подписал приказ.'),
+      P('Длинное ' + 'слово '.repeat(35) + 'конец.'),
+    ]), E.getMeta(), 'rd');
+  });
+  await p.evaluate(() => window.ens.run('review.readability'));
+  await p.waitForSelector('.rd-row');
+  const kinds = await p.$$eval('.rd-row .rd-kind', (e) => e.map((x) => x.textContent));
+  ok(kinds.includes('Канцеляризм') && kinds.includes('Длинное предложение') && kinds.includes('Повтор слова'), `замечания: ${kinds.join(', ')}`);
+  const stats = await p.$$eval('.rd-stat .rd-lab', (e) => e.map((x) => x.textContent));
+  ok(stats.includes('слов') && stats.includes('индекс Флеша'), 'показатели');
+  await p.click('.rd-row:has(.rd-kind.clerical) button');
+  const selText = await p.evaluate(() => { const st = window.ens.view.state; return st.doc.textBetween(st.selection.from, st.selection.to); });
+  ok(/целях|данный|производит/i.test(selText), `«Показать» выделяет канцеляризм: «${selText}»`);
+  // ночной лист: тёмный лист на экране, в печати белый
+  await p.evaluate(() => window.ens.run('view.night'));
+  const bg = await p.$eval('.paper', (e) => getComputedStyle(e).backgroundColor);
+  ok(bg !== 'rgb(255, 255, 255)', `лист тёмный: ${bg}`);
+  await p.emulateMedia({ media: 'print' });
+  const printBg = await p.$eval('.paper', (e) => getComputedStyle(e).backgroundColor);
+  await p.emulateMedia({ media: 'screen' });
+  eq(printBg, 'rgb(255, 255, 255)', 'в печати лист белый');
+  await p.evaluate(() => window.ens.run('view.night'));
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

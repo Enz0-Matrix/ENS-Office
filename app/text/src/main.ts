@@ -33,6 +33,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { compatDialog } from './compat-ui';
+import { readabilityDialog } from './readability-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
@@ -585,6 +586,8 @@ register(
   },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
+  { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
+  { id: 'view.night', label: 'Ночной лист', keywords: ['тёмный', 'ночь', 'ночной', 'чтение', 'тема листа'], checked: () => nightSheet, run: () => setNightSheet(!nightSheet) },
   { id: 'review.inspector', label: 'Рентген форматирования', keywords: ['формат', 'инспектор', 'откуда'], keys: ['Ctrl+Alt+KeyI'], run: () => toggleInspector(inspectorSource, inspectorActions) },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
@@ -924,9 +927,10 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
           { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
+          { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
         ],
       },
-      { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }] },
+      { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }, { type: 'large', command: 'view.night', icon: 'paint_brush', label: 'Ночной лист' }] },
     ],
   },
   {
@@ -1000,6 +1004,17 @@ function setSelect(cmd: string, value: string): void {
 }
 
 const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete']);
+
+const NIGHT_KEY = 'ens-text.night';
+let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
+
+/** «Ночной лист»: светлый текст на тёмном листе для чтения с экрана; печать и файл не меняются. */
+function setNightSheet(on: boolean): void {
+  nightSheet = on;
+  document.documentElement.toggleAttribute('data-night-sheet', on);
+  try { localStorage.setItem(NIGHT_KEY, on ? '1' : '0'); } catch { /* без хранилища — до закрытия окна */ }
+  updateUi();
+}
 
 function updateUi(): void {
   refreshRibbon();
@@ -1605,6 +1620,7 @@ window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, 
 $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
+document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
 initCommandSearch();
 applyPage();
 setZoom(1);

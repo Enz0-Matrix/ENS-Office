@@ -226,3 +226,28 @@
 .cmp-text { flex: 1; }
 .cmp-title { font-weight: 600; }
 .cmp-detail { color: var(--muted); }
+
+/* Ночной лист: светлый текст на тёмном листе, только на экране (в печати лист белый — см. @media print) */
+@media screen {
+  :root[data-night-sheet] .paper { background: #1d2026; }
+  :root[data-night-sheet] .sheet { color: #d6dae0; }
+  :root[data-night-sheet] .sheet > .ProseMirror { color: #d6dae0; caret-color: #fff; }
+  :root[data-night-sheet] .ProseMirror table.bordered td, :root[data-night-sheet] .ProseMirror table.bordered th { border-color: #8a909a; }
+  :root[data-night-sheet] .ProseMirror table.plain td, :root[data-night-sheet] .ProseMirror table.plain th { border-color: #3a3f48; }
+  :root[data-night-sheet] .ProseMirror a { color: #7db3ff; }
+  :root[data-night-sheet] .sheet > .hf-edit { background: #1d2026; color: #d6dae0; }
+  :root[data-night-sheet] .ProseMirror img { filter: brightness(.88); }
+}
+.rd-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+.rd-stat { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; min-width: 110px; }
+.rd-val { font-size: 18px; font-weight: 600; }
+.rd-lab { color: var(--muted); font-size: 12px; }
+.rd-level { font-weight: 600; }
+.rd-tabs { display: flex; gap: 6px; margin: 8px 0; }
+.rd-tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rd-list { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
+.rd-row { display: grid; grid-template-columns: 150px minmax(120px, 1fr) 2fr auto; gap: 10px; align-items: center; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.rd-kind { font-weight: 600; }
+.rd-kind.long { color: #b26a00; } .rd-kind.repeat { color: #2b579a; } .rd-kind.clerical { color: #8a2a6b; }
+.rd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-note { color: var(--muted); }
