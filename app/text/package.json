@@ -1,7 +1,7 @@
 {
   "name": "ens-text",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "ENS-Text — текстовый редактор ENS-Office (веб-интерфейс, позже в оболочке Tauri)",
   "type": "module",
   "scripts": {
