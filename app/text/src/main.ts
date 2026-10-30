@@ -51,10 +51,10 @@ import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
 import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
-import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setValign, tableDialog as tablePropsDialog } from './tables-ui';
+import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
-  addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, isCropMode, replaceImage, resetImageSize,
-  scaleImage, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
+  addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
+  scaleImage, selectFrame, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
 } from './images-ui';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
@@ -613,8 +613,11 @@ register(
   { id: 'table.equalRows', label: 'Выровнять высоту строк', keywords: ['таблица', 'строки'], run: () => equalRows(view) },
   { id: 'table.fit', label: 'Таблица по ширине текста', keywords: ['таблица', 'по ширине'], run: () => fitTable(view, (curPage().w - curPage().left - curPage().right) * PX) },
   { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
+  { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
   { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
   { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
+  { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
+  { id: 'frame.select', label: 'Выделить надпись', keywords: ['надпись', 'выделить рамку'], run: () => selectFrame() },
   { id: 'image.format', label: 'Формат рисунка…', keywords: ['рисунок', 'размер', 'обрезка', 'положение', 'описание', 'логотип'], run: () => void imageDialog() },
   { id: 'image.grow', label: 'Рисунок крупнее на 10%', keywords: ['рисунок', 'увеличить'], run: () => scaleImage(1.1) },
   { id: 'image.shrink', label: 'Рисунок мельче на 10%', keywords: ['рисунок', 'уменьшить'], run: () => scaleImage(1 / 1.1) },
@@ -932,6 +935,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'insert.table', icon: 'table', label: 'Таблица' },
           { type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' },
+          { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
@@ -1093,6 +1097,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'table.equalCols', icon: 'col_add', label: 'Выровнять столбцы' },
           { type: 'large', command: 'table.equalRows', icon: 'row_add', label: 'Выровнять строки' },
           { type: 'large', command: 'table.fit', icon: 'arrow_autofit_width', label: 'По ширине текста' },
+          { type: 'select', command: 'table.wrap', width: 190, options: [{ value: '', label: 'Положение таблицы…' }, { value: 'inline', label: 'В тексте' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'left', label: 'Слева, текст справа' }] },
         ],
       },
     ],
@@ -1103,8 +1108,9 @@ const TABS: RibbonTab[] = [
       {
         name: 'Выбор',
         items: [
-          { type: 'large', command: 'image.next', icon: 'image', label: 'Следующий рисунок' },
-          { type: 'large', command: 'image.format', icon: 'resize_image', label: 'Формат рисунка' },
+          { type: 'large', command: 'image.next', icon: 'image', label: 'Следующий объект' },
+          { type: 'large', command: 'frame.select', icon: 'text_box', label: 'Выделить надпись' },
+          { type: 'large', command: 'image.format', icon: 'resize_image', label: 'Формат' },
         ],
       },
       {
@@ -1172,7 +1178,7 @@ function setSelect(cmd: string, value: string): void {
   sel.value = value;
 }
 
-const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.fillClear']);
+const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.wrap', 'table.fillClear']);
 
 const NIGHT_KEY = 'ens-text.night';
 let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
@@ -1263,7 +1269,7 @@ function setImageWrap(mode: string): void {
   let float: Float | null = null;
   const base: Float = old ?? { mode: 'behind', hRel: 'column', hOff: 0, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
   if (mode === 'behind' || mode === 'front') float = { ...base, mode };
-  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, dist: old?.dist ?? [0, 4, 8, 8] };
+  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, ...(img.frame ? { hAlign: mode, hOff: null } : {}), dist: old?.dist ?? [0, 4, 8, 8] };
   view.dispatch(view.state.tr.setNodeMarkup(img.pos, undefined, { ...img.node.attrs, float }));
   view.focus();
   updateUi();

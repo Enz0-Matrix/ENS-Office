@@ -35,14 +35,23 @@ let cropMode = false;
 
 export const isCropMode = (): boolean => cropMode;
 
-export function selectedImage(v: EditorView = host.view()): { pos: number; node: PMNode; dom: HTMLImageElement | null } | null {
+export interface Obj { pos: number; node: PMNode; dom: HTMLElement | null; frame: boolean }
+
+/** Выделенный рисунок или надпись (рамка). */
+export function selectedImage(v: EditorView = host.view()): Obj | null {
   const sel = v.state.selection;
-  if (sel instanceof NodeSelection && sel.node.type === schema.nodes.image) {
-    const dom = v.nodeDOM(sel.from);
-    return { pos: sel.from, node: sel.node, dom: dom instanceof HTMLImageElement ? dom : null };
-  }
+  if (!(sel instanceof NodeSelection)) return null;
+  const dom = v.nodeDOM(sel.from);
+  if (sel.node.type === schema.nodes.image) return { pos: sel.from, node: sel.node, dom: dom instanceof HTMLElement ? dom : null, frame: false };
+  if (sel.node.type === schema.nodes.frame) return { pos: sel.from, node: sel.node, dom: dom instanceof HTMLElement ? (dom.querySelector('.frame-box') as HTMLElement | null) : null, frame: true };
   return null;
 }
+
+const imageOnly = (img: Obj | null, what: string): img is Obj => {
+  if (!img) { toast('Сначала выделите рисунок или надпись (щёлкните по рисунку; надпись — кнопка «Выделить надпись»).'); return false; }
+  if (img.frame) { toast(`${what} — только для рисунков.`); return false; }
+  return true;
+};
 
 const floatOf = (n: PMNode): Float | null => n.attrs.float as Float | null;
 const isAbs = (f: Float | null) => !!f && (f.mode === 'behind' || f.mode === 'front');
@@ -93,7 +102,8 @@ interface Drag {
   top: number;
   pos: number;
   node: PMNode;
-  dom: HTMLImageElement;
+  dom: HTMLElement;
+  frame: boolean;
   /** Последнее значение: что записать при отпускании. */
   out?: { w: number; h: number; crop: number[] };
   moved?: { left: number; top: number };
@@ -112,7 +122,7 @@ function startDrag(e: MouseEvent, kind: Drag['kind'], handle?: Handle): void {
   drag = {
     kind, handle, sx: e.clientX, sy: e.clientY, w: r.width / k, h: r.height / k,
     crop: (img.node.attrs.crop as number[] | null) ?? [0, 0, 0, 0],
-    left: (r.left - s.left) / k, top: (r.top - s.top) / k, pos: img.pos, node: img.node, dom: img.dom,
+    left: (r.left - s.left) / k, top: (r.top - s.top) / k, pos: img.pos, node: img.node, dom: img.dom, frame: img.frame,
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp, { once: true });
@@ -135,7 +145,7 @@ function onMove(e: MouseEvent): void {
     if (east) w = d.w + dx; else if (west) w = d.w - dx;
     if (south) hh = d.h + dy; else if (north) hh = d.h - dy;
     const corner = (west || east) && (north || south);
-    if (corner && !e.shiftKey) {
+    if (corner && !e.shiftKey && !d.frame) {
       const f = Math.max(w / d.w, hh / d.h);
       w = d.w * f;
       hh = d.h * f;
@@ -152,8 +162,8 @@ function onMove(e: MouseEvent): void {
   }
   d.out = { w, h: hh, crop };
   dom.style.width = `${w}px`;
-  dom.style.height = `${hh}px`;
-  dom.style.aspectRatio = `${w} / ${hh}`;
+  if (d.frame) dom.style.minHeight = `${hh}px`;
+  else { dom.style.height = `${hh}px`; dom.style.aspectRatio = `${w} / ${hh}`; }
   if (d.kind === 'crop') dom.style.setProperty('object-view-box', `inset(${crop[1] * 100}% ${crop[2] * 100}% ${crop[3] * 100}% ${crop[0] * 100}%)`);
   updateOverlay();
 }
@@ -202,9 +212,11 @@ function finishMove(d: Drag): void {
     const s = host.sheet.getBoundingClientRect();
     const at = v.posAtCoords({ left: s.left + (side + box.page.left * PX + 20) * k, top: s.top + (m.top + 4) * k });
     if (at) {
-      const target = at.pos;
+      // Рисунок встаёт в строку, надпись — между блоками верхнего уровня.
+      const $at = v.state.doc.resolve(at.pos);
+      const target = d.frame ? ($at.depth ? $at.before(1) : at.pos) : at.pos;
       const node = d.node.type.create({ ...d.node.attrs, float: nf });
-      tr = tr.delete(d.pos, d.pos + 1);
+      tr = tr.delete(d.pos, d.pos + d.node.nodeSize);
       const mapped = tr.mapping.map(target);
       tr = tr.insert(mapped, node);
       v.dispatch(tr.setSelection(NodeSelection.create(tr.doc, mapped)));
@@ -236,7 +248,7 @@ function build(): void {
       const start = { x: e.clientX, y: e.clientY, l: parseFloat(img.dom.style.left || '0'), t: parseFloat(img.dom.style.top || '0') };
       const d: Drag = {
         kind: 'move', sx: e.clientX, sy: e.clientY, w: r.width / k, h: r.height / k, crop: [0, 0, 0, 0],
-        left: (r.left - s.left) / k, top: (r.top - s.top) / k, pos: img.pos, node: img.node, dom: img.dom,
+        left: (r.left - s.left) / k, top: (r.top - s.top) / k, pos: img.pos, node: img.node, dom: img.dom, frame: img.frame,
       };
       drag = d;
       const mv = (ev: MouseEvent) => {
@@ -268,14 +280,25 @@ export function initImageTools(h: ImgHost): void {
   host.sheet.addEventListener('mousedown', (e) => {
     if (!e.altKey || host.locked()) return;
     const v = host.view();
-    const imgs = [...v.dom.querySelectorAll<HTMLImageElement>('img[src]')].filter((i) => {
+    const imgs = [...v.dom.querySelectorAll<HTMLElement>('img[src], .frame-box')].filter((i) => {
       const r = i.getBoundingClientRect();
       return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     });
     if (!imgs.length) return;
-    imgs.sort((a, b) => a.width * a.height - b.width * b.height);
-    const pos = v.posAtDOM(imgs[0], 0);
-    if (!(v.state.doc.nodeAt(pos)?.type === schema.nodes.image)) return;
+    const area = (i: HTMLElement) => i.offsetWidth * i.offsetHeight;
+    imgs.sort((a, b) => area(a) - area(b));
+    const pick = imgs[0];
+    let pos: number;
+    if (pick.classList.contains('frame-box')) {
+      const $p = v.state.doc.resolve(v.posAtDOM(pick, 0));
+      let d = $p.depth;
+      while (d > 0 && $p.node(d).type !== schema.nodes.frame) d--;
+      if (d === 0) return;
+      pos = $p.before(d);
+    } else {
+      pos = v.posAtDOM(pick, 0);
+      if (!(v.state.doc.nodeAt(pos)?.type === schema.nodes.image)) return;
+    }
     e.preventDefault();
     e.stopPropagation();
     v.dispatch(v.state.tr.setSelection(NodeSelection.create(v.state.doc, pos)));
@@ -299,7 +322,7 @@ export function initImageTools(h: ImgHost): void {
 }
 
 export function setCropMode(on: boolean): void {
-  cropMode = on && !!selectedImage();
+  cropMode = on && !!selectedImage() && !selectedImage()!.frame;
   updateOverlay();
   host.update();
 }
@@ -318,7 +341,7 @@ export function scaleImage(k: number): void {
 
 export async function resetImageSize(): Promise<void> {
   const img = selectedImage();
-  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  if (!imageOnly(img, 'Исходный размер')) return;
   const n = await naturalSize(img.node.attrs.src as string);
   const c = (img.node.attrs.crop as number[] | null) ?? [0, 0, 0, 0];
   setAttrs(img.pos, img.node, { width: Math.round(n.w * (1 - c[0] - c[2])), height: Math.round(n.h * (1 - c[1] - c[3])) });
@@ -338,7 +361,7 @@ export function fitImageWidth(): void {
 
 export function clearCrop(): void {
   const img = selectedImage();
-  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  if (!imageOnly(img, 'Обрезка')) return;
   const c = img.node.attrs.crop as number[] | null;
   if (!c) return;
   const w = (img.node.attrs.width as number) / (1 - c[0] - c[2]);
@@ -351,7 +374,7 @@ export function clearCrop(): void {
 export function selectNextImage(): void {
   const v = host.view();
   const list: number[] = [];
-  v.state.doc.descendants((n, pos) => { if (n.type === schema.nodes.image) list.push(pos); });
+  v.state.doc.descendants((n, pos) => { if (n.type === schema.nodes.image || n.type === schema.nodes.frame) list.push(pos); return n.type !== schema.nodes.frame; });
   if (!list.length) { toast('В документе нет рисунков.'); return; }
   const cur = selectedImage()?.pos ?? v.state.selection.from - 1;
   const next = list.find((p) => p > cur) ?? list[0];
@@ -386,14 +409,14 @@ export function deleteImage(): void {
   const img = selectedImage();
   if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
   const v = host.view();
-  v.dispatch(v.state.tr.delete(img.pos, img.pos + 1).scrollIntoView());
+  v.dispatch(v.state.tr.delete(img.pos, img.pos + img.node.nodeSize).scrollIntoView());
   v.focus();
 }
 
 /** Заменить картинку, сохранив размер, положение и обтекание. */
 export function replaceImage(): void {
   const img = selectedImage();
-  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  if (!imageOnly(img, 'Замена картинки')) return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml';
@@ -411,7 +434,7 @@ export function replaceImage(): void {
 /** Подпись под рисунком: «Рисунок N — » по центру отдельным абзацем; курсор в конце. */
 export function addCaption(): void {
   const img = selectedImage();
-  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  if (!imageOnly(img, 'Подпись')) return;
   const v = host.view();
   const $p = v.state.doc.resolve(img.pos);
   const after = $p.after($p.depth);
@@ -432,7 +455,8 @@ const fromCm = (s: string) => { const v = parseFloat(s.replace(',', '.')); retur
 
 export async function imageDialog(): Promise<void> {
   const img = selectedImage();
-  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  if (!img) { toast('Сначала выделите рисунок или надпись (щёлкните по рисунку; надпись — кнопка «Выделить надпись»).'); return; }
+  if (img.frame) { frameDialog(img); return; }
   const natural = await naturalSize(img.node.attrs.src as string);
   const a = img.node.attrs;
   const w0 = (a.width as number | null) ?? natural.w;
@@ -497,4 +521,103 @@ export async function imageDialog(): Promise<void> {
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
     );
   }, false);
+}
+
+/** Окно «Формат надписи»: размер, рамка, заливка, поля внутри, обтекание и положение. */
+function frameDialog(img: Obj): void {
+  const a = img.node.attrs;
+  const f0 = a.float as Float | null;
+  const bd0 = a.border as { w: number; c: string; s: string } | null;
+  const dom = img.dom;
+  const w0 = (a.width as number | null) ?? dom?.offsetWidth ?? 240;
+  const h0 = (a.height as number | null) ?? dom?.offsetHeight ?? 60;
+  const pad0 = (a.pad as number[] | null) ?? [5, 10, 5, 10];
+  dialog((box, close) => {
+    const row = (label: string, ...k: Node[]) => el('div', { class: 'dlg-row' }, el('label', { textContent: label }), ...k);
+    const num = (v: string) => el('input', { type: 'text', value: v, size: 6 });
+    const width = num(toCm(w0)), height = num(toCm(h0));
+    const kind = el('select', {}, new Option('нет', 'none'), new Option('сплошная', 'solid'), new Option('пунктир', 'dashed'), new Option('точки', 'dotted'), new Option('двойная', 'double'));
+    kind.value = bd0?.s ?? 'none';
+    const bw = el('select', {}, ...[0.25, 0.5, 0.75, 1, 1.5, 2.25, 3].map((w) => new Option(`${String(w).replace('.', ',')} пт`, String(w))));
+    bw.value = String(bd0?.w ?? 0.75);
+    if (![...bw.options].some((o) => o.value === bw.value)) bw.add(new Option(`${bw.value} пт`, bw.value), 0), bw.value = String(bd0?.w);
+    const bc = el('input', { type: 'color', value: (bd0?.c ?? '#000000').toLowerCase() });
+    const fillOn = el('input', { type: 'checkbox', checked: !!a.fill });
+    const fill = el('input', { type: 'color', value: ((a.fill as string | null) ?? '#fff2cc').toLowerCase() });
+    const pad = num(toCm(pad0[1]));
+    const wrap = el('select', {}, ...[['inline', 'В тексте (блок)'], ['left', 'Слева, текст справа'], ['right', 'Справа, текст слева'], ['behind', 'За текстом'], ['front', 'Перед текстом']].map(([v, t]) => new Option(t, v)));
+    wrap.value = !f0 ? 'inline' : f0.mode === 'wrap' ? (f0.side ?? 'left') : f0.mode;
+    const hRel = el('select', {}, ...[['page', 'страницы'], ['margin', 'поля'], ['character', 'абзаца']].map(([v, t]) => new Option(t, v)));
+    hRel.value = f0?.hRel === 'column' ? 'margin' : f0?.hRel ?? 'page';
+    const hAl = el('select', {}, ...[['', 'смещение, см →'], ['left', 'слева'], ['center', 'по центру'], ['right', 'справа']].map(([v, t]) => new Option(t, v)));
+    hAl.value = f0?.hAlign ?? '';
+    const hOff = num(toCm(f0?.hOff ?? 0));
+    const vRel = el('select', {}, ...[['page', 'страницы'], ['margin', 'поля'], ['paragraph', 'абзаца']].map(([v, t]) => new Option(t, v)));
+    vRel.value = f0?.vRel === 'line' ? 'paragraph' : f0?.vRel ?? 'page';
+    const vAl = el('select', {}, ...[['', 'смещение, см →'], ['top', 'вверху'], ['center', 'по центру'], ['bottom', 'внизу']].map(([v, t]) => new Option(t, v)));
+    vAl.value = f0?.vAlign ?? '';
+    const vOff = num(toCm(f0?.vOff ?? 0));
+    const posBox = el('div', {}, row('По горизонтали от', hRel, hAl, hOff), row('По вертикали от', vRel, vAl, vOff));
+    const showPos = () => { posBox.hidden = wrap.value === 'inline'; };
+    wrap.addEventListener('change', showPos);
+    showPos();
+    const ok = el('button', { class: 'primary', textContent: 'Применить', onclick: () => {
+      const cm = (s: string) => { const v = parseFloat(s.replace(',', '.')); return Number.isFinite(v) ? Math.round(v * CM) : 0; };
+      const mode = wrap.value;
+      const base: Float = f0 ?? { mode: 'front', hRel: 'margin', hOff: 0, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
+      let float: Float | null = null;
+      if (mode === 'behind' || mode === 'front') float = { ...base, mode, hRel: hRel.value as Float['hRel'], hAlign: (hAl.value || null) as Float['hAlign'], hOff: hAl.value ? null : cm(hOff.value), vRel: vRel.value as Float['vRel'], vAlign: (vAl.value || null) as Float['vAlign'], vOff: vAl.value ? null : cm(vOff.value) };
+      else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, hRel: hRel.value as Float['hRel'], hAlign: (hAl.value || mode) as Float['hAlign'], hOff: null, vRel: vRel.value as Float['vRel'], vAlign: null, vOff: vRel.value === 'paragraph' ? cm(vOff.value) : null, dist: f0?.mode === 'wrap' ? f0.dist : [0, 4, 8, 8] };
+      const p = Math.max(0, cm(pad.value));
+      close();
+      const cur = selectedImage();
+      if (!cur) return;
+      setAttrs(cur.pos, cur.node, {
+        width: Math.round(fromCm(width.value) ?? w0), height: Math.round(fromCm(height.value) ?? h0), float,
+        border: kind.value === 'none' ? null : { w: parseFloat(bw.value), c: bc.value.toUpperCase(), s: kind.value },
+        fill: fillOn.checked ? fill.value.toUpperCase() : null, pad: [Math.round(p * 0.6), p, Math.round(p * 0.6), p],
+      });
+      host.relayout();
+    } });
+    box.append(
+      el('h2', { textContent: 'Формат надписи' }),
+      row('Ширина, см', width), row('Высота (не меньше), см', height),
+      row('Рамка', kind, bw, bc),
+      row('Заливка', el('label', {}, fillOn, ' залить '), fill),
+      row('Поле внутри, см', pad),
+      row('Обтекание', wrap),
+      posBox,
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
+    );
+  }, false);
+}
+
+/** Выделить надпись, в которой стоит курсор. */
+export function selectFrame(): void {
+  const v = host.view();
+  const $f = v.state.selection.$from;
+  for (let d = $f.depth; d > 0; d--) {
+    if ($f.node(d).type === schema.nodes.frame) {
+      v.dispatch(v.state.tr.setSelection(NodeSelection.create(v.state.doc, $f.before(d))));
+      v.focus();
+      return;
+    }
+  }
+  toast('Поставьте курсор внутрь надписи.');
+}
+
+/** Вставить надпись: перед текущим блоком, перед текстом, с рамкой; курсор внутри. */
+export function insertTextBox(): void {
+  const v = host.view();
+  const $f = v.state.selection.$from;
+  const pos = $f.depth ? $f.before(1) : $f.pos;
+  const float: Float = { mode: 'front', hRel: 'margin', hOff: 40, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
+  const node = schema.nodes.frame.create({ float, width: 220, height: 80, border: { w: 0.75, c: '#000000', s: 'solid' }, fill: null, pad: [6, 10, 6, 10], kind: 'textbox' },
+    schema.nodes.paragraph.create(null, schema.text('Текст надписи')));
+  let tr = v.state.tr.insert(pos, node);
+  tr = tr.setSelection(TextSelection.create(tr.doc, pos + 2, pos + 2 + 'Текст надписи'.length));
+  v.dispatch(tr.scrollIntoView());
+  v.focus();
+  host.relayout();
+  toast('Надпись вставлена. Esc или «Выделить надпись» — чтобы тянуть и менять размер.');
 }

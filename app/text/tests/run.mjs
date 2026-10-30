@@ -1519,6 +1519,79 @@ await test('надписи, рамки абзацев и плавающие та
   ok(/Надпись\s*:\s*реквизиты/.test(txt) && txt.includes('Шапка организации') && txt.includes('Директору') && txt.includes('Рамка абзацев'), `LibreOffice увидел надписи: ${txt.slice(0, 120).replace(/\n/g, ' | ')}`);
 });
 
+await test('надпись: вставка, выделение, ручки размера, перетаскивание, окно «Формат надписи»', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Абзац под надписью.')), s.nodes.paragraph.create(null, s.text('Второй абзац.'))]), E.getMeta(), 'tb'); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.ens.run('insert.textbox'));
+  await p.waitForSelector('.ProseMirror .frame-box');
+  await p.waitForTimeout(300);
+  await p.keyboard.type('Реквизиты');
+  eq(await p.evaluate(() => { let t = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'frame') t = n.textContent; }); return t; }), 'Реквизиты', 'в надписи можно печатать');
+  await p.evaluate(() => window.ens.run('frame.select'));
+  await p.waitForSelector('.img-ov:not([hidden]) .img-h-se');
+  const attrs = () => p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'frame') a = n.attrs; }); return a; });
+  const w0 = (await attrs()).width;
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x + 64, se.y + 44, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(250);
+  let a = await attrs();
+  ok(a.width > w0 + 50 && a.height > 100, `размер надписи ${w0} → ${a.width}×${a.height}`);
+  // перетаскивание
+  const body = await (await p.$('.img-ov-body')).boundingBox();
+  const h0 = a.float.hOff;
+  await p.mouse.move(body.x + 30, body.y + 30);
+  await p.mouse.down();
+  await p.mouse.move(body.x + 90, body.y + 50, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(300);
+  a = await attrs();
+  ok(a.float.hRel === 'page' && a.float.hOff > h0 + 40, `надпись перетащена: ${JSON.stringify(a.float)}`);
+  // окно: рамка, заливка, обтекание
+  await p.evaluate(() => window.ens.run('image.format'));
+  await p.waitForSelector('.modal');
+  await p.fill('.modal .dlg-row:has-text("Ширина") input', '8');
+  await p.selectOption('.modal .dlg-row:has-text("Рамка") select >> nth=0', 'dashed');
+  await p.check('.modal label:has-text("залить") input');
+  await p.selectOption('.modal .dlg-row:has-text("Обтекание") select', 'right');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(300);
+  a = await attrs();
+  ok(Math.abs(a.width - 302) <= 2 && a.border.s === 'dashed' && a.fill && a.float.mode === 'wrap' && a.float.side === 'right', `формат: ${JSON.stringify({ w: a.width, b: a.border, f: a.fill, fl: a.float.mode })}`);
+  eq(await p.$eval('.ProseMirror .frame-box', (e) => getComputedStyle(e).float), 'right', 'обтекание справа');
+  // в docx и обратно
+  const back = await p.evaluate(() => { const E = window.ens; const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 't')); let f = null; d.doc.descendants((n) => { if (n.type.name === 'frame') f = { mode: n.attrs.float?.mode, side: n.attrs.float?.side, fill: n.attrs.fill, text: n.textContent, dash: n.attrs.border?.s }; }); return f; });
+  ok(back && back.mode === 'wrap' && back.text === 'Реквизиты' && back.fill && back.dash === 'dashed', `после docx: ${JSON.stringify(back)}`);
+  // удаление
+  await p.evaluate(() => window.ens.run('image.delete'));
+  eq(await p.$$eval('.ProseMirror .frame-box', (e) => e.length), 0, 'надпись удалена');
+});
+
+await test('таблица: сделать плавающей справа и вернуть в текст', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cell = (t) => s.nodes.table_cell.create({ colwidth: [120] }, s.nodes.paragraph.create(null, s.text(t)));
+    const table = s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('Кому'), cell('Иванову')])]);
+    E.loadDoc(s.nodes.doc.create(null, [table, s.nodes.paragraph.create(null, s.text('Обычный абзац, который обтекает таблицу справа налево. '.repeat(5)))]), E.getMeta(), 'fl');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 4)));
+  });
+  await p.waitForTimeout(300);
+  await p.click('#tabs .tab:has-text("Таблица")');
+  await p.selectOption('select[data-command="table.wrap"]', 'right');
+  await p.waitForTimeout(400);
+  eq(await p.$eval('.ProseMirror .frame-box.fr-table', (e) => getComputedStyle(e).float), 'right', 'таблица справа');
+  const cols = await p.$$eval('.rc', (e) => e.length);
+  ok(cols >= 2, `линейка видит столбцы плавающей таблицы: ${cols}`);
+  await p.selectOption('select[data-command="table.wrap"]', 'inline');
+  await p.waitForTimeout(300);
+  eq(await p.$$eval('.ProseMirror .frame-box', (e) => e.length), 0, 'рамка-обёртка снята');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.type.name), 'table', 'таблица снова в потоке');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

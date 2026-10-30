@@ -1,7 +1,7 @@
 // Таблицы: ширина столбцов, границы и заливка ячеек, свойства таблицы. Функции ниже нужны и линейке.
 
 import type { Node as PMNode } from 'prosemirror-model';
-import type { EditorState, Transaction } from 'prosemirror-state';
+import { Selection, type EditorState, type Transaction } from 'prosemirror-state';
 import { TableMap } from 'prosemirror-tables';
 import type { EditorView } from 'prosemirror-view';
 
@@ -275,3 +275,34 @@ export function tableDialog(view: () => EditorView, textWidth: () => number): vo
   }, false);
 }
 
+
+// ---------------------------------------------------------------- плавающая таблица
+
+import { schema } from './schema';
+import type { Float } from './floats';
+
+/** Положение таблицы относительно текста: в строке (блоком), слева или справа с обтеканием. */
+export function setTableWrap(view: EditorView, mode: 'inline' | 'left' | 'right'): void {
+  const t = tableAt(view.state);
+  if (!t) { toast('Поставьте курсор в ячейку таблицы.'); return; }
+  const $t = view.state.doc.resolve(t.pos);
+  const inFrame = $t.parent.type === schema.nodes.frame && $t.parent.attrs.kind === 'table' ? { pos: $t.before($t.depth), node: $t.parent } : null;
+  const tr = view.state.tr;
+  if (mode === 'inline') {
+    if (!inFrame) return;
+    // Таблица возвращается в поток, рамка-обёртка исчезает.
+    tr.replaceWith(inFrame.pos, inFrame.pos + inFrame.node.nodeSize, t.node);
+    view.dispatch(tr.setSelection(Selection.near(tr.doc.resolve(inFrame.pos + 1), 1)));
+    return;
+  }
+  const float: Float = { mode: 'wrap', side: mode, hRel: 'margin', hOff: null, hAlign: mode, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 6, 12, 12] };
+  if (inFrame) {
+    tr.setNodeMarkup(inFrame.pos, undefined, { ...inFrame.node.attrs, float });
+  } else {
+    if ($t.depth !== 0) { toast('Плавающей можно сделать таблицу верхнего уровня (не внутри ячейки или списка).'); return; }
+    const frame = schema.nodes.frame.create({ float, width: null, height: null, border: null, fill: null, pad: [0, 0, 0, 0], kind: 'table' }, t.node);
+    tr.replaceWith(t.pos, t.pos + t.node.nodeSize, frame);
+  }
+  // Курсор остаётся в таблице (замена блока его сбрасывает).
+  view.dispatch(tr.setSelection(Selection.near(tr.doc.resolve(inFrame ? inFrame.pos + 1 : t.pos + 1), 1)));
+}
