@@ -133,7 +133,7 @@ fn write_synced(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 #[cfg(feature = "tauri-shell")]
 fn raw(request: &Request<'_>) -> Result<Vec<u8>, String> {
-    crate::files::bytes_of(request.body()).ok_or_else(|| "ожидались байты".into())
+    super::files::bytes_of(request.body()).ok_or_else(|| "ожидались байты".into())
 }
 
 #[cfg(feature = "tauri-shell")]
