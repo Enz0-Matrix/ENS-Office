@@ -86,7 +86,7 @@ export function checkDialog(host: CheckHost, safety: (label: string) => void, vi
       sel.value = allProfiles().some((p) => p.id === profileId) ? profileId : '';
     };
     fillSel();
-    const editBtn = el('button', { textContent: 'Изменить свой профиль…', title: 'Поля, шрифты, интервал, отступ и номера страниц по регламенту вашей организации', onclick: () => profileEditor(() => { profileId = CUSTOM_ID; try { localStorage.setItem('ens-text.profile', profileId); } catch { /* без памяти */ } fillSel(); render(); }) });
+    const editBtn = el('button', { textContent: 'Изменить свой профиль…', title: 'Поля, шрифты, интервал, отступ и номера страниц по регламенту вашей организации', onclick: () => profileEditor((saved) => { if (saved) { try { localStorage.setItem('ens-text.profile', CUSTOM_ID); } catch { /* без памяти */ } } checkDialog(host, safety, view); }) });
     const list = el('div', { class: 'check-list' });
     const note = el('p', { class: 'check-note' });
     const render = () => {
@@ -127,7 +127,8 @@ export function checkDialog(host: CheckHost, safety: (label: string) => void, vi
 
 const PN: [string, string][] = [['', 'Номера страниц не проверять'], ['header-center', 'Вверху по центру'], ['header-right', 'Вверху справа'], ['footer-center', 'Внизу по центру'], ['footer-right', 'Внизу справа']];
 
-function profileEditor(done: () => void): void {
+/** Окно одно на экран: после закрытия редактора проверка открывается заново (`saved` — профиль сохранён). */
+function profileEditor(after: (saved: boolean) => void): void {
   dialog((box, close) => {
     const p = loadCustomProfile();
     const num = (v: number) => el('input', { type: 'number', value: String(v), min: '0', step: '0.5' });
@@ -162,7 +163,7 @@ function profileEditor(done: () => void): void {
         pageNumbers: pn.value ? { where: where as 'header' | 'footer', align: align as 'center' | 'right', skipFirst: skip.checked } : null,
       });
       close();
-      done();
+      after(true);
       toast('Свой профиль сохранён');
     };
     box.append(
@@ -177,7 +178,7 @@ function profileEditor(done: () => void): void {
       row('Пометка', note),
       err,
       el('p', { textContent: 'Профиль хранится на этом компьютере и появляется в списке проверки. Шрифты — по одному на строке; первый считается предпочтительным.' }),
-      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Сохранить', onclick: save })),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: () => { close(); after(false); } }), el('button', { class: 'primary', textContent: 'Сохранить', onclick: save })),
     );
   }, false);
 }
