@@ -70,8 +70,9 @@ export function openHfEditor(o: {
   kind: HfKind;
   first: boolean;
   pageIndex: number;
-  /** Шаг страниц в px: лист + зазор. */
-  pageStep: number;
+  /** Где лист начинается по вертикали, px, и смещение листа по горизонтали (если он уже самого широкого). */
+  pageTop: number;
+  offsetX?: number;
   page: PageSetup;
   hf: HeaderFooter;
   onChange: () => void;
@@ -81,9 +82,9 @@ export function openHfEditor(o: {
   const host = document.createElement('div');
   host.className = `hf-edit hf-edit-${o.kind}`;
   const dist = (o.kind === 'header' ? o.hf.headerDist : o.hf.footerDist) * PX;
-  host.style.left = `${o.page.left}pt`;
+  host.style.left = `calc(${o.offsetX ?? 0}px + ${o.page.left}pt)`;
   host.style.width = `${o.page.w - o.page.left - o.page.right}pt`;
-  const base = o.pageIndex * o.pageStep;
+  const base = o.pageTop;
   if (o.kind === 'header') host.style.top = `${base + dist}px`;
   else { host.style.top = `${base + o.page.h * PX - dist}px`; host.style.transform = 'translateY(-100%)'; }
   const label = document.createElement('div');

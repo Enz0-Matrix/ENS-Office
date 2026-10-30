@@ -139,6 +139,22 @@ const nodes: Record<string, NodeSpec> = {
       return ['img', a];
     },
   },
+  /**
+   * Разрыв раздела («со следующей страницы»). `page` — параметры страницы раздела, который начинается после разрыва
+   * (размер, ориентация, поля); null — как у предыдущего. Первый раздел описан в DocMeta.page.
+   */
+  section_break: {
+    group: 'block',
+    atom: true,
+    selectable: true,
+    attrs: { page: { default: null } },
+    parseDOM: [{ tag: 'div.sect-break', getAttrs: (d) => { try { return { page: JSON.parse((d as HTMLElement).getAttribute('data-page') ?? 'null') }; } catch { return { page: null }; } } }],
+    toDOM: (n) => {
+      const p = n.attrs.page as { w: number; h: number } | null;
+      const label = p ? `Разрыв раздела · ${p.w > p.h ? 'альбомная' : 'книжная'}` : 'Разрыв раздела';
+      return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
+    },
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,

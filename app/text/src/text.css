@@ -259,3 +259,10 @@
 .tpl-title { font-weight: 600; }
 .tpl-hint { color: var(--muted); }
 .prof-margins input { width: 64px; }
+
+/* Разрыв раздела: тонкая линия с подписью, высоты не занимает; в печать не идёт */
+.ProseMirror .sect-break { height: 0; position: relative; margin: 0; padding: 0; user-select: none; }
+.ProseMirror .sect-break::before { content: ''; position: absolute; left: 0; right: 0; top: 0; border-top: 1px dashed var(--muted, #888); }
+.ProseMirror .sect-break::after { content: attr(data-label); position: absolute; right: 0; top: -10px; font: 10px/1 sans-serif; color: var(--muted, #666); background: var(--paper, #fff); padding: 1px 6px; pointer-events: none; }
+.ProseMirror .sect-break.ProseMirror-selectednode::before { border-top: 2px solid var(--accent); }
+@media print { .ProseMirror .sect-break { display: none; } }

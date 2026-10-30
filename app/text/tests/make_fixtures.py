@@ -96,3 +96,17 @@ p3 = d3.add_paragraph('Текст со сноской')
 r3 = OxmlElement('w:r'); fr = OxmlElement('w:footnoteReference'); fr.set(qn('w:id'), '1'); r3.append(fr); p3._p.append(r3)
 d3.save(os.path.join(out, 'lossy.docx'))
 print('ok')
+
+# Три раздела: книжный, альбомный, книжный (страницы разной ориентации в одном файле).
+from docx.enum.section import WD_ORIENT, WD_SECTION
+d4 = Document()
+d4.add_paragraph('Первая страница, книжная')
+s4b = d4.add_section(WD_SECTION.NEW_PAGE)
+s4b.orientation = WD_ORIENT.LANDSCAPE
+s4b.page_width, s4b.page_height = s4b.page_height, s4b.page_width
+d4.add_paragraph('Вторая страница, альбомная')
+s4c = d4.add_section(WD_SECTION.NEW_PAGE)
+s4c.orientation = WD_ORIENT.PORTRAIT
+s4c.page_width, s4c.page_height = s4c.page_height, s4c.page_width
+d4.add_paragraph('Третья страница, книжная')
+d4.save(os.path.join(out, 'sections.docx'))

@@ -171,6 +171,8 @@ interface Ctx {
   baseR: RFmt;
   /** Стек сложных полей (TOC, PAGE, HYPERLINK…): в какой фазе, и ссылка, если поле — HYPERLINK. */
   fields: { phase: 'instr' | 'result'; instr: string; href?: string; suppress?: boolean }[];
+  /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
+  sects: Element[];
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -479,7 +481,6 @@ function headingLevel(ctx: Ctx, styleId: string | undefined): number | null {
 
 function paraEntries(ctx: Ctx, p: Element): Entry[] {
   const pPr = kid(p, 'pPr');
-  if (kid(pPr, 'sectPr')) lose(ctx, 'разделы (разрывы разделов убраны)');
   const direct = parsePPr(pPr);
   const styleId = direct.styleId ?? ctx.defaultPara?.id;
   const level = headingLevel(ctx, direct.styleId);
@@ -631,9 +632,17 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
   const visit = (el: Element) => {
     for (const c of el.children) {
       switch (c.localName) {
-        case 'p':
-          entries.push(...paraEntries(ctx, c));
+        case 'p': {
+          const es = paraEntries(ctx, c);
+          const sp = kid(kid(c, 'pPr'), 'sectPr');
+          if (!sp || !ctx.sects) { entries.push(...es); break; }
+          // Абзац с w:sectPr закрывает раздел. Пустой абзац-носитель не нужен: разрыв раздела — отдельный блок.
+          const carrier = es.length === 1 && !es[0].list && es[0].node.type === schema.nodes.paragraph && es[0].node.content.size === 0;
+          if (!carrier) entries.push(...es);
+          entries.push({ node: schema.nodes.section_break.create({ page: null }) });
+          ctx.sects.push(sp);
           break;
+        }
         case 'tbl':
           try {
             entries.push({ node: parseTable(ctx, c) });
@@ -684,7 +693,7 @@ export function importDocx(bytes: Uint8Array): Imported {
   const dir = main.slice(0, main.lastIndexOf('/') + 1);
   const ctx: Ctx = {
     files, rels: readRels(files, main), styles: new Map(), defaults: { ...DEFAULTS }, nums: new Map(),
-    lossy: new Map(), baseR: {}, fields: [],
+    lossy: new Map(), baseR: {}, fields: [], sects: [],
   };
   for (const [, rel] of ctx.rels) {
     if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
@@ -711,10 +720,12 @@ export function importDocx(bytes: Uint8Array): Imported {
   const last = blocks[blocks.length - 1];
   if (last.type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
 
-  const page = { ...A4 };
   const hf = emptyHf();
-  const sect = kid(body, 'sectPr');
-  if (sect) {
+  const finalSect = kid(body, 'sectPr');
+  const allSects = [...ctx.sects, ...(finalSect ? [finalSect] : [])];
+  const pageOf = (sect: Element | null | undefined): PageSetup => {
+    const page = { ...A4 };
+    if (!sect) return page;
     const sz = kid(sect, 'pgSz');
     const mar = kid(sect, 'pgMar');
     let w = (num(attr(sz, 'w')) ?? 0) / 20;
@@ -729,6 +740,29 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.bottom = mv('bottom', page.bottom);
     page.left = mv('left', page.left);
     page.right = mv('right', page.right);
+    return page;
+  };
+  // Разделы: у каждого свои размер и поля. Разрыв ставится между разделами и хранит страницу следующего за ним.
+  const pages = allSects.map(pageOf);
+  const page = pages[0] ?? { ...A4 };
+  const breaks: PMNode[] = [];
+  blocks.forEach((b) => { if (b.type === schema.nodes.section_break) breaks.push(b); });
+  if (breaks.length) {
+    blocks = blocks.map((b) => {
+      if (b.type !== schema.nodes.section_break) return b;
+      const k = breaks.indexOf(b);
+      return schema.nodes.section_break.create({ page: pages[k + 1] ?? pages[pages.length - 1] ?? page });
+    });
+    // Разрыв раздела в самом конце документа не нужен: после него должен быть абзац.
+    while (blocks.length && blocks[blocks.length - 1].type === schema.nodes.section_break) blocks.pop();
+    if (!blocks.length) blocks = [schema.nodes.paragraph.create()];
+    if (allSects.slice(1).some((x) => ['continuous', 'evenPage', 'oddPage'].includes(attr(kid(x, 'type'), 'val') ?? 'nextPage'))) lose(ctx, 'разделы «на той же странице» или «с чётной/нечётной» (все начинаются с новой страницы)');
+    if (allSects.slice(1).some((x) => kids(x, 'cols').some((c) => (num(attr(c, 'num')) ?? 1) > 1))) lose(ctx, 'колонки (текст идёт в одну колонку)');
+  }
+  // Колонтитулы берём у первого раздела, где они заданы (у остальных Word наследует их).
+  const sect = allSects.find((x) => kids(x, 'headerReference').length || kids(x, 'footerReference').length) ?? finalSect;
+  if (sect) {
+    const mar = kid(sect, 'pgMar');
     const dist = (n: string, fallback: number) => { const v = num(attr(mar, n)); return v != null && v >= 0 ? v / 20 : fallback; };
     hf.headerDist = dist('header', hf.headerDist);
     hf.footerDist = dist('footer', hf.footerDist);
@@ -736,7 +770,7 @@ export function importDocx(bytes: Uint8Array): Imported {
       const ref = kids(sect, tag).find((r) => (attr(r, 'type') ?? 'default') === type);
       const rel = ref ? ctx.rels.get(relAttr(ref, 'id') ?? '') : undefined;
       if (!rel || !files[rel.target]) return null;
-      const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [] };
+      const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [], sects: [] };
       const blocks = walkBlocks(sub, parseXml(strFromU8(files[rel.target])).documentElement);
       if (!blocks.length) return null;
       if (blocks[blocks.length - 1].type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
@@ -749,7 +783,9 @@ export function importDocx(bytes: Uint8Array): Imported {
     hf.firstHeader = part('headerReference', 'first');
     hf.firstFooter = part('footerReference', 'first');
     if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
-    if (kid(sect, 'cols') && (num(attr(kid(sect, 'cols'), 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
+    if (allSects.some((x) => x !== sect && (kids(x, 'headerReference').length || kids(x, 'footerReference').length) && kids(x, 'headerReference').map((r) => relAttr(r, 'id')).join() !== kids(sect, 'headerReference').map((r) => relAttr(r, 'id')).join())) lose(ctx, 'колонтитулы разных разделов (всюду — колонтитулы первого раздела)');
+    const c0 = kid(allSects[0] ?? sect, 'cols');
+    if (c0 && (num(attr(c0, 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
   return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy }, history: readHistoryPart(files) };
@@ -1061,9 +1097,18 @@ function stylesXml(meta: DocMeta): string {
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
   const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
-  let body = blocksXml(ctx, doc);
-  if (body.endsWith('</w:tbl>')) body += '<w:p/>';
-  const p = meta.page;
+  // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
+  const chunks: PMNode[][] = [[]];
+  const pagesOf: PageSetup[] = [meta.page];
+  doc.forEach((node) => {
+    if (node.type === schema.nodes.section_break) { chunks.push([]); pagesOf.push((node.attrs.page as PageSetup | null) ?? pagesOf[pagesOf.length - 1]); } else chunks[chunks.length - 1].push(node);
+  });
+  const chunkXml = chunks.map((blocks) => {
+    const inner = blocksXml(ctx, schema.nodes.doc.create(null, blocks.length ? blocks : [schema.nodes.paragraph.create()]));
+    return inner;
+  });
+  const lastChunk = chunkXml.length - 1;
+  if (chunkXml[lastChunk].endsWith('</w:tbl>')) chunkXml[lastChunk] += '<w:p/>';
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
   const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
@@ -1088,9 +1133,12 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   };
   const refs = hfRef(hf.header, 'header', 'default') + hfRef(hf.footer, 'footer', 'default') +
     (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
-  const sect = `<w:sectPr>${refs}<w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
+  const sectOf = (p: PageSetup, first: boolean): string => `<w:sectPr>${first ? refs : ''}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
     `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
-    `${hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
+    `${first && hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
+  // Колонтитулы описаны в первом разделе, остальные их наследуют (так делает и Word).
+  const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');
+  const sect = sectOf(pagesOf[lastChunk], lastChunk === 0);
   const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +

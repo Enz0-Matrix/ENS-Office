@@ -1178,6 +1178,45 @@ await test('рисунок с обрезкой: srcRect читается и пи
   ok(h > 30, `предупреждение переносится по строкам (высота ${h})`);
 });
 
+await test('разделы: книжная — альбомная — книжная; листы разного размера, docx туда и обратно', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const land = { ...E.getMeta().page, w: E.getMeta().page.h, h: E.getMeta().page.w };
+    const m = E.getMeta();
+    const doc = s.nodes.doc.create(null, [P('Книжная 1'), P('Книжная 1б'), s.nodes.section_break.create({ page: land }), P('Альбомная 2'), s.nodes.section_break.create({ page: { ...m.page } }), P('Книжная 3')]);
+    E.loadDoc(doc, m, 'sect');
+    await new Promise((r) => setTimeout(r, 400));
+    const boxes = E.pageBoxes().map((b) => ({ top: Math.round(b.top), W: Math.round(b.W), H: Math.round(b.H) }));
+    const papers = [...document.querySelectorAll('.paper')].map((e) => ({ w: Math.round(e.getBoundingClientRect().width), left: Math.round(e.offsetLeft) }));
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'sect');
+    const back = E.importDocx(bytes);
+    const kinds = []; back.doc.forEach((n) => kinds.push(n.type.name + (n.type.name === 'section_break' ? (n.attrs.page.w > n.attrs.page.h ? ':land' : ':port') : '')));
+    return { boxes, papers, kinds, lossy: back.meta.lossy, count: E.view.state.doc.childCount };
+  });
+  eq(r.boxes.length, 3, `три листа: ${JSON.stringify(r.boxes)}`);
+  ok(r.boxes[0].W < r.boxes[0].H && r.boxes[1].W > r.boxes[1].H && r.boxes[2].W < r.boxes[2].H, `ориентации: ${JSON.stringify(r.boxes)}`);
+  ok(r.boxes[1].top > r.boxes[0].top + r.boxes[0].H && r.boxes[2].top > r.boxes[1].top + r.boxes[1].H, 'листы идут друг за другом без наложения');
+  ok(r.papers.length === 3 && r.papers[1].w > r.papers[0].w, `подложки разной ширины: ${JSON.stringify(r.papers)}`);
+  eq(r.kinds.join(','), 'paragraph,paragraph,section_break:land,paragraph,section_break:port,paragraph', 'разделы после docx');
+  eq(r.lossy.filter((x) => /раздел/.test(x)), [], 'о разделах не предупреждает');
+});
+
+await test('разделы из настоящего docx (python-docx): три листа, ориентации сохраняются при записи', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'sections.docx'));
+  await p.waitForFunction(() => window.ens.pageBoxes().length === 3, null, { timeout: 5000 });
+  const o = await p.evaluate(() => window.ens.pageBoxes().map((b) => (b.W > b.H ? 'land' : 'port')).join(','));
+  eq(o, 'port,land,port', 'ориентации листов');
+  eq(await p.evaluate(() => window.ens.getMeta().lossy.filter((x) => /раздел/.test(x))), [], 'без предупреждений о разделах');
+  const bytes = await p.evaluate(() => [...window.ens.exportDocx(window.ens.view.state.doc, window.ens.getMeta(), 'x')]);
+  const tmp = mkdtempSync(join(tmpdir(), 'ens-sect-'));
+  writeFileSync(join(tmp, 's.docx'), Buffer.from(bytes));
+  const out = execSync(`python3 -c "from docx import Document; d=Document('${tmp}/s.docx'); print(','.join('land' if s.page_width>s.page_height else 'port' for s in d.sections))"`).toString().trim();
+  eq(out, 'port,land,port', 'python-docx видит три раздела с теми же ориентациями');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
