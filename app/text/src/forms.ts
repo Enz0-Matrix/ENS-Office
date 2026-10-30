@@ -109,11 +109,11 @@ export const numberLabel = (prefix: string, no: number): string => `${prefix ? p
 const m = schema.marks;
 const n = schema.nodes;
 
-type Para = { text?: string; bold?: boolean; align?: 'left' | 'center' | 'right' | 'justify'; indent?: number; first?: number; before?: number; after?: number; size?: number; caps?: boolean; italic?: boolean };
+export type Para = { text?: string; bold?: boolean; align?: 'left' | 'center' | 'right' | 'justify'; indent?: number; first?: number; before?: number; after?: number; size?: number; caps?: boolean; italic?: boolean };
 
-const INDENT = 35.4; // 1,25 см
+export const INDENT = 35.4; // 1,25 см
 
-function para(p: Para): PMNode {
+export function para(p: Para): PMNode {
   const marks: Mark[] = [];
   if (p.bold) marks.push(m.strong.create());
   if (p.italic) marks.push(m.em.create());
@@ -122,18 +122,18 @@ function para(p: Para): PMNode {
   return n.paragraph.create({ align: p.align ?? null, indent: p.indent ?? null, first: p.first ?? null, before: p.before ?? null, after: p.after ?? null }, text ? schema.text(text, marks) : undefined);
 }
 
-const lines = (s: string | undefined): string[] => (s ?? '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+export const lines = (s: string | undefined): string[] => (s ?? '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
 
 /** Основной текст: абзацы с отступом 1,25 см по ширине. */
-const body = (text: string | undefined): PMNode[] => lines(text).map((t) => para({ text: t, align: 'justify', first: INDENT }));
+export const body = (text: string | undefined): PMNode[] => lines(text).map((t) => para({ text: t, align: 'justify', first: INDENT }));
 
 /** Строка из двух столбцов без границ: слева одно, справа другое (дата и номер; должность и подпись). */
-function twoCols(left: string, right: string, rightBold = false): PMNode {
+export function twoCols(left: string, right: string, rightBold = false): PMNode {
   const cell = (t: string, align: 'left' | 'right', bold = false) => n.table_cell.create({ colwidth: [340] }, para({ text: t, align, bold }));
   return n.table.create({ borders: false }, [n.table_row.create(null, [cell(left, 'left'), cell(right, 'right', rightBold)])]);
 }
 
-const dmy = (iso: string): string => {
+export const dmy = (iso: string): string => {
   const [y, mo, d] = iso.split('-');
   return y && mo && d ? `${d}.${mo}.${y}` : '___.___.______';
 };

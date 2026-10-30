@@ -1078,6 +1078,203 @@ await test('совместимость с Word: шрифт без аналога
   await p.waitForSelector('.cmp-verdict.ok');
 });
 
+await test('читаемость: время, длинные предложения, повторы, канцеляризмы; ночной лист не трогает печать', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [
+      P('В целях осуществления контроля данный отдел производит проверку документов. Директор И. И. Иванов, г. Москва, подписал приказ.'),
+      P('Длинное ' + 'слово '.repeat(35) + 'конец.'),
+    ]), E.getMeta(), 'rd');
+  });
+  await p.evaluate(() => window.ens.run('review.readability'));
+  await p.waitForSelector('.rd-row');
+  const kinds = await p.$$eval('.rd-row .rd-kind', (e) => e.map((x) => x.textContent));
+  ok(kinds.includes('Канцеляризм') && kinds.includes('Длинное предложение') && kinds.includes('Повтор слова'), `замечания: ${kinds.join(', ')}`);
+  const stats = await p.$$eval('.rd-stat .rd-lab', (e) => e.map((x) => x.textContent));
+  ok(stats.includes('слов') && stats.includes('индекс Флеша'), 'показатели');
+  await p.click('.rd-row:has(.rd-kind.clerical) button');
+  const selText = await p.evaluate(() => { const st = window.ens.view.state; return st.doc.textBetween(st.selection.from, st.selection.to); });
+  ok(/целях|данный|производит/i.test(selText), `«Показать» выделяет канцеляризм: «${selText}»`);
+  // ночной лист: тёмный лист на экране, в печати белый
+  await p.evaluate(() => window.ens.run('view.night'));
+  const bg = await p.$eval('.paper', (e) => getComputedStyle(e).backgroundColor);
+  ok(bg !== 'rgb(255, 255, 255)', `лист тёмный: ${bg}`);
+  await p.emulateMedia({ media: 'print' });
+  const printBg = await p.$eval('.paper', (e) => getComputedStyle(e).backgroundColor);
+  await p.emulateMedia({ media: 'screen' });
+  eq(printBg, 'rgb(255, 255, 255)', 'в печати лист белый');
+  await p.evaluate(() => window.ens.run('view.night'));
+});
+
+await test('шаблоны: готовые создаются, «мой шаблон» сохраняется локально и открывается; свой профиль ГОСТ', async () => {
+  const p = await page();
+  const dismissUnsaved = async () => { await p.waitForTimeout(100); const d = await p.$('.modal button.danger'); if (d) await d.click(); };
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.waitForSelector('.tpl-row');
+  const titles = await p.$$eval('.tpl-title', (e) => e.map((x) => x.textContent));
+  for (const need of ['Письмо', 'Приказ', 'Акт', 'Протокол', 'Служебная записка', 'Заявление', 'Доверенность (простая)', 'Отчёт о НИР (ГОСТ 7.32)']) ok(titles.includes(need), `нет шаблона «${need}»: ${titles.join(' | ')}`);
+  await p.click('.tpl-row:has-text("Служебная записка") button.primary');
+  await p.waitForTimeout(300);
+  const memo = await p.evaluate(() => window.ens.view.state.doc.textContent);
+  ok(memo.includes('СЛУЖЕБНАЯ ЗАПИСКА') && memo.includes('[Наименование организации]'), `служебная записка: ${memo.slice(0, 80)}`);
+  // мой шаблон: сохраняем текущий документ, очищаем документ, создаём из шаблона
+  await p.evaluate(() => window.ens.run('file.saveTemplate'));
+  await p.fill('.modal input[type=text]', 'Моя записка');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(300);
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('другое'))]), E.getMeta(), 'x'); });
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.click('.rd-tabs button[data-tab=mine]');
+  await p.waitForSelector('.tpl-row:has-text("Моя записка")');
+  const note = await p.textContent('.tpl-list p');
+  ok(note.includes('только на этом компьютере'), 'пояснение про локальное хранение');
+  await p.click('.tpl-row:has-text("Моя записка") button.primary');
+  await p.waitForTimeout(400);
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('СЛУЖЕБНАЯ ЗАПИСКА'), 'мой шаблон открылся');
+  // удаление
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.click('.rd-tabs button[data-tab=mine]');
+  await p.click('.tpl-row:has-text("Моя записка") button:has-text("Удалить")');
+  await p.waitForTimeout(300);
+  eq(await p.$$eval('.tpl-row', (e) => e.length), 0, 'шаблон удалён');
+  await p.keyboard.press('Escape');
+  // свой профиль
+  await p.evaluate(() => window.ens.run('review.check'));
+  await p.waitForSelector('.check-modal');
+  await p.click('.check-modal button:has-text("Изменить свой профиль")');
+  await p.fill('.prof-margins input >> nth=0', '25');
+  await p.fill('.modal textarea >> nth=0', 'Arial: 11-12');
+  await p.click('.modal button.primary:has-text("Сохранить")');
+  await p.waitForTimeout(200);
+  const opts = await p.$$eval('.check-modal select option', (o) => o.map((x) => x.textContent));
+  ok(opts.some((x) => x.includes('Свой профиль')), `свой профиль в списке: ${opts.join(' | ')}`);
+  ok(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.profile.custom')).margins.left === 25), 'поле сохранено');
+  await p.evaluate(() => localStorage.removeItem('ens-text.profile.custom'));
+});
+
+await test('рисунок с обрезкой: srcRect читается и пишется, показывается обрезанным; длинное предупреждение переносится', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+    const img = s.nodes.image.create({ src: png, width: 100, height: 60, crop: [0.1, 0.2, 0.3, 0.1] });
+    const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [img, s.text(' текст')])]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'crop');
+    const back = E.importDocx(bytes);
+    const crop = back.doc.firstChild.firstChild.attrs.crop;
+    const m = E.getMeta(); m.lossy = ['обтекание изображений (изображения стали строчными)', 'разделы (разрывы разделов стали обычными)', 'очень длинное пояснение '.repeat(12)];
+    E.loadDoc(back.doc, m, 'crop');
+    return { crop };
+  });
+  ok(r.crop && Math.abs(r.crop[0] - 0.1) < 1e-4 && Math.abs(r.crop[1] - 0.2) < 1e-4 && Math.abs(r.crop[2] - 0.3) < 1e-4 && Math.abs(r.crop[3] - 0.1) < 1e-4, `обрезка в docx: ${JSON.stringify(r.crop)}`);
+  const style = await p.$eval('.ProseMirror img[data-crop]', (e) => e.getAttribute('style'));
+  ok(/object-view-box:\s*inset\(20(\.0+)?% 30(\.0+)?% 10(\.0+)?% 10(\.0+)?%\)/.test(style), `стиль: ${style}`);
+  const h = await p.$eval('.notice span', (e) => e.getBoundingClientRect().height);
+  ok(h > 30, `предупреждение переносится по строкам (высота ${h})`);
+});
+
+await test('разделы: книжная — альбомная — книжная; листы разного размера, docx туда и обратно', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const land = { ...E.getMeta().page, w: E.getMeta().page.h, h: E.getMeta().page.w };
+    const m = E.getMeta();
+    const doc = s.nodes.doc.create(null, [P('Книжная 1'), P('Книжная 1б'), s.nodes.section_break.create({ page: land }), P('Альбомная 2'), s.nodes.section_break.create({ page: { ...m.page } }), P('Книжная 3')]);
+    E.loadDoc(doc, m, 'sect');
+    await new Promise((r) => setTimeout(r, 400));
+    const boxes = E.pageBoxes().map((b) => ({ top: Math.round(b.top), W: Math.round(b.W), H: Math.round(b.H) }));
+    const papers = [...document.querySelectorAll('.paper')].map((e) => ({ w: Math.round(e.getBoundingClientRect().width), left: Math.round(e.offsetLeft) }));
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'sect');
+    const back = E.importDocx(bytes);
+    const kinds = []; back.doc.forEach((n) => kinds.push(n.type.name + (n.type.name === 'section_break' ? (n.attrs.page.w > n.attrs.page.h ? ':land' : ':port') : '')));
+    return { boxes, papers, kinds, lossy: back.meta.lossy, count: E.view.state.doc.childCount };
+  });
+  eq(r.boxes.length, 3, `три листа: ${JSON.stringify(r.boxes)}`);
+  ok(r.boxes[0].W < r.boxes[0].H && r.boxes[1].W > r.boxes[1].H && r.boxes[2].W < r.boxes[2].H, `ориентации: ${JSON.stringify(r.boxes)}`);
+  ok(r.boxes[1].top > r.boxes[0].top + r.boxes[0].H && r.boxes[2].top > r.boxes[1].top + r.boxes[1].H, 'листы идут друг за другом без наложения');
+  ok(r.papers.length === 3 && r.papers[1].w > r.papers[0].w, `подложки разной ширины: ${JSON.stringify(r.papers)}`);
+  eq(r.kinds.join(','), 'paragraph,paragraph,section_break:land,paragraph,section_break:port,paragraph', 'разделы после docx');
+  eq(r.lossy.filter((x) => /раздел/.test(x)), [], 'о разделах не предупреждает');
+});
+
+await test('разделы из настоящего docx (python-docx): три листа, ориентации сохраняются при записи', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'sections.docx'));
+  await p.waitForFunction(() => window.ens.pageBoxes().length === 3, null, { timeout: 5000 });
+  const o = await p.evaluate(() => window.ens.pageBoxes().map((b) => (b.W > b.H ? 'land' : 'port')).join(','));
+  eq(o, 'port,land,port', 'ориентации листов');
+  eq(await p.evaluate(() => window.ens.getMeta().lossy.filter((x) => /раздел/.test(x))), [], 'без предупреждений о разделах');
+  const bytes = await p.evaluate(() => [...window.ens.exportDocx(window.ens.view.state.doc, window.ens.getMeta(), 'x')]);
+  const tmp = mkdtempSync(join(tmpdir(), 'ens-sect-'));
+  writeFileSync(join(tmp, 's.docx'), Buffer.from(bytes));
+  const out = execSync(`python3 -c "from docx import Document; d=Document('${tmp}/s.docx'); print(','.join('land' if s.page_width>s.page_height else 'port' for s in d.sections))"`).toString().trim();
+  eq(out, 'port,land,port', 'python-docx видит три раздела с теми же ориентациями');
+});
+
+await test('плавающие рисунки: логотип в колонтитуле «за текстом» от страницы, обтекание в тексте, запись обратно', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'floats.docx'));
+  await p.waitForSelector('.paper .hf img.fl-behind', { timeout: 5000 });
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => {
+    const paper = document.querySelector('.paper');
+    const img = paper.querySelector('.hf img.fl-behind');
+    const pr = paper.getBoundingClientRect(), ir = img.getBoundingClientRect();
+    const hf = paper.querySelector('.hf');
+    const body = document.querySelector('.ProseMirror img.fl-wrap');
+    return {
+      dx: Math.round(ir.left - pr.left), dy: Math.round(ir.top - pr.top), hfH: hf.offsetHeight, w: Math.round(ir.width), pos: getComputedStyle(img).position,
+      wrap: body ? getComputedStyle(body).float : null, lossy: window.ens.getMeta().lossy, effTop: Math.round(window.ens.effPage().top),
+    };
+  });
+  ok(Math.abs(r.dx - 76) <= 2 && Math.abs(r.dy - 38) <= 2, `логотип от угла страницы 76×38 px: ${r.dx}×${r.dy}`);
+  ok(r.hfH < 40, `колонтитул не раздут логотипом: высота ${r.hfH}`);
+  ok(r.w > 200, `логотип 6 см (≈227 px): ${r.w}`);
+  eq(r.wrap, 'left', 'картинка в тексте обтекается слева');
+  eq(r.lossy.filter((x) => /обтекание/.test(x)), [], 'об обтекании не предупреждает');
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'f'));
+    let f = null; b.doc.descendants((n) => { if (n.type.name === 'image' && n.attrs.float) f = n.attrs.float; });
+    const hdr = JSON.stringify(b.meta.hf.header);
+    return { f, hdr: hdr.includes('"mode":"behind"') };
+  });
+  ok(back.f && back.f.mode === 'wrap' && back.f.side === 'left' && back.hdr, `после записи и чтения: ${JSON.stringify(back)}`);
+});
+
+await test('обтекание рисунка из ленты: в тексте, за текстом, слева; запись в docx', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+    const img = s.nodes.image.create({ src: png, width: 80, height: 80 });
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Текст '), img, s.text(' ещё текст')])]), E.getMeta(), 'wrap');
+    const { NodeSelection } = E.pm;
+    E.view.dispatch(E.view.state.tr.setSelection(NodeSelection.create(E.view.state.doc, 7)));
+  });
+  await p.click('#tabs .tab:has-text("Макет")');
+  await p.waitForTimeout(100);
+  await p.selectOption('select[data-command="image.wrap"]', 'behind');
+  await p.waitForTimeout(300);
+  eq(await p.$eval('.ProseMirror img[data-crop], .ProseMirror img.fl-behind', (e) => getComputedStyle(e).position), 'absolute', 'за текстом — вне строки');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 7))); });
+  await p.selectOption('select[data-command="image.wrap"]', 'left');
+  await p.waitForTimeout(200);
+  eq(await p.$eval('.ProseMirror img.fl-wrap', (e) => getComputedStyle(e).float), 'left', 'слева с обтеканием');
+  const xml = await p.evaluate(() => { const E = window.ens; const b = E.exportDocx(E.view.state.doc, E.getMeta(), 'w'); return new TextDecoder().decode(E.unzip(b)['word/document.xml']); });
+  ok(xml.includes('<wp:anchor') && xml.includes('wrapSquare'), 'в docx записан якорь с обтеканием');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 7))); });
+  await p.selectOption('select[data-command="image.wrap"]', 'inline');
+  await p.waitForTimeout(200);
+  eq(await p.$$eval('.ProseMirror img.fl', (e) => e.length), 0, 'снова в тексте');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

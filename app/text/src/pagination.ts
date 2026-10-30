@@ -14,6 +14,7 @@ import { Plugin, PluginKey } from 'prosemirror-state';
 import { TableMap } from 'prosemirror-tables';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { PageSetup } from './docx';
+import { sectionsOf } from './sections';
 
 export const PX = 4 / 3;
 /** Зазор между листами на экране, px (при печати 0: страницы вплотную, как на бумаге). */
@@ -38,7 +39,13 @@ export function geometry(p: PageSetup): Geo {
 }
 
 interface Spec { pg: 'pad' | 'split' | 'row'; h: number; key?: string }
-interface PagState { deco: DecorationSet; pages: number; rev: number }
+
+/** Лист на экране: положение по вертикали и размер. `page` — параметры раздела, `eff` — с учётом колонтитулов. */
+export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup }
+interface PagState { deco: DecorationSet; pages: number; boxes: PageBox[]; rev: number }
+
+/** Параметры одного раздела для расчёта: настоящие и с учётом колонтитулов. */
+interface SecGeo { g: Geo; page: PageSetup; eff: PageSetup }
 
 export const pagKey = new PluginKey<PagState>('pagination');
 
@@ -63,12 +70,12 @@ function rowDom(h: number, cols: number): HTMLElement {
   return tr;
 }
 
-interface Item { pos: number; end: number; node: PMNode; el: HTMLElement; row: boolean; cols: number; /** Узел, которому ставится верхний отступ: у первого абзаца пункта списка — сам пункт (иначе номер остался бы на прошлой странице). */ padPos: number; padEnd: number }
+interface Item { sect?: boolean; pos: number; end: number; node: PMNode; el: HTMLElement; row: boolean; cols: number; /** Узел, которому ставится верхний отступ: у первого абзаца пункта списка — сам пункт (иначе номер остался бы на прошлой странице). */ padPos: number; padEnd: number }
 interface Line { pos: number; top: number; bottom: number }
 interface Planned { kind: Spec['pg']; pos: number; end: number; h: number; cols: number; padPos: number; padEnd: number }
 
 /** Расчёт разрывов по текущему DOM. */
-function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items: number } {
+function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number; boxes: PageBox[]; items: number } {
   const dom = view.dom as HTMLElement;
   const box = dom.getBoundingClientRect();
   const scale = box.width / (dom.offsetWidth || 1) || 1;
@@ -99,6 +106,11 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
 
   const items: Item[] = [];
   view.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'section_break') {
+      const el = view.nodeDOM(pos) as HTMLElement | null;
+      if (el) items.push({ sect: true, pos, end: pos + node.nodeSize, node, el, row: false, cols: 0, padPos: pos, padEnd: pos + node.nodeSize });
+      return false;
+    }
     if (node.type.name === 'table') {
       const cols = TableMap.get(node).width;
       node.forEach((row, off) => {
@@ -158,41 +170,68 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
 
   const out: Planned[] = [];
   let acc = 0;
-  let lastBottom = g.top;
+  // Текущий раздел: y0 — где начинается текст на его первой странице; страницы раздела идут с шагом seg.g.P.
+  let secIdx = 0;
+  let seg = { y0: secs[0].g.top, g: secs[0].g };
+  let lastBottom = seg.y0;
+  let startOfSection = false;
+  const boxes: PageBox[] = [];
+  const closeSeg = (count: number) => {
+    const top0 = seg.y0 - seg.g.top;
+    const sg = secs[secIdx];
+    for (let j = 0; j < count; j++) boxes.push({ top: top0 + j * seg.g.P, H: seg.g.H, W: sg.page.w * PX, page: sg.page, eff: sg.eff });
+  };
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const { top: nTop, bottom: nBottom } = nat[i];
+    if (it.sect) {
+      // Разрыв раздела: следующий раздел начинается с новой страницы, у неё могут быть другие размер и поля.
+      const pIdx = Math.max(0, Math.floor((lastBottom - seg.y0 - 0.5) / seg.g.P));
+      closeSeg(pIdx + 1);
+      const nextTop = seg.y0 - seg.g.top + (pIdx + 1) * seg.g.P;
+      secIdx = Math.min(secIdx + 1, secs.length - 1);
+      seg = { y0: nextTop + secs[secIdx].g.top, g: secs[secIdx].g };
+      startOfSection = true;
+      lastBottom = seg.y0;
+      continue;
+    }
     const h = nBottom - nTop;
     let pad = 0;
     const splits: { pos: number; h: number }[] = [];
     let forced = !it.row && !!it.node.attrs.pageBreakBefore;
     const heading = !it.row && it.node.type.name === 'heading';
     const region = (a: number) => {
-      const p = Math.max(0, Math.floor((a - g.top + 0.5) / g.P));
-      const start = p * g.P + g.top;
-      return { start, end: start + g.C };
+      const p = Math.max(0, Math.floor((a - seg.y0 + 0.5) / seg.g.P));
+      const start = p * seg.g.P + seg.y0;
+      return { start, end: start + seg.g.C };
     };
+    if (startOfSection) {
+      // Первый блок раздела встаёт в начало текста новой страницы.
+      pad = Math.max(0, seg.y0 - (nTop + acc));
+      startOfSection = false;
+      forced = false;
+    }
 
     for (let guard = 0; guard < 80; guard++) {
       const a = nTop + acc + pad;
       const R = region(a);
       if (forced) {
         forced = false;
-        if (a - R.start > 1) { pad += R.start + g.P - a; continue; }
+        if (a - R.start > 1) { pad += R.start + seg.g.P - a; continue; }
       }
-      if (a >= R.end - 0.5) { pad += R.start + g.P - a; continue; }
+      if (a >= R.end - 0.5) { pad += R.start + seg.g.P - a; continue; }
       if (a + h <= R.end + 0.5) {
         // Заголовок не остаётся один внизу страницы: за ним должны поместиться хотя бы две строки.
-        if (heading && i + 1 < items.length && a - R.start > 1) {
+        if (heading && i + 1 < items.length && !items[i + 1].sect && a - R.start > 1) {
           const n = nat[i + 1];
           const need = n.top - nTop + Math.min(n.bottom - n.top, 2 * h);
-          if (a + need > R.end + 0.5) { pad += R.start + g.P - a; continue; }
+          if (a + need > R.end + 0.5) { pad += R.start + seg.g.P - a; continue; }
         }
         break;
       }
       // Не помещается.
       if (it.row) {
-        if (a - R.start > 1) { pad += R.start + g.P - a; continue; }
+        if (a - R.start > 1) { pad += R.start + seg.g.P - a; continue; }
         break; // строка выше страницы — не рвём
       }
       const lines = lineBoxes(it, i);
@@ -201,22 +240,22 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
       while (k < n && lines[k].bottom + acc + pad <= R.end + 0.5) k++;
       if (k >= n) break;
       const atTop = a - R.start <= 1;
-      if (k < 2 && n >= 2 && !atTop) { pad += R.start + g.P - a; continue; }
+      if (k < 2 && n >= 2 && !atTop) { pad += R.start + seg.g.P - a; continue; }
       if (n - k < 2) {
         if (k >= 3) k -= 1;
-        else if (!atTop) { pad += R.start + g.P - a; continue; }
+        else if (!atTop) { pad += R.start + seg.g.P - a; continue; }
       }
       k = Math.max(1, k);
       let local = acc + pad;
       let end = R.end;
-      let next = R.start + g.P;
+      let next = R.start + seg.g.P;
       let j = k;
       for (let safety = 0; safety < 200 && j < n; safety++) {
         const spacer = next - (lines[j].top + local);
         splits.push({ pos: lines[j].pos, h: spacer });
         local += spacer;
-        end += g.P;
-        next += g.P;
+        end += seg.g.P;
+        next += seg.g.P;
         let m = j;
         while (m < n && lines[m].bottom + local <= end + 0.5) m++;
         if (m >= n) break;
@@ -231,8 +270,8 @@ function plan(view: EditorView, g: Geo): { out: Planned[]; pages: number; items:
     acc += r1(pad) + splits.reduce((s, x) => s + r1(x.h), 0);
     lastBottom = nBottom + acc;
   }
-  const pages = Math.max(1, Math.floor((lastBottom - g.top - 0.5) / g.P) + 1);
-  return { out, pages, items: items.length };
+  closeSeg(Math.max(1, Math.floor((lastBottom - seg.y0 - 0.5) / seg.g.P) + 1));
+  return { out, pages: boxes.length, boxes, items: items.length };
 }
 
 function toDecos(out: Planned[]): Decoration[] {
@@ -245,26 +284,58 @@ function toDecos(out: Planned[]): Decoration[] {
 
 const sig = (list: { from: number; spec: Spec }[]) => list.map((d) => `${d.spec.pg}:${d.from}:${d.spec.h}`).join('|');
 
-/** Вызывает onPages при смене числа страниц. */
-export function pagination(getPage: () => PageSetup, onPages: (pages: number) => void): Plugin<PagState> {
+/** Поля по горизонтали для блоков разделов, отличающихся от первого: страницы разной ширины стоят по центру листа-подложки. */
+function marginDecos(doc: PMNode, base: PageSetup): Decoration[] | null {
+  const secs = sectionsOf(doc, base);
+  if (secs.length < 2) return null;
+  const wmax = Math.max(...secs.map((x) => x.page.w));
+  const out: Decoration[] = [];
+  let si = 0;
+  doc.forEach((node, off) => {
+    while (si + 1 < secs.length && off >= secs[si + 1].from) si++;
+    const p = secs[si].page;
+    const side = (wmax - p.w) / 2;
+    out.push(Decoration.node(off, off + node.nodeSize, { style: `margin-left:${side + p.left}pt;margin-right:${side + p.right}pt` }));
+  });
+  return out;
+}
+
+/**
+ * Вызывает onPages при смене числа или размеров страниц.
+ * getBase — параметры первого раздела; eff — они же с учётом высоты колонтитулов.
+ */
+export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => PageSetup, onPages: (pages: number, boxes: PageBox[]) => void): Plugin<PagState> {
+  let marginCache: { doc: PMNode; base: string; list: Decoration[] | null } | null = null;
   return new Plugin<PagState>({
     key: pagKey,
     state: {
-      init: () => ({ deco: DecorationSet.empty, pages: 1, rev: 0 }),
+      init: () => ({ deco: DecorationSet.empty, pages: 1, boxes: [], rev: 0 }),
       apply(tr, prev) {
-        const meta = tr.getMeta(pagKey) as { deco?: DecorationSet; pages?: number; replan?: boolean } | undefined;
-        if (meta?.deco) return { deco: meta.deco, pages: meta.pages ?? prev.pages, rev: prev.rev + 1 };
+        const meta = tr.getMeta(pagKey) as { deco?: DecorationSet; pages?: number; boxes?: PageBox[]; replan?: boolean } | undefined;
+        if (meta?.deco) return { deco: meta.deco, pages: meta.pages ?? prev.pages, boxes: meta.boxes ?? prev.boxes, rev: prev.rev + 1 };
         if (tr.docChanged) return { ...prev, deco: prev.deco.map(tr.mapping, tr.doc), rev: prev.rev + 1 };
         if (meta?.replan) return { ...prev, rev: prev.rev + 1 };
         return prev;
       },
     },
-    props: { decorations: (state) => pagKey.getState(state)?.deco },
+    props: {
+      decorations(state) {
+        const st = pagKey.getState(state);
+        if (!st) return null;
+        const base = getBase();
+        const key = JSON.stringify(base);
+        if (!marginCache || marginCache.doc !== state.doc || marginCache.base !== key) {
+          marginCache = { doc: state.doc, base: key, list: marginDecos(state.doc, base) };
+        }
+        // add() и create() портят переданный массив — отдаём копию.
+        return marginCache.list ? st.deco.add(state.doc, [...marginCache.list]) : st.deco;
+      },
+    },
     view(view) {
       let seen = -1;
       let passes = 0;
       let scheduled = false;
-      let lastPages = 0;
+      let lastSig = '';
       let alive = true;
       /** В больших документах расчёт откладывается: ввод не ждёт измерения всех абзацев. */
       let big = false;
@@ -273,9 +344,9 @@ export function pagination(getPage: () => PageSetup, onPages: (pages: number) =>
         if (!alive) return;
         const st = pagKey.getState(view.state);
         if (!st) return;
-        const g = geometry(getPage());
+        const secs: SecGeo[] = sectionsOf(view.state.doc, getBase()).map((x) => { const e = eff(x.page); return { g: geometry(e), page: x.page, eff: e }; });
         const t0 = performance.now();
-        const { out, pages, items } = plan(view, g);
+        const { out, pages, boxes, items } = plan(view, secs);
         big = items > 600;
         stats.ms = performance.now() - t0;
         stats.items = items;
@@ -283,10 +354,13 @@ export function pagination(getPage: () => PageSetup, onPages: (pages: number) =>
         // DecorationSet.create портит переданный массив: набор строим один раз.
         const set = DecorationSet.create(view.state.doc, toDecos(out));
         const fresh = set.find().map((d) => ({ from: d.from, spec: d.spec as Spec }));
-        if (pages !== lastPages) { lastPages = pages; onPages(pages); }
-        if (sig(old.sort((a, b) => a.from - b.from)) === sig(fresh.sort((a, b) => a.from - b.from))) { passes = 0; return; }
+        const boxSig = boxes.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join('|');
+        const stateSig = st.boxes.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join('|');
+        if (boxSig !== lastSig) { lastSig = boxSig; onPages(pages, boxes); }
+        const same = sig(old.sort((a, b) => a.from - b.from)) === sig(fresh.sort((a, b) => a.from - b.from));
+        if (same && boxSig === stateSig) { passes = 0; return; }
         if (++passes > 6) return; // защита от зацикливания
-        view.dispatch(view.state.tr.setMeta(pagKey, { deco: set, pages }).setMeta('addToHistory', false));
+        view.dispatch(view.state.tr.setMeta(pagKey, { deco: same ? st.deco : set, pages, boxes }).setMeta('addToHistory', false));
       };
       const schedule = () => {
         if (scheduled) return;
@@ -323,3 +397,4 @@ export function replan(view: EditorView): void {
 export const stats = { ms: 0, items: 0 };
 
 export const pageCount = (view: EditorView): number => pagKey.getState(view.state)?.pages ?? 1;
+export const pageBoxes = (view: EditorView): PageBox[] => pagKey.getState(view.state)?.boxes ?? [];

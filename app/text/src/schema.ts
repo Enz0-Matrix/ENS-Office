@@ -4,6 +4,7 @@
 import { Schema, type DOMOutputSpec, type MarkSpec, type Node as PMNode, type NodeSpec } from 'prosemirror-model';
 import { tableNodes } from 'prosemirror-tables';
 import { fontStack } from '../../table/src/fonts';
+import { FLOAT_CLASS, floatStyle, type Float } from './floats';
 
 /** Свойства абзаца: хранятся прямо в узле (как прямое форматирование в docx). */
 export interface ParaAttrs {
@@ -112,19 +113,56 @@ const nodes: Record<string, NodeSpec> = {
     inline: true,
     group: 'inline',
     draggable: true,
-    attrs: { src: {}, alt: { default: '' }, width: { default: null }, height: { default: null } },
+    /** `crop` — обрезка рисунка, доли от исходного размера: [слева, сверху, справа, снизу] (как a:srcRect в docx). */
+    attrs: { src: {}, alt: { default: '' }, width: { default: null }, height: { default: null }, crop: { default: null }, /** Плавающий рисунок (floats.ts); null — в строке. */ float: { default: null } },
     parseDOM: [{
       tag: 'img[src]',
       getAttrs: (d) => {
         const el = d as HTMLElement;
-        return { src: el.getAttribute('src'), alt: el.getAttribute('alt') ?? '', width: parseFloat(el.getAttribute('width') ?? '') || null, height: parseFloat(el.getAttribute('height') ?? '') || null };
+        const crop = (el.getAttribute('data-crop') ?? '').split(',').map(Number);
+        let float = null;
+        try { float = JSON.parse(el.getAttribute('data-float') ?? 'null'); } catch { float = null; }
+        return {
+          float,
+          src: el.getAttribute('src'), alt: el.getAttribute('alt') ?? '', width: parseFloat(el.getAttribute('width') ?? '') || null, height: parseFloat(el.getAttribute('height') ?? '') || null,
+          crop: crop.length === 4 && crop.every((x) => Number.isFinite(x)) ? crop : null,
+        };
       },
     }],
     toDOM: (n) => {
       const a: Record<string, string> = { src: n.attrs.src, alt: n.attrs.alt };
       if (n.attrs.width) a.width = String(Math.round(n.attrs.width));
       if (n.attrs.height) a.height = String(Math.round(n.attrs.height));
+      const c = n.attrs.crop as number[] | null;
+      if (c && c.some((x) => x > 0)) {
+        // Обрезка: окно просмотра по исходной картинке (object-view-box), размер рамки — как в документе.
+        const pc = c.map((x) => `${(x * 100).toFixed(3)}%`);
+        a['data-crop'] = c.map((x) => x.toFixed(5)).join(',');
+        a.style = `${n.attrs.width && n.attrs.height ? `width:${Math.round(n.attrs.width)}px;aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)};height:auto;` : ''}object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`;
+      }
+      const fl = n.attrs.float as Float | null;
+      if (fl) {
+        a['data-float'] = JSON.stringify(fl);
+        a.class = FLOAT_CLASS[fl.mode];
+        a.style = `${floatStyle(fl, n.attrs.width, n.attrs.height)};${a.style ?? ''}`;
+      }
       return ['img', a];
+    },
+  },
+  /**
+   * Разрыв раздела («со следующей страницы»). `page` — параметры страницы раздела, который начинается после разрыва
+   * (размер, ориентация, поля); null — как у предыдущего. Первый раздел описан в DocMeta.page.
+   */
+  section_break: {
+    group: 'block',
+    atom: true,
+    selectable: true,
+    attrs: { page: { default: null } },
+    parseDOM: [{ tag: 'div.sect-break', getAttrs: (d) => { try { return { page: JSON.parse((d as HTMLElement).getAttribute('data-page') ?? 'null') }; } catch { return { page: null }; } } }],
+    toDOM: (n) => {
+      const p = n.attrs.page as { w: number; h: number } | null;
+      const label = p ? `Разрыв раздела · ${p.w > p.h ? 'альбомная' : 'книжная'}` : 'Разрыв раздела';
+      return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */

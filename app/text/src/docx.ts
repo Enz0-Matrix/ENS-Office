@@ -9,6 +9,7 @@ import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
 import type { Scheme } from './numbering';
+import type { Float } from './floats';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
@@ -171,6 +172,8 @@ interface Ctx {
   baseR: RFmt;
   /** Стек сложных полей (TOC, PAGE, HYPERLINK…): в какой фазе, и ссылка, если поле — HYPERLINK. */
   fields: { phase: 'instr' | 'result'; instr: string; href?: string; suppress?: boolean }[];
+  /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
+  sects: Element[];
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -299,6 +302,39 @@ function addText(acc: InlineAcc, text: string, marks: readonly Mark[]): void {
   if (text) acc.nodes.push(schema.text(text, marks));
 }
 
+const EMU = 9525;
+
+/** wp:anchor → плавающий рисунок. null — «сверху и снизу» и прочее, что остаётся в строке. */
+function parseAnchor(a: Element): Float | null {
+  const wrap = [...a.children].map((c) => c.localName).find((n) => /^wrap/.test(n ?? '')) ?? 'wrapNone';
+  if (wrap === 'wrapTopAndBottom') return null;
+  const dist = (n: string) => (num(a.getAttribute(n)) ?? 0) / EMU;
+  const pos = (tag: string) => {
+    const e = kid(a, tag);
+    const rel = e?.getAttribute('relativeFrom') ?? '';
+    const off = kid(e, 'posOffset');
+    const al = kid(e, 'align')?.textContent?.trim() ?? null;
+    return { rel, off: off ? (num(off.textContent) ?? 0) / EMU : null, align: al };
+  };
+  const h = pos('positionH');
+  const v = pos('positionV');
+  const hRel = (['page', 'margin', 'column', 'character'] as const).find((x) => x === h.rel) ?? (/margin/i.test(h.rel) ? 'margin' : 'margin');
+  const vRel = (['page', 'margin', 'paragraph', 'line'] as const).find((x) => x === v.rel) ?? (/margin/i.test(v.rel) ? 'margin' : 'paragraph');
+  const hAlign = (['left', 'center', 'right'] as const).find((x) => x === h.align) ?? (h.align === 'inside' ? 'left' : h.align === 'outside' ? 'right' : null);
+  const vAlign = (['top', 'center', 'bottom'] as const).find((x) => x === v.align) ?? (h.align === 'inside' ? 'top' : null);
+  const f: Float = {
+    mode: wrap === 'wrapNone' ? (a.getAttribute('behindDoc') === '1' ? 'behind' : 'front') : 'wrap',
+    hRel, hOff: h.off, hAlign, vRel, vOff: v.off, vAlign,
+    dist: [dist('distT'), dist('distB'), dist('distL'), dist('distR')],
+  };
+  if (f.mode === 'wrap') {
+    // Текст слева от рисунка — рисунок справа; «с обеих сторон» — по выравниванию или положению.
+    const wt = kid(a, wrap)?.getAttribute('wrapText');
+    f.side = wt === 'left' ? 'right' : wt === 'right' ? 'left' : hAlign === 'right' || (hAlign == null && (h.off ?? 0) > 280) ? 'right' : 'left';
+  }
+  return f;
+}
+
 function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mark[]): void {
   const blip = descendants(el, 'blip')[0];
   const embed = blip ? relAttr(blip, 'embed') : null;
@@ -313,13 +349,22 @@ function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mar
   const cx = num(extent?.getAttribute('cx') ?? null);
   const cy = num(extent?.getAttribute('cy') ?? null);
   const docPr = descendants(el, 'docPr')[0];
-  const isAnchor = !!descendants(el, 'anchor').length;
-  if (isAnchor) lose(ctx, 'обтекание изображений (изображения стали строчными)');
+  // Обрезка рисунка: a:srcRect l/t/r/b — тысячные доли процента от исходной картинки; отрицательные (поля вокруг) не поддерживаем.
+  const sr = descendants(el, 'srcRect')[0];
+  const crop = sr ? (['l', 't', 'r', 'b'] as const).map((k) => Math.max(0, (num(sr.getAttribute(k)) ?? 0) / 100000)) : null;
+  const anchor = descendants(el, 'anchor')[0];
+  let float: Float | null = null;
+  if (anchor) {
+    float = parseAnchor(anchor);
+    if (!float) lose(ctx, 'обтекание изображений «сверху и снизу» (изображения стали строчными)');
+  }
   acc.nodes.push(schema.nodes.image.create({
     src: bytesToDataUrl(bytes, MIME[ext]),
     alt: docPr?.getAttribute('descr') ?? '',
     width: cx ? Math.round(cx / 9525) : null,
     height: cy ? Math.round(cy / 9525) : null,
+    crop: crop && crop.some((x) => x > 0) && crop[0] + crop[2] < 1 && crop[1] + crop[3] < 1 ? crop : null,
+    float,
   }, null, marks));
 }
 
@@ -475,7 +520,6 @@ function headingLevel(ctx: Ctx, styleId: string | undefined): number | null {
 
 function paraEntries(ctx: Ctx, p: Element): Entry[] {
   const pPr = kid(p, 'pPr');
-  if (kid(pPr, 'sectPr')) lose(ctx, 'разделы (разрывы разделов убраны)');
   const direct = parsePPr(pPr);
   const styleId = direct.styleId ?? ctx.defaultPara?.id;
   const level = headingLevel(ctx, direct.styleId);
@@ -627,9 +671,17 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
   const visit = (el: Element) => {
     for (const c of el.children) {
       switch (c.localName) {
-        case 'p':
-          entries.push(...paraEntries(ctx, c));
+        case 'p': {
+          const es = paraEntries(ctx, c);
+          const sp = kid(kid(c, 'pPr'), 'sectPr');
+          if (!sp || !ctx.sects) { entries.push(...es); break; }
+          // Абзац с w:sectPr закрывает раздел. Пустой абзац-носитель не нужен: разрыв раздела — отдельный блок.
+          const carrier = es.length === 1 && !es[0].list && es[0].node.type === schema.nodes.paragraph && es[0].node.content.size === 0;
+          if (!carrier) entries.push(...es);
+          entries.push({ node: schema.nodes.section_break.create({ page: null }) });
+          ctx.sects.push(sp);
           break;
+        }
         case 'tbl':
           try {
             entries.push({ node: parseTable(ctx, c) });
@@ -680,7 +732,7 @@ export function importDocx(bytes: Uint8Array): Imported {
   const dir = main.slice(0, main.lastIndexOf('/') + 1);
   const ctx: Ctx = {
     files, rels: readRels(files, main), styles: new Map(), defaults: { ...DEFAULTS }, nums: new Map(),
-    lossy: new Map(), baseR: {}, fields: [],
+    lossy: new Map(), baseR: {}, fields: [], sects: [],
   };
   for (const [, rel] of ctx.rels) {
     if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
@@ -707,10 +759,12 @@ export function importDocx(bytes: Uint8Array): Imported {
   const last = blocks[blocks.length - 1];
   if (last.type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
 
-  const page = { ...A4 };
   const hf = emptyHf();
-  const sect = kid(body, 'sectPr');
-  if (sect) {
+  const finalSect = kid(body, 'sectPr');
+  const allSects = [...ctx.sects, ...(finalSect ? [finalSect] : [])];
+  const pageOf = (sect: Element | null | undefined): PageSetup => {
+    const page = { ...A4 };
+    if (!sect) return page;
     const sz = kid(sect, 'pgSz');
     const mar = kid(sect, 'pgMar');
     let w = (num(attr(sz, 'w')) ?? 0) / 20;
@@ -725,6 +779,29 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.bottom = mv('bottom', page.bottom);
     page.left = mv('left', page.left);
     page.right = mv('right', page.right);
+    return page;
+  };
+  // Разделы: у каждого свои размер и поля. Разрыв ставится между разделами и хранит страницу следующего за ним.
+  const pages = allSects.map(pageOf);
+  const page = pages[0] ?? { ...A4 };
+  const breaks: PMNode[] = [];
+  blocks.forEach((b) => { if (b.type === schema.nodes.section_break) breaks.push(b); });
+  if (breaks.length) {
+    blocks = blocks.map((b) => {
+      if (b.type !== schema.nodes.section_break) return b;
+      const k = breaks.indexOf(b);
+      return schema.nodes.section_break.create({ page: pages[k + 1] ?? pages[pages.length - 1] ?? page });
+    });
+    // Разрыв раздела в самом конце документа не нужен: после него должен быть абзац.
+    while (blocks.length && blocks[blocks.length - 1].type === schema.nodes.section_break) blocks.pop();
+    if (!blocks.length) blocks = [schema.nodes.paragraph.create()];
+    if (allSects.slice(1).some((x) => ['continuous', 'evenPage', 'oddPage'].includes(attr(kid(x, 'type'), 'val') ?? 'nextPage'))) lose(ctx, 'разделы «на той же странице» или «с чётной/нечётной» (все начинаются с новой страницы)');
+    if (allSects.slice(1).some((x) => kids(x, 'cols').some((c) => (num(attr(c, 'num')) ?? 1) > 1))) lose(ctx, 'колонки (текст идёт в одну колонку)');
+  }
+  // Колонтитулы берём у первого раздела, где они заданы (у остальных Word наследует их).
+  const sect = allSects.find((x) => kids(x, 'headerReference').length || kids(x, 'footerReference').length) ?? finalSect;
+  if (sect) {
+    const mar = kid(sect, 'pgMar');
     const dist = (n: string, fallback: number) => { const v = num(attr(mar, n)); return v != null && v >= 0 ? v / 20 : fallback; };
     hf.headerDist = dist('header', hf.headerDist);
     hf.footerDist = dist('footer', hf.footerDist);
@@ -732,7 +809,7 @@ export function importDocx(bytes: Uint8Array): Imported {
       const ref = kids(sect, tag).find((r) => (attr(r, 'type') ?? 'default') === type);
       const rel = ref ? ctx.rels.get(relAttr(ref, 'id') ?? '') : undefined;
       if (!rel || !files[rel.target]) return null;
-      const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [] };
+      const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [], sects: [] };
       const blocks = walkBlocks(sub, parseXml(strFromU8(files[rel.target])).documentElement);
       if (!blocks.length) return null;
       if (blocks[blocks.length - 1].type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
@@ -745,7 +822,9 @@ export function importDocx(bytes: Uint8Array): Imported {
     hf.firstHeader = part('headerReference', 'first');
     hf.firstFooter = part('footerReference', 'first');
     if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
-    if (kid(sect, 'cols') && (num(attr(kid(sect, 'cols'), 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
+    if (allSects.some((x) => x !== sect && (kids(x, 'headerReference').length || kids(x, 'footerReference').length) && kids(x, 'headerReference').map((r) => relAttr(r, 'id')).join() !== kids(sect, 'headerReference').map((r) => relAttr(r, 'id')).join())) lose(ctx, 'колонтитулы разных разделов (всюду — колонтитулы первого раздела)');
+    const c0 = kid(allSects[0] ?? sect, 'cols');
+    if (c0 && (num(attr(c0, 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
   return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy }, history: readHistoryPart(files) };
@@ -817,6 +896,12 @@ function rPrXml(marks: readonly Mark[], link: boolean): string {
   return x ? `<w:rPr>${x}</w:rPr>` : '';
 }
 
+function cropXml(c: number[] | null): string {
+  if (!c || !c.some((x) => x > 0)) return '';
+  const [l, t, r, b] = c.map((x) => Math.round(x * 100000));
+  return `<a:srcRect l="${l}" t="${t}" r="${r}" b="${b}"/>`;
+}
+
 function imageXml(ctx: ExportCtx, node: PMNode): string {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(node.attrs.src as string);
   if (!m) return '';
@@ -830,14 +915,24 @@ function imageXml(ctx: ExportCtx, node: PMNode): string {
   const cx = Math.round((node.attrs.width || 200) * 9525);
   const cy = Math.round((node.attrs.height || 150) * 9525);
   const n = ctx.docIds.n++;
-  return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>` +
+  const fl = node.attrs.float as Float | null;
+  const emu = (px: number) => Math.round(px * EMU);
+  const posXml = (tag: 'positionH' | 'positionV', rel: string, off: number | null, align: string | null) =>
+    `<wp:${tag} relativeFrom="${rel}">${align ? `<wp:align>${align}</wp:align>` : `<wp:posOffset>${emu(off ?? 0)}</wp:posOffset>`}</wp:${tag}>`;
+  const open = fl
+    ? `<wp:anchor distT="${emu(fl.dist[0])}" distB="${emu(fl.dist[1])}" distL="${emu(fl.dist[2])}" distR="${emu(fl.dist[3])}" simplePos="0" relativeHeight="251658240" behindDoc="${fl.mode === 'behind' ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>` +
+      posXml('positionH', fl.hRel, fl.hOff, fl.hAlign) + posXml('positionV', fl.vRel, fl.vOff, fl.vAlign) +
+      `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+      (fl.mode === 'wrap' ? `<wp:wrapSquare wrapText="${fl.side === 'right' ? 'left' : 'right'}"/>` : '<wp:wrapNone/>')
+    : `<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>`;
+  return `<w:r><w:drawing>${open}` +
     `<wp:docPr id="${n}" name="Рисунок ${n}" descr="${esc(node.attrs.alt || '')}"/>` +
     '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
     '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>' +
     `<pic:nvPicPr><pic:cNvPr id="${n}" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr>` +
-    `<pic:blipFill><a:blip r:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:blipFill><a:blip r:embed="${id}"/>${cropXml(node.attrs.crop as number[] | null)}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
     `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
-    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    `</pic:pic></a:graphicData></a:graphic></${fl ? 'wp:anchor' : 'wp:inline'}></w:drawing></w:r>`;
 }
 
 function runsXml(ctx: ExportCtx, para: PMNode): string {
@@ -1051,9 +1146,18 @@ function stylesXml(meta: DocMeta): string {
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
   const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
-  let body = blocksXml(ctx, doc);
-  if (body.endsWith('</w:tbl>')) body += '<w:p/>';
-  const p = meta.page;
+  // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
+  const chunks: PMNode[][] = [[]];
+  const pagesOf: PageSetup[] = [meta.page];
+  doc.forEach((node) => {
+    if (node.type === schema.nodes.section_break) { chunks.push([]); pagesOf.push((node.attrs.page as PageSetup | null) ?? pagesOf[pagesOf.length - 1]); } else chunks[chunks.length - 1].push(node);
+  });
+  const chunkXml = chunks.map((blocks) => {
+    const inner = blocksXml(ctx, schema.nodes.doc.create(null, blocks.length ? blocks : [schema.nodes.paragraph.create()]));
+    return inner;
+  });
+  const lastChunk = chunkXml.length - 1;
+  if (chunkXml[lastChunk].endsWith('</w:tbl>')) chunkXml[lastChunk] += '<w:p/>';
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
   const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
@@ -1078,9 +1182,12 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   };
   const refs = hfRef(hf.header, 'header', 'default') + hfRef(hf.footer, 'footer', 'default') +
     (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
-  const sect = `<w:sectPr>${refs}<w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
+  const sectOf = (p: PageSetup, first: boolean): string => `<w:sectPr>${first ? refs : ''}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
     `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
-    `${hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
+    `${first && hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
+  // Колонтитулы описаны в первом разделе, остальные их наследуют (так делает и Word).
+  const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');
+  const sect = sectOf(pagesOf[lastChunk], lastChunk === 0);
   const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +

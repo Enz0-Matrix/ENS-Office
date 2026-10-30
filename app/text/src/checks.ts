@@ -47,6 +47,31 @@ export const PROFILES: Profile[] = [
   },
 ];
 
+// --- Свой профиль организации: редактируется в окне проверки, хранится на этом компьютере.
+
+export const CUSTOM_ID = 'custom';
+const CUSTOM_KEY = 'ens-text.profile.custom';
+
+export function defaultCustomProfile(): Profile {
+  const base = PROFILES[0];
+  return { ...base, id: CUSTOM_ID, name: 'Свой профиль (регламент организации)', note: 'Значения заданы вами: «Изменить свой профиль…».', margins: { ...base.margins }, fonts: { ...base.fonts }, lines: [...base.lines], pageNumbers: base.pageNumbers ? { ...base.pageNumbers } : null };
+}
+
+export function loadCustomProfile(): Profile {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? 'null') as Partial<Profile> | null;
+    if (raw && raw.margins && raw.fonts && Array.isArray(raw.lines)) return { ...defaultCustomProfile(), ...raw, id: CUSTOM_ID } as Profile;
+  } catch { /* вернём профиль по умолчанию */ }
+  return defaultCustomProfile();
+}
+
+export function saveCustomProfile(p: Profile): void {
+  try { localStorage.setItem(CUSTOM_KEY, JSON.stringify({ ...p, id: CUSTOM_ID })); } catch { /* без памяти профиль живёт до закрытия окна */ }
+}
+
+/** Стандартные профили и свой. */
+export const allProfiles = (): Profile[] => [...PROFILES, loadCustomProfile()];
+
 export interface Issue {
   id: string;
   ok: boolean;

@@ -5,7 +5,8 @@ import './text.css';
 import './icons';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { TextSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
+import { unzipSync } from 'fflate';
 import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import {
   addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, isInTable, mergeCells, splitCell,
@@ -33,6 +34,8 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { compatDialog } from './compat-ui';
+import { readabilityDialog } from './readability-ui';
+import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
@@ -43,7 +46,9 @@ import { schemeDialog } from './lists-ui';
 import { describe as describeTypo, liveQuotes, typograph } from './typograph';
 import { focusKey, jumpFlag, listFlags, toggleFlag } from './editor';
 import { allCommands, matchScore } from '../../table/src/commands';
-import { PX, geometry, layout, pageCount, pagination, replan, stats as pagStats } from './pagination';
+import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
+import { sectionAt, sectionsOf, sectionsSig } from './sections';
+import { placeFloats, type Float } from './floats';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -264,8 +269,7 @@ function updateSavedStatus(): void {
 let hfPx = { header: 0, footer: 0 };
 
 /** Страница с учётом колонтитулов: top и bottom — где на самом деле начинается и кончается текст. */
-function effPage(): PageSetup {
-  const p = meta.page;
+function effOf(p: PageSetup): PageSetup {
   const hf = meta.hf;
   return {
     ...p,
@@ -273,6 +277,12 @@ function effPage(): PageSetup {
     bottom: hfPx.footer ? Math.max(p.bottom, hf.footerDist + hfPx.footer / PX) : p.bottom,
   };
 }
+
+const effPage = (): PageSetup => effOf(meta.page);
+
+/** Раздел, в котором стоит курсор, и его параметры страницы. */
+const curSection = () => sectionAt(sectionsOf(view.state.doc, meta.page), view.state.selection.from);
+const curPage = (): PageSetup => curSection().page;
 
 /** Колонтитулы изменились: перемерить; если поля текста сдвинулись — пересчитать страницы. */
 function refreshHf(): void {
@@ -290,8 +300,14 @@ function applyPage(): void {
   const p = meta.page;
   const e = effPage();
   const sheet = $('sheet');
-  sheet.style.width = `${p.w}pt`;
-  view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
+  // Разделы с разными размерами: лист на экране по самой широкой странице, у блоков свои боковые поля (см. pagination.ts).
+  const secs = sectionsOf(view.state.doc, meta.page);
+  lastSecSig = sectionsSig(secs);
+  sheet.style.width = `${Math.max(...secs.map((x) => x.page.w))}pt`;
+  if (secs.length > 1) {
+    const first = effOf(secs[0].page), lastE = effOf(secs[secs.length - 1].page);
+    view.dom.style.padding = `${first.top}pt 0 ${lastE.bottom}pt 0`;
+  } else view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
   drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;
@@ -306,42 +322,63 @@ function applyPage(): void {
   st.textContent = `@page { size: ${p.w}pt ${p.h}pt; margin: 0; }`;
 }
 
-/** Листы-подложки: по одному на страницу; высота страницы и зазоры — как у расчёта разрывов. */
-function drawPapers(pages: number): void {
+/** Листы-подложки: по одному на страницу; положение, ширина и высота — как у расчёта разрывов (у разделов они разные). */
+function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   const g = geometry(effPage());
+  const list: PageBox[] = boxes.length === pages ? boxes
+    : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
+  const sheetW = Math.max(...list.map((b) => b.W));
   const papers = $('papers');
-  if (papers.childElementCount !== pages || papers.dataset.h !== String(g.H) || papers.dataset.gap !== String(layout.gap)) {
-    papers.replaceChildren(...Array.from({ length: pages }, (_, i) => {
+  const sig = `${layout.gap}|${sheetW}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join(',')}`;
+  if (papers.dataset.sig !== sig) {
+    papers.replaceChildren(...list.map((b) => {
       const d = document.createElement('div');
       d.className = 'paper';
-      d.style.cssText = `top:${i * g.P}px;height:${g.H}px`;
+      d.style.cssText = `top:${b.top}px;height:${b.H}px;left:${(sheetW - b.W) / 2}px;right:auto;width:${b.W}px`;
       return d;
     }));
-    papers.dataset.h = String(g.H);
-    papers.dataset.gap = String(layout.gap);
+    papers.dataset.sig = sig;
   }
-  const total = pages * g.H + (pages - 1) * layout.gap;
+  const last = list[list.length - 1];
+  const total = last.top + last.H;
   $('sheet').style.minHeight = `${total}px`;
   $('sheet').style.setProperty('--sheet-h', `${total}px`);
   view.dom.style.minHeight = `${total}px`;
-  paintHf(pages);
+  paintHf(pages, list);
   updatePageStatus(pages);
+  layoutFloats();
+}
+
+/** Плавающие рисунки основного текста: положение считается после вёрстки страниц и после каждой правки. */
+let floatRaf = 0;
+function layoutFloats(): void {
+  cancelAnimationFrame(floatRaf);
+  floatRaf = requestAnimationFrame(() => {
+    const dom = view.dom as HTMLElement;
+    const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
+    placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale });
+  });
 }
 
 /** Колонтитулы на листах: свои на каждой странице (номер страницы подставляется). */
-function paintHf(pages = pageCount(view)): void {
+function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): void {
   const papers = $('papers');
   [...papers.children].forEach((paper, i) => {
+    const pg = boxes[i]?.page ?? meta.page;
     paper.querySelectorAll('.hf').forEach((e) => e.remove());
     for (const kind of ['header', 'footer'] as const) {
       if (hfSession && hfSession.kind === kind && hfSession.pageIndex === i) continue; // здесь идёт правка
       const e = renderHf(hfFor(meta.hf, kind, i), kind, i + 1, pages);
       if (!e) continue;
-      e.style.left = `${meta.page.left}pt`;
-      e.style.right = `${meta.page.right}pt`;
+      e.style.left = `${pg.left}pt`;
+      e.style.right = `${pg.right}pt`;
       if (kind === 'header') e.style.top = `${meta.hf.headerDist}pt`;
       else e.style.bottom = `${meta.hf.footerDist}pt`;
       paper.append(e);
+      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front')) {
+        const sc = e.getBoundingClientRect().width / (e.offsetWidth || 1) || 1;
+        placeFloats({ root: e, boxes: [], sheetW: 0, scale: sc, fixed: { box: boxes[i], originX: -e.offsetLeft, originY: -e.offsetTop } });
+      }
     }
   });
 }
@@ -352,7 +389,10 @@ function currentPage(n = pageCount(view)): number {
     const box = view.dom.getBoundingClientRect();
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
     const c = view.coordsAtPos(view.state.selection.head);
-    return Math.min(n, Math.max(1, Math.floor((((c.top - box.top) / scale) + 1) / geometry(effPage()).P) + 1));
+    const y = (c.top - box.top) / scale + 1;
+    const boxes = pageBoxes(view);
+    if (boxes.length) { let idx = 0; for (let i = 0; i < boxes.length; i++) if (boxes[i].top <= y) idx = i; return Math.min(n, idx + 1); }
+    return Math.min(n, Math.max(1, Math.floor(y / geometry(effPage()).P) + 1));
   } catch {
     return 1; // вид ещё не готов
   }
@@ -371,7 +411,8 @@ function setZoom(z: number): void {
 
 // ---------------------------------------------------------------- редактор
 
-const paginationPlugin = pagination(effPage, (n) => drawPapers(n));
+const paginationPlugin = pagination(() => meta.page, effOf, (n, boxes) => drawPapers(n, boxes));
+let lastSecSig = '';
 let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
@@ -421,6 +462,9 @@ function afterChange(docChanged: boolean): void {
   updateUi();
   renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
+    layoutFloats();
+    // Появился, исчез или изменился раздел: перестроить поля и листы.
+    if (sectionsSig(sectionsOf(view.state.doc, meta.page)) !== lastSecSig) queueMicrotask(() => { applyPage(); replan(view); updateUi(); });
     clearTimeout(statsTimer);
     statsTimer = window.setTimeout(updateStats, 250);
     scheduleRecovery();
@@ -523,6 +567,7 @@ register(
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
   { id: 'insert.dateRu', label: 'Дата «29» октября 2026 г.', keywords: ['дата', 'сегодня'], run: () => { const v = active(); v.dispatch(v.state.tr.insertText(dateRu(new Date())).scrollIntoView()); v.focus(); } },
+  { id: 'insert.sectionBreak', label: 'Разрыв раздела (со следующей страницы)', keywords: ['раздел', 'ориентация', 'альбомная', 'книжная', 'страница'], run: () => insertSectionBreak() },
   { id: 'insert.pageBreak', label: 'Разрыв страницы', run: () => dispatchCmd(insertPageBreak) },
   { id: 'table.rowBefore', label: 'Вставить строку выше', run: () => dispatchCmd(addRowBefore) },
   { id: 'table.rowAfter', label: 'Вставить строку ниже', run: () => dispatchCmd(addRowAfter) },
@@ -534,6 +579,7 @@ register(
   { id: 'table.merge', label: 'Объединить ячейки', run: () => dispatchCmd(mergeCells) },
   { id: 'table.split', label: 'Разделить ячейку', run: () => dispatchCmd(splitCell) },
   { id: 'table.borders', label: 'Границы таблицы', run: () => toggleBorders() },
+  { id: 'image.wrap', label: 'Обтекание рисунка', keywords: ['рисунок', 'логотип', 'за текстом', 'перед текстом', 'обтекание', 'в тексте'], run: (v) => setImageWrap(v ?? 'inline') },
   { id: 'page.size', label: 'Размер страницы', run: (v) => setPageSize(v ?? 'a4') },
   { id: 'page.orientation', label: 'Ориентация', run: (v) => setOrientation(v === 'landscape') },
   { id: 'page.margins', label: 'Поля', run: (v) => setMargins(v ?? 'normal') },
@@ -585,6 +631,8 @@ register(
   },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
+  { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
+  { id: 'view.night', label: 'Ночной лист', keywords: ['тёмный', 'ночь', 'ночной', 'чтение', 'тема листа'], checked: () => nightSheet, run: () => setNightSheet(!nightSheet) },
   { id: 'review.inspector', label: 'Рентген форматирования', keywords: ['формат', 'инспектор', 'откуда'], keys: ['Ctrl+Alt+KeyI'], run: () => toggleInspector(inspectorSource, inspectorActions) },
   { id: 'view.theme', label: 'Тема оформления', keywords: ['theme', 'тема', 'оформление', 'пустошь', 'матрица'], run: () => themeDialog() },
   { id: 'ver.history', label: 'История версий', keys: ['Ctrl+Alt+KeyH'], run: () => showHistory() },
@@ -599,6 +647,8 @@ register(
   { id: 'hf.differentFirst', label: 'Особый колонтитул первой страницы', checked: () => meta.hf.differentFirst, run: () => { closeHf(); meta.hf.differentFirst = !meta.hf.differentFirst; refreshHf(); updateUi(); scheduleRecovery(); } },
   { id: 'insert.pageNumber', label: 'Номер страницы', run: (v) => { if (v) insertPageNumber(v); setSelect('insert.pageNumber', ''); } },
   { id: 'file.wizard', label: 'Служебный документ (мастер)…', keywords: ['письмо', 'приказ', 'акт', 'протокол', 'гост', 'реквизиты', 'бланк'], run: () => void guardUnsaved(() => wizardDialog(newFromWizard)) },
+  { id: 'file.templates', label: 'Создать из шаблона…', keywords: ['шаблон', 'бланк', 'служебная записка', 'заявление', 'доверенность', 'отчёт', 'мои шаблоны'], run: () => void guardUnsaved(() => templatesDialog(templateHost)) },
+  { id: 'file.saveTemplate', label: 'Сохранить как мой шаблон…', keywords: ['шаблон', 'мой', 'личный', 'бланк'], run: () => saveTemplateDialog(templateHost) },
   { id: 'file.journal', label: 'Журнал регистрации…', keywords: ['номер', 'исходящий', 'регистрация'], run: () => journalDialog() },
   { id: 'file.new', label: 'Создать', keys: ['Ctrl+KeyN'], run: () => (desktop.isDesktop ? void desktop.newWindow() : void guardUnsaved(newDocument)) },
   { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
@@ -866,6 +916,11 @@ const TABS: RibbonTab[] = [
         ],
       },
       {
+        name: 'Рисунок',
+        items: [{ type: 'select', command: 'image.wrap', width: 150, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] }],
+      },
+      { name: 'Разделы', items: [{ type: 'large', command: 'insert.sectionBreak', icon: 'page_break', label: 'Разрыв раздела' }] },
+      {
         name: 'Абзац',
         items: [{ type: 'select', command: 'para.after', options: [{ value: '', label: 'После абзаца: как в документе' }, { value: '0', label: 'После: 0 пт' }, { value: '6', label: 'После: 6 пт' }, { value: '8', label: 'После: 8 пт' }, { value: '12', label: 'После: 12 пт' }], width: 210 }],
       },
@@ -924,9 +979,10 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
           { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
+          { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
         ],
       },
-      { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }] },
+      { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }, { type: 'large', command: 'view.night', icon: 'paint_brush', label: 'Ночной лист' }] },
     ],
   },
   {
@@ -1001,6 +1057,17 @@ function setSelect(cmd: string, value: string): void {
 
 const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete']);
 
+const NIGHT_KEY = 'ens-text.night';
+let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
+
+/** «Ночной лист»: светлый текст на тёмном листе для чтения с экрана; печать и файл не меняются. */
+function setNightSheet(on: boolean): void {
+  nightSheet = on;
+  document.documentElement.toggleAttribute('data-night-sheet', on);
+  try { localStorage.setItem(NIGHT_KEY, on ? '1' : '0'); } catch { /* без хранилища — до закрытия окна */ }
+  updateUi();
+}
+
 function updateUi(): void {
   refreshRibbon();
   const dirty = isDirty();
@@ -1024,9 +1091,12 @@ function updateUi(): void {
   setSelect('format.fontSize', String(st.size ?? meta.defaults.size));
   setSelect('para.style', String(currentLevel(active().state)));
   setSelect('para.line', String(paraAttr<number>(active().state, 'line') ?? meta.defaults.line));
-  setSelect('page.orientation', meta.page.w > meta.page.h ? 'landscape' : 'portrait');
+  setSelect('page.orientation', curPage().w > curPage().h ? 'landscape' : 'portrait');
   setSelect('ver.reminder', String(settings.saveReminderMinutes));
   setSelect('list.scheme', presetOf(currentScheme()) === 'custom' ? '' : presetOf(currentScheme()) === 'simple' ? '' : presetOf(currentScheme()));
+  const imgSel = selectedImage();
+  const fl = imgSel?.node.attrs.float as Float | null | undefined;
+  setSelect('image.wrap', !imgSel ? '' : !fl ? 'inline' : fl.mode === 'wrap' ? (fl.side ?? 'left') : fl.mode);
   setSelect('page.size', sizeKey());
   setSelect('page.margins', marginsKey());
 }
@@ -1041,22 +1111,26 @@ const MARGIN_SETS: Record<string, [number, number, number, number]> = {
 };
 
 function sizeKey(): string {
-  const w = Math.min(meta.page.w, meta.page.h);
-  const h = Math.max(meta.page.w, meta.page.h);
+  const w = Math.min(curPage().w, curPage().h);
+  const h = Math.max(curPage().w, curPage().h);
   for (const [k, [sw, sh]] of Object.entries(SIZES)) if (Math.abs(sw - w) < 2 && Math.abs(sh - h) < 2) return k;
   return 'a4';
 }
 
 function marginsKey(): string {
-  const p = meta.page;
+  const p = curPage();
   for (const [k, [t, b, l, r]] of Object.entries(MARGIN_SETS)) {
     if ([p.top - t, p.bottom - b, p.left - l, p.right - r].every((d) => Math.abs(d) < 1.5)) return k;
   }
   return 'normal';
 }
 
+/** Изменить страницу того раздела, где стоит курсор (первого — DocMeta.page, остальных — их разрыв). */
 function changePage(next: Partial<PageSetup>): void {
-  meta.page = { ...meta.page, ...next };
+  const sec = curSection();
+  const updated = { ...sec.page, ...next };
+  if (sec.index === 0) meta.page = updated;
+  else view.dispatch(view.state.tr.setNodeMarkup(sec.breakPos!, undefined, { page: updated }));
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   applyPage();
   replan(view);
@@ -1064,15 +1138,52 @@ function changePage(next: Partial<PageSetup>): void {
   scheduleRecovery();
 }
 
+/** Выделенный рисунок (NodeSelection) и его позиция. */
+function selectedImage(): { pos: number; node: PMNode } | null {
+  const sel = view.state.selection;
+  if (sel instanceof NodeSelection && sel.node.type === schema.nodes.image) return { pos: sel.from, node: sel.node };
+  return null;
+}
+
+/** Обтекание выделенного рисунка: в тексте, слева/справа с обтеканием, за текстом, перед текстом. */
+function setImageWrap(mode: string): void {
+  const img = selectedImage();
+  if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
+  const old = img.node.attrs.float as Float | null;
+  let float: Float | null = null;
+  const base: Float = old ?? { mode: 'behind', hRel: 'column', hOff: 0, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
+  if (mode === 'behind' || mode === 'front') float = { ...base, mode };
+  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, dist: old?.dist ?? [0, 4, 8, 8] };
+  view.dispatch(view.state.tr.setNodeMarkup(img.pos, undefined, { ...img.node.attrs, float }));
+  view.focus();
+  updateUi();
+}
+
+/** Новый раздел со следующей страницы: после текущего блока; страница нового раздела сначала как у текущего. */
+function insertSectionBreak(): void {
+  closeHf();
+  const sec = curSection();
+  const { $from } = view.state.selection;
+  const pos = $from.depth ? $from.after(1) : $from.pos;
+  const node = schema.nodes.section_break.create({ page: { ...sec.page } });
+  let tr = view.state.tr.insert(pos, node);
+  const after = pos + node.nodeSize;
+  if (after >= tr.doc.content.size || tr.doc.resolve(after).nodeAfter?.type === schema.nodes.section_break) tr = tr.insert(after, schema.nodes.paragraph.create());
+  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(after + 1)));
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  toast('Раздел начнётся со следующей страницы. Ориентацию и поля меняйте на вкладке «Макет» — для раздела, где стоит курсор.');
+}
+
 function setPageSize(key: string): void {
   const [w, h] = SIZES[key] ?? SIZES.a4;
-  const land = meta.page.w > meta.page.h;
+  const land = curPage().w > curPage().h;
   changePage(land ? { w: h, h: w } : { w, h });
 }
 
 function setOrientation(landscape: boolean): void {
-  const lo = Math.min(meta.page.w, meta.page.h);
-  const hi = Math.max(meta.page.w, meta.page.h);
+  const lo = Math.min(curPage().w, curPage().h);
+  const hi = Math.max(curPage().w, curPage().h);
   changePage(landscape ? { w: hi, h: lo } : { w: lo, h: hi });
 }
 
@@ -1155,7 +1266,7 @@ async function insertImageFile(file: File): Promise<void> {
     img.src = src;
   });
   // Не шире рабочей области страницы (96 dpi: 1 pt = 4/3 px).
-  const maxW = ((meta.page.w - meta.page.left - meta.page.right) * 4) / 3;
+  const maxW = ((curPage().w - curPage().left - curPage().right) * 4) / 3;
   const k = dim.w > maxW ? maxW / dim.w : 1;
   dispatchCmd(insertImage(src, Math.round(dim.w * k), Math.round(dim.h * k), file.name.replace(/\.[^.]+$/, '')));
 }
@@ -1172,9 +1283,11 @@ $('image-input').addEventListener('change', (e) => {
 function openHf(kind: HfKind, pageIndex = currentPage() - 1): void {
   closeHf();
   const first = meta.hf.differentFirst && pageIndex === 0;
-  const e = effPage();
+  const box = pageBoxes(view)[pageIndex];
+  const e = box?.eff ?? effPage();
+  const sheetW = $('sheet').offsetWidth;
   hfSession = openHfEditor({
-    sheet: $('sheet'), kind, first, pageIndex, pageStep: geometry(e).P, page: e, hf: meta.hf,
+    sheet: $('sheet'), kind, first, pageIndex, pageTop: box?.top ?? pageIndex * geometry(e).P, offsetX: box ? (sheetW - box.W) / 2 : 0, page: e, hf: meta.hf,
     onChange: () => { refreshHf(); updateUi(); scheduleRecovery(); },
   });
   $('sheet').classList.add('hf-mode');
@@ -1217,19 +1330,21 @@ function insertPageNumber(pos: string): void {
 $('sheet').addEventListener('dblclick', (e) => {
   const rect = $('sheet').getBoundingClientRect();
   const scale = rect.width / ($('sheet') as HTMLElement).offsetWidth || 1;
-  const eff = effPage();
-  const g = geometry(eff);
+  const boxes = pageBoxes(view);
   const y = (e.clientY - rect.top) / scale;
-  const i = Math.floor(y / g.P);
-  const inPage = y - i * g.P;
-  if (i < 0 || i >= pageCount(view) || inPage > g.H) return;
+  const i = boxes.findIndex((b) => y >= b.top && y <= b.top + b.H);
+  if (i < 0) return;
+  const box = boxes[i];
+  const eff = box.eff;
+  const inPage = y - box.top;
+  const side = ((($('sheet') as HTMLElement).offsetWidth) - box.W) / 2;
   if (hfSession && (e.target as HTMLElement).closest('.hf-edit')) return;
   if (inPage < eff.top * PX - 4) { e.preventDefault(); openHf('header', i); }
-  else if (inPage > g.H - eff.bottom * PX + 4) { e.preventDefault(); openHf('footer', i); }
+  else if (inPage > box.H - eff.bottom * PX + 4) { e.preventDefault(); openHf('footer', i); }
   else if (hfSession) closeHf();
-  else if (e.clientX < rect.left + eff.left * PX * scale - 2 && e.clientX > rect.left + i * 0) {
+  else if (e.clientX < rect.left + (side + eff.left * PX) * scale - 2 && e.clientX > rect.left + side * scale) {
     // Двойной щелчок на левом поле листа — метка у этого абзаца (Shift — зелёная, как в таблицах).
-    const at = view.posAtCoords({ left: rect.left + (eff.left * PX + 12) * scale, top: e.clientY });
+    const at = view.posAtCoords({ left: rect.left + (side + eff.left * PX + 12) * scale, top: e.clientY });
     if (!at) return;
     e.preventDefault();
     view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at.pos))));
@@ -1370,8 +1485,8 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  applyPage();
   view.updateState(createState(doc, [paginationPlugin, quotesPlugin]));
+  applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
   hideNotice();
@@ -1399,6 +1514,11 @@ function newDocument(): void {
   hist = V.emptyHistory();
   loadDoc(emptyDoc(), newMeta(), 'Документ1');
 }
+
+const templateHost: TemplateHost = {
+  create: (doc, newMetaValue, name) => newFromWizard(doc, newMetaValue, name),
+  current: () => ({ bytes: exportDocx(view.state.doc, meta, docName), name: docName.replace(/\.docx$/i, '') }),
+};
 
 function newFromWizard(doc: PMNode, newMetaValue: DocMeta, name: string): void {
   void clearRecovery(docId);
@@ -1501,7 +1621,7 @@ function fileMenu(): void {
     box.append(
       el('h2', { textContent: 'Файл' }),
       el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
+        item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
     );
   });
@@ -1605,6 +1725,7 @@ window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, 
 $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
+document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
 initCommandSearch();
 applyPage();
 setZoom(1);
@@ -1651,6 +1772,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
