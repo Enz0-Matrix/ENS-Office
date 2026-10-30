@@ -1157,6 +1157,27 @@ await test('шаблоны: готовые создаются, «мой шабл
   await p.evaluate(() => localStorage.removeItem('ens-text.profile.custom'));
 });
 
+await test('рисунок с обрезкой: srcRect читается и пишется, показывается обрезанным; длинное предупреждение переносится', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+    const img = s.nodes.image.create({ src: png, width: 100, height: 60, crop: [0.1, 0.2, 0.3, 0.1] });
+    const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [img, s.text(' текст')])]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'crop');
+    const back = E.importDocx(bytes);
+    const crop = back.doc.firstChild.firstChild.attrs.crop;
+    const m = E.getMeta(); m.lossy = ['обтекание изображений (изображения стали строчными)', 'разделы (разрывы разделов стали обычными)', 'очень длинное пояснение '.repeat(12)];
+    E.loadDoc(back.doc, m, 'crop');
+    return { crop };
+  });
+  ok(r.crop && Math.abs(r.crop[0] - 0.1) < 1e-4 && Math.abs(r.crop[1] - 0.2) < 1e-4 && Math.abs(r.crop[2] - 0.3) < 1e-4 && Math.abs(r.crop[3] - 0.1) < 1e-4, `обрезка в docx: ${JSON.stringify(r.crop)}`);
+  const style = await p.$eval('.ProseMirror img', (e) => e.getAttribute('style'));
+  ok(/object-view-box:\s*inset\(20\.000% 30\.000% 10\.000% 10\.000%\)/.test(style), `стиль: ${style}`);
+  const h = await p.$eval('.notice span', (e) => e.getBoundingClientRect().height);
+  ok(h > 30, `предупреждение переносится по строкам (высота ${h})`);
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

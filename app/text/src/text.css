@@ -15,9 +15,9 @@
 .btn.on { background: #cfdff5; border-color: #9ab8e4; }
 .btn[data-command="edit.undo"]:not(.disabled) svg, .btn[data-command="edit.redo"]:not(.disabled) svg { fill: var(--accent); }
 
-.notice { margin: 6px 8px 0; padding: 6px 10px; background: #fff4ce; border: 1px solid #e6c200; border-radius: 4px; display: flex; gap: 10px; align-items: center; }
+.notice { margin: 6px 8px 0; padding: 6px 10px; background: #fff4ce; color: #3b3000; border: 1px solid #e6c200; border-radius: 4px; display: flex; gap: 10px; align-items: flex-start; }
 .notice[hidden] { display: none; }
-.notice span { flex: 1; }
+.notice span { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; user-select: text; }
 .notice button { border: 1px solid #c9a800; background: #fff; border-radius: 3px; font: inherit; cursor: pointer; padding: 2px 8px; }
 
 .findbar { margin: 6px 8px 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

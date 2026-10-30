@@ -112,18 +112,30 @@ const nodes: Record<string, NodeSpec> = {
     inline: true,
     group: 'inline',
     draggable: true,
-    attrs: { src: {}, alt: { default: '' }, width: { default: null }, height: { default: null } },
+    /** `crop` — обрезка рисунка, доли от исходного размера: [слева, сверху, справа, снизу] (как a:srcRect в docx). */
+    attrs: { src: {}, alt: { default: '' }, width: { default: null }, height: { default: null }, crop: { default: null } },
     parseDOM: [{
       tag: 'img[src]',
       getAttrs: (d) => {
         const el = d as HTMLElement;
-        return { src: el.getAttribute('src'), alt: el.getAttribute('alt') ?? '', width: parseFloat(el.getAttribute('width') ?? '') || null, height: parseFloat(el.getAttribute('height') ?? '') || null };
+        const crop = (el.getAttribute('data-crop') ?? '').split(',').map(Number);
+        return {
+          src: el.getAttribute('src'), alt: el.getAttribute('alt') ?? '', width: parseFloat(el.getAttribute('width') ?? '') || null, height: parseFloat(el.getAttribute('height') ?? '') || null,
+          crop: crop.length === 4 && crop.every((x) => Number.isFinite(x)) ? crop : null,
+        };
       },
     }],
     toDOM: (n) => {
       const a: Record<string, string> = { src: n.attrs.src, alt: n.attrs.alt };
       if (n.attrs.width) a.width = String(Math.round(n.attrs.width));
       if (n.attrs.height) a.height = String(Math.round(n.attrs.height));
+      const c = n.attrs.crop as number[] | null;
+      if (c && c.some((x) => x > 0)) {
+        // Обрезка: окно просмотра по исходной картинке (object-view-box), размер рамки — как в документе.
+        const pc = c.map((x) => `${(x * 100).toFixed(3)}%`);
+        a['data-crop'] = c.map((x) => x.toFixed(5)).join(',');
+        a.style = `${n.attrs.width && n.attrs.height ? `width:${Math.round(n.attrs.width)}px;aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)};height:auto;` : ''}object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`;
+      }
       return ['img', a];
     },
   },

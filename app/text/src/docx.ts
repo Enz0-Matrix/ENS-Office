@@ -313,6 +313,9 @@ function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mar
   const cx = num(extent?.getAttribute('cx') ?? null);
   const cy = num(extent?.getAttribute('cy') ?? null);
   const docPr = descendants(el, 'docPr')[0];
+  // Обрезка рисунка: a:srcRect l/t/r/b — тысячные доли процента от исходной картинки; отрицательные (поля вокруг) не поддерживаем.
+  const sr = descendants(el, 'srcRect')[0];
+  const crop = sr ? (['l', 't', 'r', 'b'] as const).map((k) => Math.max(0, (num(sr.getAttribute(k)) ?? 0) / 100000)) : null;
   const isAnchor = !!descendants(el, 'anchor').length;
   if (isAnchor) lose(ctx, 'обтекание изображений (изображения стали строчными)');
   acc.nodes.push(schema.nodes.image.create({
@@ -320,6 +323,7 @@ function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mar
     alt: docPr?.getAttribute('descr') ?? '',
     width: cx ? Math.round(cx / 9525) : null,
     height: cy ? Math.round(cy / 9525) : null,
+    crop: crop && crop.some((x) => x > 0) && crop[0] + crop[2] < 1 && crop[1] + crop[3] < 1 ? crop : null,
   }, null, marks));
 }
 
@@ -817,6 +821,12 @@ function rPrXml(marks: readonly Mark[], link: boolean): string {
   return x ? `<w:rPr>${x}</w:rPr>` : '';
 }
 
+function cropXml(c: number[] | null): string {
+  if (!c || !c.some((x) => x > 0)) return '';
+  const [l, t, r, b] = c.map((x) => Math.round(x * 100000));
+  return `<a:srcRect l="${l}" t="${t}" r="${r}" b="${b}"/>`;
+}
+
 function imageXml(ctx: ExportCtx, node: PMNode): string {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(node.attrs.src as string);
   if (!m) return '';
@@ -835,7 +845,7 @@ function imageXml(ctx: ExportCtx, node: PMNode): string {
     '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>' +
     '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>' +
     `<pic:nvPicPr><pic:cNvPr id="${n}" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr>` +
-    `<pic:blipFill><a:blip r:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:blipFill><a:blip r:embed="${id}"/>${cropXml(node.attrs.crop as number[] | null)}<a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
     `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
     '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
 }
