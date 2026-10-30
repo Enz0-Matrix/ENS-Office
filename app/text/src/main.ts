@@ -49,6 +49,8 @@ import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
+import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
+import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
   addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, isCropMode, replaceImage, resetImageSize,
   scaleImage, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
@@ -351,6 +353,7 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   paintHf(pages, list);
   updatePageStatus(pages);
   layoutFloats();
+  updateRuler();
 }
 
 /** Плавающие рисунки основного текста: положение считается после вёрстки страниц и после каждой правки. */
@@ -413,6 +416,7 @@ function setZoom(z: number): void {
   ($('sheet-wrap').style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
   updateOverlay();
+  updateRuler();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -464,9 +468,23 @@ const view = new EditorView($('sheet'), {
 let statsTimer = 0;
 let recoveryTimer = 0;
 
+/** Выделен ли рисунок: лента сама показывает вкладку «Рисунок», а когда рисунок отпущен, возвращается к «Главной». */
+let imageTabOn = false;
+function syncImageTab(): void {
+  const on = !!imgSelected() && !hfSession;
+  if (on === imageTabOn) return;
+  imageTabOn = on;
+  const active = document.querySelector('#tabs .tab.active')?.textContent;
+  const click = (name: string) => document.querySelectorAll<HTMLButtonElement>('#tabs .tab').forEach((t) => { if (t.textContent === name) t.click(); });
+  if (on && active === 'Главная') click('Рисунок');
+  else if (!on && active === 'Рисунок') click('Главная');
+}
+
 function afterChange(docChanged: boolean): void {
   updateUi();
   updateOverlay();
+  updateRuler();
+  syncImageTab();
   renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
     layoutFloats();
@@ -586,6 +604,14 @@ register(
   { id: 'table.merge', label: 'Объединить ячейки', run: () => dispatchCmd(mergeCells) },
   { id: 'table.split', label: 'Разделить ячейку', run: () => dispatchCmd(splitCell) },
   { id: 'table.borders', label: 'Границы таблицы', run: () => toggleBorders() },
+  { id: 'table.borderDialog', label: 'Границы и заливка…', keywords: ['таблица', 'границы', 'заливка', 'линии', 'цвет ячейки'], run: () => bordersDialog(() => view) },
+  { id: 'table.props', label: 'Свойства таблицы…', keywords: ['таблица', 'ширина столбцов', 'высота строки', 'положение таблицы'], run: () => tablePropsDialog(() => view, () => (curPage().w - curPage().left - curPage().right) * PX) },
+  { id: 'table.equalCols', label: 'Выровнять ширину столбцов', keywords: ['таблица', 'столбцы'], run: () => equalColumns(view) },
+  { id: 'table.equalRows', label: 'Выровнять высоту строк', keywords: ['таблица', 'строки'], run: () => equalRows(view) },
+  { id: 'table.fit', label: 'Таблица по ширине текста', keywords: ['таблица', 'по ширине'], run: () => fitTable(view, (curPage().w - curPage().left - curPage().right) * PX) },
+  { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
+  { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
   { id: 'image.format', label: 'Формат рисунка…', keywords: ['рисунок', 'размер', 'обрезка', 'положение', 'описание', 'логотип'], run: () => void imageDialog() },
   { id: 'image.grow', label: 'Рисунок крупнее на 10%', keywords: ['рисунок', 'увеличить'], run: () => scaleImage(1.1) },
   { id: 'image.shrink', label: 'Рисунок мельче на 10%', keywords: ['рисунок', 'уменьшить'], run: () => scaleImage(1 / 1.1) },
@@ -1045,8 +1071,25 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'table.merge', icon: 'merge', label: 'Объединить' },
           { type: 'large', command: 'table.split', icon: 'cell_split', label: 'Разделить' },
-          { type: 'large', command: 'table.borders', icon: 'border_all', label: 'Границы' },
           { type: 'large', command: 'table.delete', icon: 'eraser', label: 'Удалить таблицу' },
+        ],
+      },
+      {
+        name: 'Оформление',
+        items: [
+          { type: 'large', command: 'table.borders', icon: 'border_all', label: 'Границы вкл/выкл' },
+          { type: 'large', command: 'table.borderDialog', icon: 'paint_brush', label: 'Границы и заливка' },
+          { type: 'select', command: 'table.valign', width: 170, options: [{ value: '', label: 'Текст в ячейке по высоте…' }, { value: 'top', label: 'Вверху' }, { value: 'middle', label: 'По центру' }, { value: 'bottom', label: 'Внизу' }] },
+          { type: 'medium', command: 'table.fillClear', icon: 'eraser', label: 'Убрать заливку' },
+        ],
+      },
+      {
+        name: 'Размер',
+        items: [
+          { type: 'large', command: 'table.props', icon: 'grid', label: 'Свойства таблицы' },
+          { type: 'large', command: 'table.equalCols', icon: 'col_add', label: 'Выровнять столбцы' },
+          { type: 'large', command: 'table.equalRows', icon: 'row_add', label: 'Выровнять строки' },
+          { type: 'large', command: 'table.fit', icon: 'arrow_autofit_width', label: 'По ширине текста' },
         ],
       },
     ],
@@ -1112,7 +1155,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.zoomReset', icon: 'document_text', label: '100%' },
         ],
       },
-      { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }] },
+      { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }, { type: 'large', command: 'view.ruler', icon: 'grid', label: 'Линейка' }] },
     ],
   },
 ];
@@ -1126,7 +1169,7 @@ function setSelect(cmd: string, value: string): void {
   sel.value = value;
 }
 
-const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete']);
+const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.fillClear']);
 
 const NIGHT_KEY = 'ens-text.night';
 let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
@@ -1790,6 +1833,10 @@ $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
 document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
+initRuler({
+  view: () => view, papers: () => $('papers'), zoom: () => zoom, pageIndex: () => Math.max(0, currentPage() - 1), page: () => curPage(),
+  changePage: (next) => changePage(next), locked: () => !!hfSession,
+});
 initImageTools({
   view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,

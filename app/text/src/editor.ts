@@ -545,13 +545,22 @@ const focusPlugin = new Plugin<boolean>({
 class BorderTableView extends TableView {
   constructor(node: PMNode, cellMinWidth: number) {
     super(node, cellMinWidth);
-    this.table.className = node.attrs.borders ? 'bordered' : 'plain';
+    this.look(node);
   }
 
   update(node: PMNode): boolean {
     const ok = super.update(node);
-    if (ok) this.table.className = node.attrs.borders ? 'bordered' : 'plain';
+    if (ok) this.look(node);
     return ok;
+  }
+
+  /** Границы и положение на странице (после изменения ширины плагином столбцов стиль таблицы не трогаем: только поля). */
+  private look(node: PMNode): void {
+    this.table.className = node.attrs.borders ? 'bordered' : 'plain';
+    const a = node.attrs.align as string | null;
+    this.table.style.marginLeft = !a || a === 'left' ? '' : 'auto';
+    this.table.style.marginRight = !a || a === 'right' ? '' : 'auto';
+    if (a === 'right') this.table.style.marginRight = '0';
   }
 }
 

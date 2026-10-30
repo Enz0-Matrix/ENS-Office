@@ -13,6 +13,8 @@ export interface ParaAttrs {
   indent: number | null;
   /** Отступ первой строки, pt (отрицательный — выступ). */
   first: number | null;
+  /** Отступ справа, pt. */
+  rindent: number | null;
   before: number | null;
   after: number | null;
   /** Межстрочный интервал: множитель (1, 1.15, 1.5, 2). */
@@ -24,6 +26,7 @@ const paraAttrs = {
   align: { default: null },
   indent: { default: null },
   first: { default: null },
+  rindent: { default: null },
   before: { default: null },
   after: { default: null },
   line: { default: null },
@@ -37,6 +40,7 @@ function paraStyle(a: ParaAttrs): string {
   if (a.align) s.push(`text-align:${a.align}`);
   if (a.indent) s.push(`margin-left:${a.indent}pt`);
   if (a.first) s.push(`text-indent:${a.first}pt`);
+  if (a.rindent) s.push(`margin-right:${a.rindent}pt`);
   if (a.before != null) s.push(`margin-top:${a.before}pt`);
   if (a.after != null) s.push(`margin-bottom:${a.after}pt`);
   // Одинарный интервал Word — естественная высота строки шрифта; остальные кратны ей (~1,15 кегля).
@@ -68,6 +72,7 @@ function parseParaAttrs(el: HTMLElement): Partial<ParaAttrs> {
     align: ['left', 'center', 'right', 'justify'].includes(align as string) ? align : null,
     indent: st.marginLeft ? pt(st.marginLeft) : null,
     first: st.textIndent ? pt(st.textIndent) : null,
+    rindent: st.marginRight ? pt(st.marginRight) : null,
   };
 }
 
@@ -195,15 +200,45 @@ const nodes: Record<string, NodeSpec> = {
         getFromDOM: (d) => (d as HTMLElement).style.backgroundColor || null,
         setDOMAttr: (v, attrs) => { if (v) attrs.style = `${attrs.style ?? ''};background-color:${v}`; },
       },
+      /** Вертикальное выравнивание текста в ячейке: top, middle, bottom. */
+      valign: {
+        default: null,
+        getFromDOM: (d) => { const v = (d as HTMLElement).style.verticalAlign; return v === 'middle' || v === 'bottom' ? v : null; },
+        setDOMAttr: (v, attrs) => { if (v) attrs.style = `${attrs.style ?? ''};vertical-align:${v}`; },
+      },
+      /** Границы ячейки: { t, r, b, l }, каждая { w (pt), c (цвет), s (solid, dashed, dotted, double, none) } или null — как у таблицы. */
+      borders: {
+        default: null,
+        getFromDOM: (d) => { try { return JSON.parse((d as HTMLElement).getAttribute('data-borders') ?? 'null'); } catch { return null; } },
+        setDOMAttr: (v, attrs) => { if (v) { attrs['data-borders'] = JSON.stringify(v); attrs.style = `${attrs.style ?? ''};${cellBorderCss(v as CellBorders)}`; } },
+      },
     },
   }),
+};
+
+export const tableAlignCss = (a: string): string => (a === 'center' ? 'margin-left:auto;margin-right:auto' : a === 'right' ? 'margin-left:auto;margin-right:0' : 'margin-left:0;margin-right:auto');
+
+/** Граница одной стороны ячейки. */
+export interface Edge { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' | 'none' }
+export interface CellBorders { t: Edge | null; r: Edge | null; b: Edge | null; l: Edge | null }
+
+const edgeCss = (side: string, e: Edge | null): string => (!e ? '' : e.s === 'none' ? `border-${side}:hidden` : `border-${side}:${e.w}pt ${e.s} ${e.c}`);
+/** CSS границ ячейки; «нет границы» — hidden, чтобы сосед не рисовал свою на общей линии. */
+export const cellBorderCss = (b: CellBorders): string => [edgeCss('top', b.t), edgeCss('right', b.r), edgeCss('bottom', b.b), edgeCss('left', b.l)].filter(Boolean).join(';');
+
+nodes.table_row = {
+  ...nodes.table_row,
+  attrs: { height: { default: null } },
+  parseDOM: [{ tag: 'tr', getAttrs: (d) => { const m = /^([\d.]+)pt$/.exec((d as HTMLElement).style.height); return { height: m ? parseFloat(m[1]) : null }; } }],
+  toDOM: (n) => (n.attrs.height ? ['tr', { style: `height:${n.attrs.height}pt` }, 0] : ['tr', 0]),
 };
 
 // Таблица: признак «с границами» (стиль «Сетка таблицы» в docx).
 nodes.table = {
   ...nodes.table,
-  attrs: { borders: { default: true } },
-  toDOM: (n) => ['table', { class: n.attrs.borders ? 'bordered' : 'plain' }, ['tbody', 0]],
+  /** align — положение таблицы на странице (left, center, right), если она уже полосы текста. */
+  attrs: { borders: { default: true }, align: { default: null } },
+  toDOM: (n) => ['table', { class: n.attrs.borders ? 'bordered' : 'plain', ...(n.attrs.align ? { style: tableAlignCss(n.attrs.align as string) } : {}) }, ['tbody', 0]],
 };
 
 /** Выделение «Основной текст» не нужно: текст без шрифта наследует шрифт документа. */

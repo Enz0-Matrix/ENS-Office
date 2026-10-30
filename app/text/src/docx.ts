@@ -10,6 +10,7 @@ import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
+import type { CellBorders, Edge } from './schema';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
@@ -88,7 +89,7 @@ let themeFonts: { minor: string; major: string } = { minor: '', major: '' };
 
 interface RFmt { b?: boolean; i?: boolean; u?: boolean; s?: boolean; sup?: boolean; sub?: boolean; font?: string; size?: number; color?: string; bg?: string }
 interface PFmt {
-  align?: 'left' | 'center' | 'right' | 'justify'; left?: number; first?: number; before?: number; after?: number; line?: number;
+  align?: 'left' | 'center' | 'right' | 'justify'; left?: number; right?: number; first?: number; before?: number; after?: number; line?: number;
   pageBreakBefore?: boolean; numId?: number; ilvl?: number; styleId?: string;
 }
 interface StyleInfo { id: string; name: string; type: string; basedOn?: string; isDefault: boolean; p: PFmt; r: RFmt }
@@ -129,6 +130,8 @@ function parsePPr(pPr: Element | undefined): PFmt {
   if (ind) {
     const left = num(attr(ind, 'left') ?? attr(ind, 'start'));
     if (left != null) f.left = left / 20;
+    const right = num(attr(ind, 'right') ?? attr(ind, 'end'));
+    if (right != null) f.right = right / 20;
     const first = num(attr(ind, 'firstLine'));
     const hang = num(attr(ind, 'hanging'));
     if (hang) f.first = -hang / 20;
@@ -543,6 +546,7 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
       align: para.align && para.align !== 'left' ? para.align : null,
       indent: !info && para.left ? para.left : null,
       first: !info && para.first ? para.first : null,
+      rindent: !info && para.right ? para.right : null,
       before: para.before != null && para.before !== d.before ? para.before : null,
       after: para.after != null && para.after !== d.after ? para.after : null,
       line: para.line && para.line !== d.line ? para.line : null,
@@ -618,24 +622,34 @@ function assemble(entries: Entry[]): PMNode[] {
   return out;
 }
 
-function tableHasBorders(ctx: Ctx, tbl: Element): boolean {
-  const pr = kid(tbl, 'tblPr');
-  const b = kid(pr, 'tblBorders');
-  if (b) return kids(b).some((s) => !['nil', 'none'].includes(attr(s, 'val') ?? 'none'));
-  const style = attr(kid(pr, 'tblStyle'), 'val');
-  const name = style ? ctx.styles.get(style)?.name ?? style : '';
-  if (/grid|сетка/i.test(name) || /grid|сетка/i.test(style ?? '')) return true;
-  return descendants(tbl, 'tcBorders').length > 0;
+
+const NO_EDGE: Edge = { w: 0, c: '#000000', s: 'none' };
+
+/** w:top / w:left… → граница; none и nil — «границы нет». */
+function parseEdge(e: Element | undefined): Edge | null | undefined {
+  if (!e) return undefined;
+  const val = attr(e, 'val') ?? 'none';
+  if (val === 'none' || val === 'nil') return NO_EDGE;
+  const sz = num(attr(e, 'sz')) ?? 4;
+  const color = attr(e, 'color');
+  const s: Edge['s'] = /dash/i.test(val) ? 'dashed' : /dot/i.test(val) ? 'dotted' : val === 'double' ? 'double' : 'solid';
+  return { w: Math.max(0.25, Math.round((sz / 8) * 100) / 100), c: color && color !== 'auto' && /^[0-9a-f]{6}$/i.test(color) ? `#${color.toUpperCase()}` : '#000000', s };
 }
+
+const isDefaultEdge = (e: Edge | null | undefined): boolean => !!e && e.s === 'solid' && e.c === '#000000' && e.w >= 0.25 && e.w <= 1;
 
 function parseTable(ctx: Ctx, tbl: Element): PMNode {
   const grid = kids(kid(tbl, 'tblGrid'), 'gridCol').map((c) => (num(attr(c, 'w')) ?? 0) / 15);
-  interface CellB { span: number; rowspan: number; widths: number[] | null; bg: string | null; content: PMNode[] }
+  interface CellB { col: number; span: number; rowspan: number; widths: number[] | null; bg: string | null; content: PMNode[]; tc: Element; valign: string | null }
   const rows: CellB[][] = [];
+  const rowH: (number | null)[] = [];
   const active: (CellB | null)[] = [];
   for (const tr of kids(tbl, 'tr')) {
     const cells: CellB[] = [];
     let g = 0;
+    const th = kid(kid(tr, 'trPr'), 'trHeight');
+    const hv = num(attr(th, 'val'));
+    rowH.push(hv ? hv / 20 : null);
     for (const tc of kids(tr, 'tc')) {
       const pr = kid(tc, 'tcPr');
       const span = Math.max(1, num(attr(kid(pr, 'gridSpan'), 'val')) ?? 1);
@@ -651,16 +665,51 @@ function parseTable(ctx: Ctx, tbl: Element): PMNode {
       if (!content.length) content = [schema.nodes.paragraph.create()];
       const widths = grid.length >= g + span ? grid.slice(g, g + span).map((w) => Math.round(w)) : null;
       const fill = attr(kid(pr, 'shd'), 'fill');
-      const cb: CellB = { span, rowspan: 1, widths: widths && widths.every((w) => w > 0) ? widths : null, bg: fill && fill !== 'auto' && /^[0-9a-f]{6}$/i.test(fill) ? `#${fill}` : null, content };
+      const va = attr(kid(pr, 'vAlign'), 'val');
+      const cb: CellB = { col: g, span, rowspan: 1, widths: widths && widths.every((w) => w > 0) ? widths : null, bg: fill && fill !== 'auto' && /^[0-9a-f]{6}$/i.test(fill) ? `#${fill}` : null, content, tc, valign: va === 'center' ? 'middle' : va === 'bottom' ? 'bottom' : null };
       cells.push(cb);
       for (let k = 0; k < span; k++) active[g + k] = restart ? cb : null;
       g += span;
     }
     rows.push(cells);
   }
-  const mk = () => schema.nodes.table.create({ borders: tableHasBorders(ctx, tbl) },
-    rows.map((cells) => schema.nodes.table_row.create(null, cells.map((c) =>
-      schema.nodes.table_cell.create({ colspan: c.span, rowspan: c.rowspan, colwidth: c.widths, background: c.bg }, c.content)))));
+
+  // Границы: из таблицы (w:tblBorders или стиль «Сетка») и из ячеек (w:tcBorders) — итог для каждой стороны каждой ячейки.
+  const pr = kid(tbl, 'tblPr');
+  const tb = kid(pr, 'tblBorders');
+  const style = attr(kid(pr, 'tblStyle'), 'val');
+  const styleName = style ? ctx.styles.get(style)?.name ?? style : '';
+  const gridStyle = /grid|сетка/i.test(styleName) || /grid|сетка/i.test(style ?? '');
+  const DEF: Edge = { w: 0.5, c: '#000000', s: 'solid' };
+  const tside = (n: string): Edge | null => { const e = parseEdge(tb ? kid(tb, n) : undefined); return e === undefined ? (tb ? null : gridStyle ? DEF : null) : e; };
+  const T = { top: tside('top'), left: tside('left') ?? tside('start'), bottom: tside('bottom'), right: tside('right') ?? tside('end'), insideH: tside('insideH'), insideV: tside('insideV') };
+  const cols = Math.max(...rows.map((r) => r.reduce((m, c) => Math.max(m, c.col + c.span), 0)), 1);
+  const eff = (c: CellB, r: number): CellBorders => {
+    const bo = kid(kid(c.tc, 'tcPr'), 'tcBorders');
+    const own = (n: string, alt: string): Edge | null | undefined => parseEdge(bo ? kid(bo, n) ?? kid(bo, alt) : undefined);
+    const norm = (e: Edge | null) => (!e || e.s === 'none' ? null : e);
+    const pick = (o: Edge | null | undefined, t: Edge | null) => (o === undefined ? norm(t) : norm(o));
+    return {
+      t: pick(own('top', 'top'), r === 0 ? T.top : T.insideH),
+      b: pick(own('bottom', 'bottom'), r + c.rowspan >= rows.length ? T.bottom : T.insideH),
+      l: pick(own('left', 'start'), c.col === 0 ? T.left : T.insideV),
+      r: pick(own('right', 'end'), c.col + c.span >= cols ? T.right : T.insideV),
+    };
+  };
+  const computed = rows.map((cells, r) => cells.map((c) => eff(c, r)));
+  const flat = computed.flat();
+  const allSides = flat.flatMap((b) => [b.t, b.b, b.l, b.r]);
+  const uniformDefault = allSides.length > 0 && allSides.every((e) => isDefaultEdge(e));
+  const none = allSides.every((e) => !e);
+  const jc = attr(kid(pr, 'jc'), 'val');
+  const align = jc === 'center' ? 'center' : jc === 'right' || jc === 'end' ? 'right' : null;
+  const edgeOrNone = (e: Edge | null): Edge => e ?? NO_EDGE;
+  const mk = () => schema.nodes.table.create({ borders: uniformDefault, align },
+    rows.map((cells, r) => schema.nodes.table_row.create({ height: rowH[r] }, cells.map((c, k) => {
+      const b = computed[r][k];
+      const explicit = !uniformDefault && !none ? { t: edgeOrNone(b.t), r: edgeOrNone(b.r), b: edgeOrNone(b.b), l: edgeOrNone(b.l) } : null;
+      return schema.nodes.table_cell.create({ colspan: c.span, rowspan: c.rowspan, colwidth: c.widths, background: c.bg, valign: c.valign, borders: explicit }, c.content);
+    }))));
   const t = mk();
   t.check();
   return t;
@@ -990,7 +1039,7 @@ function pPrXml(node: PMNode, extra: { num?: { id: number; level: number }; inde
       (a.line ? ` w:line="${Math.round(a.line * 240)}" w:lineRule="auto"` : '') + '/>';
   }
   const left = (a.indent ?? 0) + (extra.indentLeft ?? 0);
-  if (left || a.first) x += `<w:ind w:left="${tw(left)}"` + (a.first ? (a.first < 0 ? ` w:hanging="${tw(-a.first)}"` : ` w:firstLine="${tw(a.first)}"`) : '') + '/>';
+  if (left || a.first || a.rindent) x += `<w:ind w:left="${tw(left)}"` + (a.rindent ? ` w:right="${tw(a.rindent)}"` : '') + (a.first ? (a.first < 0 ? ` w:hanging="${tw(-a.first)}"` : ` w:firstLine="${tw(a.first)}"`) : '') + '/>';
   if (a.align) x += `<w:jc w:val="${a.align === 'justify' ? 'both' : a.align}"/>`;
   return x ? `<w:pPr>${x}</w:pPr>` : '';
 }
@@ -1078,10 +1127,15 @@ function tableXml(ctx: ExportCtx, table: PMNode): string {
   const borders = table.attrs.borders
     ? '<w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`).join('') + '</w:tblBorders>'
     : '';
-  let out = `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/>${borders}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>` +
+  const jcT = table.attrs.align ? `<w:jc w:val="${table.attrs.align}"/>` : '';
+  let out = `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/>${jcT}${borders}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>` +
     widths.map((w) => `<w:gridCol w:w="${w}"/>`).join('') + '</w:tblGrid>';
+  const edgeXml = (tag: string, e: Edge | null): string => (!e ? '' : e.s === 'none'
+    ? `<w:${tag} w:val="nil"/>`
+    : `<w:${tag} w:val="${e.s === 'solid' ? 'single' : e.s}" w:sz="${Math.max(2, Math.round(e.w * 8))}" w:space="0" w:color="${e.c.replace('#', '')}"/>`);
   for (let r = 0; r < map.height; r++) {
-    out += '<w:tr>';
+    const rowNode = table.child(r);
+    out += rowNode.attrs.height ? `<w:tr><w:trPr><w:trHeight w:val="${tw(rowNode.attrs.height as number)}" w:hRule="atLeast"/></w:trPr>` : '<w:tr>';
     for (let c = 0; c < map.width; c++) {
       const pos = map.map[r * map.width + c];
       const rect = map.findCell(pos);
@@ -1093,7 +1147,10 @@ function tableXml(ctx: ExportCtx, table: PMNode): string {
       let pr = `<w:tcW w:w="${w}" w:type="dxa"/>`;
       if (span > 1) pr += `<w:gridSpan w:val="${span}"/>`;
       if (rect.bottom - rect.top > 1) pr += cont ? '<w:vMerge/>' : '<w:vMerge w:val="restart"/>';
+      const cb = cell.attrs.borders as CellBorders | null;
+      if (cb) pr += `<w:tcBorders>${edgeXml('top', cb.t)}${edgeXml('left', cb.l)}${edgeXml('bottom', cb.b)}${edgeXml('right', cb.r)}</w:tcBorders>`;
       if (cell.attrs.background && !cont) pr += `<w:shd w:val="clear" w:color="auto" w:fill="${(cell.attrs.background as string).replace('#', '')}"/>`;
+      if (cell.attrs.valign) pr += `<w:vAlign w:val="${cell.attrs.valign === 'middle' ? 'center' : cell.attrs.valign}"/>`;
       let inner = '';
       if (!cont) inner = blocksXml(ctx, cell);
       if (!inner || !inner.endsWith('</w:p>')) inner += '<w:p/>';

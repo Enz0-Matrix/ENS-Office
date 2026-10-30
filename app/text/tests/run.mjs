@@ -1353,6 +1353,127 @@ await test('рисунки: ручки размера мышью, обрезка
   await p.evaluate(() => window.ens.run('image.align'));
 });
 
+await test('линейки: поля и отступы абзаца тянутся мышью, видны метки столбцов и строк таблицы', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый абзац для проверки отступов на линейке. '.repeat(4)), P('Второй абзац')]), E.getMeta(), 'ruler');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 5)));
+  });
+  await p.waitForTimeout(400);
+  await p.waitForSelector('#hr-inner svg line', { state: 'attached' });
+  await p.waitForSelector('#vr-inner svg line', { state: 'attached' });
+  const drag = async (sel, dx, dy) => {
+    const b = await (await p.$(sel)).boundingBox();
+    await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + dy, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForTimeout(250);
+  };
+  // левое поле: +1 см (≈38 px) → +28 pt
+  const left0 = await p.evaluate(() => window.ens.getMeta().page.left);
+  await drag('#hr-inner .rm >> nth=0', 38, 0);
+  const left1 = await p.evaluate(() => window.ens.getMeta().page.left);
+  ok(left1 - left0 > 25 && left1 - left0 < 32, `левое поле ${left0} → ${left1} pt`);
+  // верхнее поле: −0,5 см
+  const top0 = await p.evaluate(() => window.ens.getMeta().page.top);
+  await drag('#vr-inner .rm >> nth=0', 0, -19);
+  const top1 = await p.evaluate(() => window.ens.getMeta().page.top);
+  ok(top0 - top1 > 10 && top0 - top1 < 18, `верхнее поле ${top0} → ${top1} pt`);
+  // красная строка (первая строка) +1 см
+  const attrs = () => p.evaluate(() => { const n = window.ens.view.state.doc.child(0); return { indent: n.attrs.indent, first: n.attrs.first, rindent: n.attrs.rindent }; });
+  await drag('.ri-first', 38, 0);
+  let a = await attrs();
+  ok(a.first > 25 && a.first < 32 && !a.indent, `красная строка: ${JSON.stringify(a)}`);
+  // отступ слева (квадрат): абзац целиком +1 см, красная строка сохраняется
+  await drag('.ri-left', 38, 0);
+  a = await attrs();
+  ok(a.indent > 25 && a.indent < 32 && a.first > 25, `отступ слева: ${JSON.stringify(a)}`);
+  // выступ (нижний треугольник): первая строка остаётся на месте, остальные сдвигаются
+  const firstPos = a.indent + a.first;
+  await drag('.ri-hang', 19, 0);
+  a = await attrs();
+  ok(Math.abs(a.indent + a.first - firstPos) < 1.5 && a.indent > 38, `выступ: ${JSON.stringify(a)}`);
+  // отступ справа
+  await drag('.ri-right', -38, 0);
+  a = await attrs();
+  ok(a.rindent > 25, `отступ справа: ${JSON.stringify(a)}`);
+  const docx = await p.evaluate(() => { const E = window.ens; const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'r')); const n = b.doc.child(0); return { i: n.attrs.indent, f: n.attrs.first, r: n.attrs.rindent }; });
+  ok(docx.r > 25 && docx.i > 38, `отступы после docx: ${JSON.stringify(docx)}`);
+  // таблица: метки столбцов и строк, перетаскивание
+  await p.evaluate(() => window.ens.run('insert.table'));
+  await p.waitForSelector('.modal input');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(400);
+  await p.waitForSelector('.rc');
+  eq(await p.$$eval('.rc', (e) => e.length), 4, 'границы 3 столбцов');
+  ok((await p.$$eval('.rr', (e) => e.length)) >= 3, 'границы строк');
+  const widths = () => p.evaluate(() => { let w = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_row' && !w) w = n.content.content.map((c) => (c.attrs.colwidth ?? [null])[0]); }); return w; });
+  await drag('.rc >> nth=1', 40, 0);
+  const w1 = await widths();
+  ok(w1[0] > 0 && w1[1] > 0, `ширины после перетаскивания: ${JSON.stringify(w1)}`);
+  await drag('.rr >> nth=1', 0, 25);
+  const rh = await p.evaluate(() => { let h = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_row' && h == null) h = n.attrs.height; }); return h; });
+  ok(rh > 15, `высота первой строки: ${rh} pt`);
+});
+
+await test('таблица: границы и заливка, выравнивание, свойства; всё доживает до docx', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cell = (t) => s.nodes.table_cell.create({ colwidth: [150] }, s.nodes.paragraph.create(null, s.text(t)));
+    const row = (a, b) => s.nodes.table_row.create(null, [cell(a), cell(b)]);
+    const table = s.nodes.table.create({ borders: true }, [row('А1', 'Б1'), row('А2', 'Б2')]);
+    E.loadDoc(s.nodes.doc.create(null, [table, s.nodes.paragraph.create()]), E.getMeta(), 'tbl');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 4)));
+  });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.ens.run('table.borderDialog'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select >> nth=0', 'table');
+  // только внешние границы, пунктир 1 пт, красный; заливка
+  await p.click('.modal button:has-text("Внешние")');
+  await p.selectOption('.modal select >> nth=1', 'dashed');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(250);
+  const cells = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') out.push(n.attrs); }); return out; });
+  let c = await cells();
+  ok(c[0].borders && c[0].borders.t.s === 'dashed' && c[0].borders.l.s === 'dashed', `внешние границы A1: ${JSON.stringify(c[0].borders)}`);
+  ok(c[0].borders.r.s === 'solid' && c[0].borders.b.s === 'solid', 'внутренние границы остались прежними');
+  // заливка и выравнивание по вертикали
+  await p.evaluate(() => window.ens.run('table.borderDialog'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select >> nth=0', 'table');
+  await p.click('.modal button:has-text("Внутренние")');
+  await p.check('.modal label:has-text("залить") input');
+  await p.click('.modal button:has-text("Убрать границы")');
+  await p.waitForTimeout(250);
+  c = await cells();
+  ok(c[0].background && c[0].borders.r.s === 'none' && c[0].borders.t.s === 'dashed', `внутренние убраны, заливка есть: ${JSON.stringify(c[0])}`);
+  await p.evaluate(() => window.ens.run('table.valign'));
+  // свойства таблицы: по центру страницы, высота строки
+  await p.evaluate(() => window.ens.run('table.props'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select', 'center');
+  await p.fill('.modal input[placeholder="авто"]', '1');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(250);
+  const t = await p.evaluate(() => { let a = null, h = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table') a = n.attrs.align; if (n.type.name === 'table_row' && h == null) h = n.attrs.height; }); return { a, h }; });
+  ok(t.a === 'center' && Math.abs(t.h - 28.3) < 1, `свойства: ${JSON.stringify(t)}`);
+  // docx туда и обратно
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 't'));
+    const out = { cells: [], align: null, h: null };
+    d.doc.descendants((n) => { if (n.type.name === 'table_cell') out.cells.push(n.attrs); if (n.type.name === 'table') out.align = n.attrs.align; if (n.type.name === 'table_row' && out.h == null) out.h = n.attrs.height; });
+    return out;
+  });
+  ok(back.align === 'center' && Math.abs(back.h - 28.3) < 1, `положение и высота после docx: ${back.align}, ${back.h}`);
+  ok(back.cells[0].background && back.cells[0].borders && back.cells[0].borders.t.s === 'dashed' && back.cells[0].borders.r.s === 'none', `границы и заливка после docx: ${JSON.stringify(back.cells[0])}`);
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
