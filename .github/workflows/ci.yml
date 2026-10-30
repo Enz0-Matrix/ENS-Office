@@ -145,6 +145,59 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Проба: собирается ли ENS-Table под Android (docs/07-android.md). Только по
+  # кнопке Run workflow; apk отладочный (подписан стандартным ключом отладки
+  # Android), не для раздачи. Проект gen/android создаётся заново при каждом запуске.
+  android:
+    name: Сборка Android (проба)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Android NDK (уже стоит на сервере GitHub)
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          ls "$ANDROID_NDK_LATEST_HOME"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,aarch64-linux-android
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.126
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core/ironcalc -> target
+            app/table/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/table/package-lock.json
+      - name: Зависимости интерфейса
+        working-directory: app/table
+        run: npm ci
+      - name: Движок в WebAssembly
+        working-directory: app/table
+        run: npm run engine
+      - name: Проект Android (tauri android init)
+        working-directory: app/table
+        run: npm run tauri -- android init --ci
+      - name: Сборка apk (отладочная, arm64)
+        working-directory: app/table
+        run: npm run tauri -- android build --debug --apk --target aarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ens-table-android-probe
+          path: app/table/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
   text:
     name: ENS-Text (типы, сборка, тесты)
     runs-on: ubuntu-latest

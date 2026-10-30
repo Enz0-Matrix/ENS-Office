@@ -205,9 +205,20 @@ pub fn percent_decode(s: &str) -> Result<String, String> {
 
 #[cfg(feature = "tauri-shell")]
 pub(crate) fn body(request: &Request<'_>) -> Result<Vec<u8>, String> {
-    match request.body() {
-        InvokeBody::Raw(bytes) => Ok(bytes.clone()),
-        InvokeBody::Json(_) => Err("ожидались байты файла".into()),
+    bytes_of(request.body()).ok_or_else(|| "ожидались байты файла".into())
+}
+
+/// Байты из тела запроса. На Android Tauri передаёт запросы через postMessage,
+/// и Uint8Array приходит не «сырым», а JSON-массивом чисел.
+#[cfg(feature = "tauri-shell")]
+pub(crate) fn bytes_of(body: &InvokeBody) -> Option<Vec<u8>> {
+    match body {
+        InvokeBody::Raw(bytes) => Some(bytes.clone()),
+        InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect(),
+        InvokeBody::Json(_) => None,
     }
 }
 
@@ -269,6 +280,15 @@ pub fn save_atomic(path: &Path, data: &[u8], expected_modified: u64, force: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "tauri-shell")]
+    #[test]
+    fn bytes_from_raw_and_from_json_array() {
+        assert_eq!(bytes_of(&InvokeBody::Raw(vec![1, 2, 255])), Some(vec![1, 2, 255]));
+        assert_eq!(bytes_of(&InvokeBody::Json(serde_json::json!([80, 75, 3, 4]))), Some(vec![80, 75, 3, 4]));
+        assert_eq!(bytes_of(&InvokeBody::Json(serde_json::json!([1, 256]))), None);
+        assert_eq!(bytes_of(&InvokeBody::Json(serde_json::json!({"a": 1}))), None);
+    }
 
     #[test]
     fn atomic_save_keeps_original_on_failure_and_replaces_on_success() {

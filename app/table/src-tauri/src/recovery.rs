@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-shell")]
-use tauri::ipc::{InvokeBody, Request, Response};
+use tauri::ipc::{Request, Response};
 
 pub struct Recovery {
     pub root: Mutex<PathBuf>,
@@ -133,10 +133,7 @@ fn write_synced(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 #[cfg(feature = "tauri-shell")]
 fn raw(request: &Request<'_>) -> Result<Vec<u8>, String> {
-    match request.body() {
-        InvokeBody::Raw(b) => Ok(b.clone()),
-        InvokeBody::Json(_) => Err("ожидались байты".into()),
-    }
+    super::files::bytes_of(request.body()).ok_or_else(|| "ожидались байты".into())
 }
 
 #[cfg(feature = "tauri-shell")]
