@@ -134,12 +134,16 @@ const nodes: Record<string, NodeSpec> = {
       if (n.attrs.width) a.width = String(Math.round(n.attrs.width));
       if (n.attrs.height) a.height = String(Math.round(n.attrs.height));
       const c = n.attrs.crop as number[] | null;
+      // Размер из документа: ширина и пропорции (aspect-ratio) — рисунок можно растянуть, а при сжатии до ширины страницы пропорции остаются.
+      const st: string[] = [];
+      if (n.attrs.width && n.attrs.height) st.push(`width:${Math.round(n.attrs.width)}px`, `aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)}`, 'height:auto');
       if (c && c.some((x) => x > 0)) {
         // Обрезка: окно просмотра по исходной картинке (object-view-box), размер рамки — как в документе.
         const pc = c.map((x) => `${(x * 100).toFixed(3)}%`);
         a['data-crop'] = c.map((x) => x.toFixed(5)).join(',');
-        a.style = `${n.attrs.width && n.attrs.height ? `width:${Math.round(n.attrs.width)}px;aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)};height:auto;` : ''}object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`;
+        st.push(`object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`);
       }
+      if (st.length) a.style = st.join(';');
       const fl = n.attrs.float as Float | null;
       if (fl) {
         a['data-float'] = JSON.stringify(fl);

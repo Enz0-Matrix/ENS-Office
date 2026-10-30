@@ -275,3 +275,18 @@
 .ProseMirror img.fl-wrap { position: static; }
 .paper .hf { isolation: isolate; }
 .hf-edit img.fl { position: static !important; float: none !important; margin: 0 !important; }
+
+/* Рисунок выделен: рамка с ручками размера и обрезки (images-ui.ts) */
+.img-ov { position: absolute; z-index: 6; pointer-events: none; outline: 1px solid var(--accent, #2b579a); }
+.img-ov[hidden] { display: none; }
+.img-ov.crop { outline: 2px dashed #e69500; }
+.img-ov-body { position: absolute; inset: 0; pointer-events: none; }
+.img-ov.abs .img-ov-body { pointer-events: auto; cursor: move; }
+.img-h { position: absolute; width: 9px; height: 9px; background: #fff; border: 1px solid var(--accent, #2b579a); box-sizing: border-box; pointer-events: auto; }
+.img-ov.crop .img-h { background: #222; border-color: #fff; }
+.img-h-nw { left: -5px; top: -5px; cursor: nwse-resize; } .img-h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.img-h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; } .img-h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.img-h-n { left: 50%; top: -5px; margin-left: -4px; cursor: ns-resize; } .img-h-s { left: 50%; bottom: -5px; margin-left: -4px; cursor: ns-resize; }
+.img-h-w { top: 50%; left: -5px; margin-top: -4px; cursor: ew-resize; } .img-h-e { top: 50%; right: -5px; margin-top: -4px; cursor: ew-resize; }
+.img-crop-fields input { width: 54px; }
+@media print { .img-ov { display: none; } }

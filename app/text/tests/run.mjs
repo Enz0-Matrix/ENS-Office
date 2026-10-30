@@ -1275,6 +1275,84 @@ await test('обтекание рисунка из ленты: в тексте, 
   eq(await p.$$eval('.ProseMirror img.fl', (e) => e.length), 0, 'снова в тексте');
 });
 
+await test('рисунки: ручки размера мышью, обрезка, окно «Формат», подпись, перетаскивание плавающего', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  const setup = (float) => p.evaluate(({ png, float }) => {
+    const E = window.ens, s = E.schema;
+    const img = s.nodes.image.create({ src: png, width: 120, height: 80, float });
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Строка '), img, s.text(' текста')]), s.nodes.paragraph.create(null, s.text('Вторая строка'))]), E.getMeta(), 'img');
+  }, { png: PNG, float });
+  const attrs = () => p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') a = n.attrs; }); return a; });
+  await setup(null);
+  await p.waitForTimeout(300);
+  // щелчок выделяет рисунок, появляются ручки
+  const box = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await p.waitForSelector('.img-ov:not([hidden]) .img-h-se');
+  // угловая ручка сохраняет пропорции
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x + 64, se.y + 14, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  let a = await attrs();
+  ok(a.width > 160 && Math.abs(a.width / a.height - 1.5) < 0.05, `угол: размер ${a.width}×${a.height}, пропорции 3:2`);
+  // боковая ручка меняет только ширину
+  const e = await (await p.$('.img-h-e')).boundingBox();
+  await p.mouse.move(e.x + 4, e.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(e.x + 44, e.y + 4, { steps: 4 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const a2 = await attrs();
+  ok(a2.width > a.width + 30 && a2.height === a.height, `край: ширина ${a.width}→${a2.width}, высота ${a2.height}`);
+  // обрезка слева
+  await p.evaluate(() => window.ens.run('image.crop'));
+  const w = await (await p.$('.img-h-w')).boundingBox();
+  await p.mouse.move(w.x + 4, w.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(w.x + 44, w.y + 4, { steps: 4 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const a3 = await attrs();
+  ok(a3.crop && a3.crop[0] > 0.1 && a3.width < a2.width - 30, `обрезка: ${JSON.stringify(a3.crop)}, ширина ${a3.width}`);
+  await p.evaluate(() => window.ens.run('image.crop'));
+  await p.evaluate(() => window.ens.run('image.cropReset'));
+  await p.waitForTimeout(100);
+  eq((await attrs()).crop, null, 'обрезка убрана');
+  // окно «Формат рисунка»: ширина 5 см с сохранением пропорций
+  await p.evaluate(() => window.ens.run('image.format'));
+  await p.waitForSelector('.modal');
+  await p.fill('.modal .dlg-row:has-text("Ширина") input[type=text]', '5');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(200);
+  a = await attrs();
+  ok(Math.abs(a.width - 189) <= 2, `5 см ≈ 189 px: ${a.width}`);
+  // подпись
+  await p.evaluate(() => window.ens.run('image.caption'));
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('Рисунок 1 — '), 'подпись добавлена');
+  // плавающий рисунок: Alt+щелчок выбирает, перетаскивание меняет положение
+  await setup({ mode: 'behind', hRel: 'page', hOff: 200, hAlign: null, vRel: 'page', vOff: 300, vAlign: null, dist: [0, 0, 8, 8] });
+  await p.waitForTimeout(400);
+  const fb = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  await p.keyboard.down('Alt');
+  await p.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await p.keyboard.up('Alt');
+  await p.waitForSelector('.img-ov.abs:not([hidden])');
+  const body = await (await p.$('.img-ov-body')).boundingBox();
+  const before = await attrs();
+  await p.mouse.move(body.x + 20, body.y + 20);
+  await p.mouse.down();
+  await p.mouse.move(body.x + 80, body.y + 50, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(300);
+  const moved = await attrs();
+  ok(moved.float.hOff - before.float.hOff >= 50 && moved.float.vOff - before.float.vOff >= 25, `перетащили: ${before.float.hOff},${before.float.vOff} → ${moved.float.hOff},${moved.float.vOff}`);
+  await p.evaluate(() => window.ens.run('image.align'));
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

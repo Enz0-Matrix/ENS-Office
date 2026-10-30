@@ -49,6 +49,10 @@ import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
+import {
+  addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, isCropMode, replaceImage, resetImageSize,
+  scaleImage, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
+} from './images-ui';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -357,6 +361,7 @@ function layoutFloats(): void {
     const dom = view.dom as HTMLElement;
     const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
     placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale });
+    updateOverlay();
   });
 }
 
@@ -407,6 +412,7 @@ function setZoom(z: number): void {
   zoom = Math.min(3, Math.max(0.3, Math.round(z * 10) / 10));
   ($('sheet-wrap').style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
+  updateOverlay();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -460,6 +466,7 @@ let recoveryTimer = 0;
 
 function afterChange(docChanged: boolean): void {
   updateUi();
+  updateOverlay();
   renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
     layoutFloats();
@@ -579,6 +586,20 @@ register(
   { id: 'table.merge', label: 'Объединить ячейки', run: () => dispatchCmd(mergeCells) },
   { id: 'table.split', label: 'Разделить ячейку', run: () => dispatchCmd(splitCell) },
   { id: 'table.borders', label: 'Границы таблицы', run: () => toggleBorders() },
+  { id: 'image.format', label: 'Формат рисунка…', keywords: ['рисунок', 'размер', 'обрезка', 'положение', 'описание', 'логотип'], run: () => void imageDialog() },
+  { id: 'image.grow', label: 'Рисунок крупнее на 10%', keywords: ['рисунок', 'увеличить'], run: () => scaleImage(1.1) },
+  { id: 'image.shrink', label: 'Рисунок мельче на 10%', keywords: ['рисунок', 'уменьшить'], run: () => scaleImage(1 / 1.1) },
+  { id: 'image.reset', label: 'Исходный размер рисунка', keywords: ['рисунок', 'сбросить размер'], run: () => void resetImageSize() },
+  { id: 'image.fit', label: 'Рисунок по ширине текста', keywords: ['рисунок', 'по ширине', 'вписать'], run: () => fitImageWidth() },
+  { id: 'image.crop', label: 'Обрезка рисунка', keywords: ['рисунок', 'обрезка', 'кадрировать'], checked: () => isCropMode(), run: () => setCropMode(!isCropMode()) },
+  { id: 'image.cropReset', label: 'Убрать обрезку', keywords: ['рисунок', 'обрезка', 'сбросить'], run: () => clearCrop() },
+  { id: 'image.next', label: 'Следующий рисунок', keywords: ['рисунок', 'выбрать', 'перейти'], run: () => selectNextImage() },
+  { id: 'image.front', label: 'Рисунок на передний план', keywords: ['рисунок', 'перед текстом'], run: () => arrangeImage(true) },
+  { id: 'image.back', label: 'Рисунок на задний план', keywords: ['рисунок', 'за текстом'], run: () => arrangeImage(false) },
+  { id: 'image.align', label: 'Выровнять рисунок на странице', keywords: ['рисунок', 'выровнять'], run: (v) => { if (v) alignImage(v); setSelect('image.align', ''); } },
+  { id: 'image.replace', label: 'Заменить рисунок…', keywords: ['рисунок', 'заменить'], run: () => replaceImage() },
+  { id: 'image.caption', label: 'Подпись к рисунку', keywords: ['рисунок', 'подпись', 'название'], run: () => addCaption() },
+  { id: 'image.delete', label: 'Удалить рисунок', keywords: ['рисунок', 'удалить'], run: () => deleteImage() },
   { id: 'image.wrap', label: 'Обтекание рисунка', keywords: ['рисунок', 'логотип', 'за текстом', 'перед текстом', 'обтекание', 'в тексте'], run: (v) => setImageWrap(v ?? 'inline') },
   { id: 'page.size', label: 'Размер страницы', run: (v) => setPageSize(v ?? 'a4') },
   { id: 'page.orientation', label: 'Ориентация', run: (v) => setOrientation(v === 'landscape') },
@@ -1031,6 +1052,56 @@ const TABS: RibbonTab[] = [
     ],
   },
   {
+    id: 'picture', label: 'Рисунок',
+    groups: [
+      {
+        name: 'Выбор',
+        items: [
+          { type: 'large', command: 'image.next', icon: 'image', label: 'Следующий рисунок' },
+          { type: 'large', command: 'image.format', icon: 'resize_image', label: 'Формат рисунка' },
+        ],
+      },
+      {
+        name: 'Размер',
+        items: [
+          { type: 'medium', command: 'image.grow', icon: 'arrow_maximize' },
+          { type: 'medium', command: 'image.shrink', icon: 'arrow_minimize' },
+          { type: 'medium', command: 'image.reset', icon: 'image_arrow_counterclockwise' },
+          { type: 'medium', command: 'image.fit', icon: 'arrow_autofit_width' },
+        ],
+      },
+      {
+        name: 'Обрезка',
+        items: [
+          { type: 'large', command: 'image.crop', icon: 'crop', label: 'Обрезка' },
+          { type: 'large', command: 'image.cropReset', icon: 'eraser', label: 'Убрать обрезку' },
+        ],
+      },
+      {
+        name: 'Положение',
+        items: [
+          { type: 'select', command: 'image.wrap', width: 170, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] },
+          { type: 'select', command: 'image.align', width: 170, options: [{ value: '', label: 'Выровнять на странице…' }, { value: 'left', label: 'По левому краю' }, { value: 'center', label: 'По центру' }, { value: 'right', label: 'По правому краю' }, { value: 'top', label: 'Вверху' }, { value: 'middle', label: 'Посередине по высоте' }, { value: 'bottom', label: 'Внизу' }] },
+        ],
+      },
+      {
+        name: 'Порядок',
+        items: [
+          { type: 'medium', command: 'image.front', icon: 'position_to_front' },
+          { type: 'medium', command: 'image.back', icon: 'position_to_back' },
+        ],
+      },
+      {
+        name: 'Рисунок',
+        items: [
+          { type: 'large', command: 'image.replace', icon: 'image_edit', label: 'Заменить' },
+          { type: 'large', command: 'image.caption', icon: 'text_font', label: 'Подпись' },
+          { type: 'large', command: 'image.delete', icon: 'delete', label: 'Удалить' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'view', label: 'Вид',
     groups: [
       {
@@ -1094,7 +1165,7 @@ function updateUi(): void {
   setSelect('page.orientation', curPage().w > curPage().h ? 'landscape' : 'portrait');
   setSelect('ver.reminder', String(settings.saveReminderMinutes));
   setSelect('list.scheme', presetOf(currentScheme()) === 'custom' ? '' : presetOf(currentScheme()) === 'simple' ? '' : presetOf(currentScheme()));
-  const imgSel = selectedImage();
+  const imgSel = imgSelected();
   const fl = imgSel?.node.attrs.float as Float | null | undefined;
   setSelect('image.wrap', !imgSel ? '' : !fl ? 'inline' : fl.mode === 'wrap' ? (fl.side ?? 'left') : fl.mode);
   setSelect('page.size', sizeKey());
@@ -1138,16 +1209,9 @@ function changePage(next: Partial<PageSetup>): void {
   scheduleRecovery();
 }
 
-/** Выделенный рисунок (NodeSelection) и его позиция. */
-function selectedImage(): { pos: number; node: PMNode } | null {
-  const sel = view.state.selection;
-  if (sel instanceof NodeSelection && sel.node.type === schema.nodes.image) return { pos: sel.from, node: sel.node };
-  return null;
-}
-
 /** Обтекание выделенного рисунка: в тексте, слева/справа с обтеканием, за текстом, перед текстом. */
 function setImageWrap(mode: string): void {
-  const img = selectedImage();
+  const img = imgSelected();
   if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
   const old = img.node.attrs.float as Float | null;
   let float: Float | null = null;
@@ -1726,6 +1790,10 @@ $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
 document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
+initImageTools({
+  view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
+  textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
+});
 initCommandSearch();
 applyPage();
 setZoom(1);
