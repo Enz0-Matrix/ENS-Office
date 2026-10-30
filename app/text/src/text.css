@@ -251,3 +251,11 @@
 .rd-kind.long { color: #b26a00; } .rd-kind.repeat { color: #2b579a; } .rd-kind.clerical { color: #8a2a6b; }
 .rd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rd-note { color: var(--muted); }
+
+/* Шаблоны */
+.tpl-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; margin: 6px 0; }
+.tpl-row { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.tpl-text { flex: 1; min-width: 0; }
+.tpl-title { font-weight: 600; }
+.tpl-hint { color: var(--muted); }
+.prof-margins input { width: 64px; }

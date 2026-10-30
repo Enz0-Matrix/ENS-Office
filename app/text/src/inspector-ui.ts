@@ -4,7 +4,7 @@ import type { EditorState } from 'prosemirror-state';
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { DocDefaults } from './docx';
-import { PROFILES, runChecks, type CheckHost, type Issue, type Profile } from './checks';
+import { allProfiles, CUSTOM_ID, defaultCustomProfile, loadCustomProfile, runChecks, saveCustomProfile, type CheckHost, type Issue, type Profile } from './checks';
 import { dialog, el, toast } from './ui';
 
 // --- Панель «Рентген»
@@ -79,9 +79,14 @@ export function checkDialog(host: CheckHost, safety: (label: string) => void, vi
   let profileId = (() => { try { return localStorage.getItem('ens-text.profile') ?? 'gost7097'; } catch { return 'gost7097'; } })();
   dialog((box, close) => {
     box.classList.add('check-modal');
-    const profile = (): Profile | null => PROFILES.find((p) => p.id === profileId) ?? null;
-    const sel = el('select', {}, new Option('Только замечания по документу', ''), ...PROFILES.map((p) => new Option(p.name, p.id)));
-    sel.value = PROFILES.some((p) => p.id === profileId) ? profileId : '';
+    const profile = (): Profile | null => allProfiles().find((p) => p.id === profileId) ?? null;
+    const sel = el('select', {});
+    const fillSel = () => {
+      sel.replaceChildren(new Option('Только замечания по документу', ''), ...allProfiles().map((p) => new Option(p.name, p.id)));
+      sel.value = allProfiles().some((p) => p.id === profileId) ? profileId : '';
+    };
+    fillSel();
+    const editBtn = el('button', { textContent: 'Изменить свой профиль…', title: 'Поля, шрифты, интервал, отступ и номера страниц по регламенту вашей организации', onclick: () => profileEditor(() => { profileId = CUSTOM_ID; try { localStorage.setItem('ens-text.profile', profileId); } catch { /* без памяти */ } fillSel(); render(); }) });
     const list = el('div', { class: 'check-list' });
     const note = el('p', { class: 'check-note' });
     const render = () => {
@@ -112,8 +117,67 @@ export function checkDialog(host: CheckHost, safety: (label: string) => void, vi
       },
     });
     sel.addEventListener('change', () => { profileId = sel.value; try { localStorage.setItem('ens-text.profile', profileId); } catch { /* без памяти */ } render(); });
-    box.append(el('h2', { textContent: 'Проверка оформления' }), el('div', { class: 'dlg-row' }, el('label', { textContent: 'Профиль' }), sel), note, list,
+    box.append(el('h2', { textContent: 'Проверка оформления' }), el('div', { class: 'dlg-row' }, el('label', { textContent: 'Профиль' }), sel, editBtn), note, list,
       el('div', { class: 'dlg-actions' }, fixAll, el('button', { textContent: 'Закрыть', onclick: close })));
     render();
+  }, false);
+}
+
+// --- Редактор своего профиля оформления
+
+const PN: [string, string][] = [['', 'Номера страниц не проверять'], ['header-center', 'Вверху по центру'], ['header-right', 'Вверху справа'], ['footer-center', 'Внизу по центру'], ['footer-right', 'Внизу справа']];
+
+function profileEditor(done: () => void): void {
+  dialog((box, close) => {
+    const p = loadCustomProfile();
+    const num = (v: number) => el('input', { type: 'number', value: String(v), min: '0', step: '0.5' });
+    const name = el('input', { type: 'text', value: p.name });
+    const m = { left: num(p.margins.left), right: num(p.margins.right), top: num(p.margins.top), bottom: num(p.margins.bottom) };
+    const fonts = el('textarea', { rows: 3, value: Object.entries(p.fonts).map(([f, [a, b]]) => `${f}: ${a}${a === b ? '' : `-${b}`}`).join('\n'), placeholder: 'Times New Roman: 13-14' });
+    const lines = el('input', { type: 'text', value: p.lines.join('; '), placeholder: '1; 1.5' });
+    const indent = num(p.indentCm);
+    const just = el('input', { type: 'checkbox', checked: p.justify });
+    const pn = el('select', {}, ...PN.map(([v, t]) => new Option(t, v)));
+    pn.value = p.pageNumbers ? `${p.pageNumbers.where}-${p.pageNumbers.align}` : '';
+    const skip = el('input', { type: 'checkbox', checked: p.pageNumbers?.skipFirst ?? true });
+    const note = el('textarea', { rows: 2, value: p.note === defaultCustomProfile().note ? '' : p.note, placeholder: 'Пометка: на что опирается профиль, например «Положение об документообороте, п. 4.2»' });
+    const err = el('div', { class: 'ru-out bad' });
+    err.hidden = true;
+    const row = (label: string, ...k: Node[]) => el('div', { class: 'dlg-row' }, el('label', { textContent: label }), ...k);
+    const save = () => {
+      const f: Record<string, [number, number]> = {};
+      for (const l of fonts.value.split('\n').map((x) => x.trim()).filter(Boolean)) {
+        const mm = /^(.+?)\s*:\s*(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?\s*(?:пт)?$/.exec(l);
+        if (!mm) { err.textContent = `Не понял строку шрифтов: «${l}». Нужно так: Times New Roman: 13-14`; err.hidden = false; return; }
+        const a = parseFloat(mm[2].replace(',', '.')), b = mm[3] ? parseFloat(mm[3].replace(',', '.')) : a;
+        f[mm[1].trim()] = [Math.min(a, b), Math.max(a, b)];
+      }
+      const ls = lines.value.split(/[;,\s]+/).map((x) => parseFloat(x.replace(',', '.'))).filter((x) => x > 0);
+      if (!Object.keys(f).length || !ls.length) { err.textContent = 'Нужен хотя бы один шрифт и один межстрочный интервал.'; err.hidden = false; return; }
+      const [where, align] = pn.value.split('-');
+      saveCustomProfile({
+        ...p, name: name.value.trim() || defaultCustomProfile().name, note: note.value.trim() || defaultCustomProfile().note,
+        margins: { left: +m.left.value, right: +m.right.value, top: +m.top.value, bottom: +m.bottom.value },
+        fonts: f, lines: ls, indentCm: +indent.value || 0, justify: just.checked,
+        pageNumbers: pn.value ? { where: where as 'header' | 'footer', align: align as 'center' | 'right', skipFirst: skip.checked } : null,
+      });
+      close();
+      done();
+      toast('Свой профиль сохранён');
+    };
+    box.append(
+      el('h2', { textContent: 'Свой профиль оформления' }),
+      row('Название', name),
+      row('Поля, мм (не меньше)', el('span', { class: 'prof-margins' }, 'лев. ', m.left, ' прав. ', m.right, ' верх. ', m.top, ' ниж. ', m.bottom)),
+      row('Шрифты и кегль, пт', fonts),
+      row('Межстрочный интервал', lines),
+      row('Абзацный отступ, см', indent),
+      row('Выравнивание', el('label', {}, just, ' по ширине')),
+      row('Номера страниц', pn, el('label', {}, skip, ' кроме первой')),
+      row('Пометка', note),
+      err,
+      el('p', { textContent: 'Профиль хранится на этом компьютере и появляется в списке проверки. Шрифты — по одному на строке; первый считается предпочтительным.' }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Сохранить', onclick: save })),
+    );
   }, false);
 }

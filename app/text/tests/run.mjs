@@ -1108,6 +1108,55 @@ await test('читаемость: время, длинные предложен�
   await p.evaluate(() => window.ens.run('view.night'));
 });
 
+await test('шаблоны: готовые создаются, «мой шаблон» сохраняется локально и открывается; свой профиль ГОСТ', async () => {
+  const p = await page();
+  const dismissUnsaved = async () => { await p.waitForTimeout(100); const d = await p.$('.modal button.danger'); if (d) await d.click(); };
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.waitForSelector('.tpl-row');
+  const titles = await p.$$eval('.tpl-title', (e) => e.map((x) => x.textContent));
+  for (const need of ['Письмо', 'Приказ', 'Акт', 'Протокол', 'Служебная записка', 'Заявление', 'Доверенность (простая)', 'Отчёт о НИР (ГОСТ 7.32)']) ok(titles.includes(need), `нет шаблона «${need}»: ${titles.join(' | ')}`);
+  await p.click('.tpl-row:has-text("Служебная записка") button.primary');
+  await p.waitForTimeout(300);
+  const memo = await p.evaluate(() => window.ens.view.state.doc.textContent);
+  ok(memo.includes('СЛУЖЕБНАЯ ЗАПИСКА') && memo.includes('[Наименование организации]'), `служебная записка: ${memo.slice(0, 80)}`);
+  // мой шаблон: сохраняем текущий документ, очищаем документ, создаём из шаблона
+  await p.evaluate(() => window.ens.run('file.saveTemplate'));
+  await p.fill('.modal input[type=text]', 'Моя записка');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(300);
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('другое'))]), E.getMeta(), 'x'); });
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.click('.rd-tabs button[data-tab=mine]');
+  await p.waitForSelector('.tpl-row:has-text("Моя записка")');
+  const note = await p.textContent('.tpl-list p');
+  ok(note.includes('только на этом компьютере'), 'пояснение про локальное хранение');
+  await p.click('.tpl-row:has-text("Моя записка") button.primary');
+  await p.waitForTimeout(400);
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('СЛУЖЕБНАЯ ЗАПИСКА'), 'мой шаблон открылся');
+  // удаление
+  await p.evaluate(() => window.ens.run('file.templates'));
+  await dismissUnsaved();
+  await p.click('.rd-tabs button[data-tab=mine]');
+  await p.click('.tpl-row:has-text("Моя записка") button:has-text("Удалить")');
+  await p.waitForTimeout(300);
+  eq(await p.$$eval('.tpl-row', (e) => e.length), 0, 'шаблон удалён');
+  await p.keyboard.press('Escape');
+  // свой профиль
+  await p.evaluate(() => window.ens.run('review.check'));
+  await p.waitForSelector('.check-modal');
+  await p.click('.check-modal button:has-text("Изменить свой профиль")');
+  await p.fill('.prof-margins input >> nth=0', '25');
+  await p.fill('.modal textarea >> nth=0', 'Arial: 11-12');
+  await p.click('.modal button.primary:has-text("Сохранить")');
+  await p.waitForTimeout(200);
+  const opts = await p.$$eval('.check-modal select option', (o) => o.map((x) => x.textContent));
+  ok(opts.some((x) => x.includes('Свой профиль')), `свой профиль в списке: ${opts.join(' | ')}`);
+  ok(await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.profile.custom')).margins.left === 25), 'поле сохранено');
+  await p.evaluate(() => localStorage.removeItem('ens-text.profile.custom'));
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

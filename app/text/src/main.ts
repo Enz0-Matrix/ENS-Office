@@ -34,6 +34,7 @@ import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
+import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
 import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
@@ -602,6 +603,8 @@ register(
   { id: 'hf.differentFirst', label: 'Особый колонтитул первой страницы', checked: () => meta.hf.differentFirst, run: () => { closeHf(); meta.hf.differentFirst = !meta.hf.differentFirst; refreshHf(); updateUi(); scheduleRecovery(); } },
   { id: 'insert.pageNumber', label: 'Номер страницы', run: (v) => { if (v) insertPageNumber(v); setSelect('insert.pageNumber', ''); } },
   { id: 'file.wizard', label: 'Служебный документ (мастер)…', keywords: ['письмо', 'приказ', 'акт', 'протокол', 'гост', 'реквизиты', 'бланк'], run: () => void guardUnsaved(() => wizardDialog(newFromWizard)) },
+  { id: 'file.templates', label: 'Создать из шаблона…', keywords: ['шаблон', 'бланк', 'служебная записка', 'заявление', 'доверенность', 'отчёт', 'мои шаблоны'], run: () => void guardUnsaved(() => templatesDialog(templateHost)) },
+  { id: 'file.saveTemplate', label: 'Сохранить как мой шаблон…', keywords: ['шаблон', 'мой', 'личный', 'бланк'], run: () => saveTemplateDialog(templateHost) },
   { id: 'file.journal', label: 'Журнал регистрации…', keywords: ['номер', 'исходящий', 'регистрация'], run: () => journalDialog() },
   { id: 'file.new', label: 'Создать', keys: ['Ctrl+KeyN'], run: () => (desktop.isDesktop ? void desktop.newWindow() : void guardUnsaved(newDocument)) },
   { id: 'file.open', label: 'Открыть', keys: ['Ctrl+KeyO'], run: () => (desktop.isDesktop ? void desktop.openDialog() : void guardUnsaved(() => $('file-input').click())) },
@@ -1415,6 +1418,11 @@ function newDocument(): void {
   loadDoc(emptyDoc(), newMeta(), 'Документ1');
 }
 
+const templateHost: TemplateHost = {
+  create: (doc, newMetaValue, name) => newFromWizard(doc, newMetaValue, name),
+  current: () => ({ bytes: exportDocx(view.state.doc, meta, docName), name: docName.replace(/\.docx$/i, '') }),
+};
+
 function newFromWizard(doc: PMNode, newMetaValue: DocMeta, name: string): void {
   void clearRecovery(docId);
   hist = V.emptyHistory();
@@ -1516,7 +1524,7 @@ function fileMenu(): void {
     box.append(
       el('h2', { textContent: 'Файл' }),
       el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
+        item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
     );
   });
