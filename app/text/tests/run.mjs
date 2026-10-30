@@ -1474,6 +1474,51 @@ await test('таблица: границы и заливка, выравнива
   ok(back.cells[0].background && back.cells[0].borders && back.cells[0].borders.t.s === 'dashed' && back.cells[0].borders.r.s === 'none', `границы и заливка после docx: ${JSON.stringify(back.cells[0])}`);
 });
 
+await test('надписи, рамки абзацев и плавающие таблицы: чтение, положение на листе, запись обратно (и LibreOffice)', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'frames.docx'));
+  await p.waitForSelector('.ProseMirror .frame-box', { timeout: 5000 });
+  await p.waitForTimeout(500);
+  const info = await p.evaluate(() => {
+    const E = window.ens;
+    const frames = [];
+    E.view.state.doc.descendants((n) => { if (n.type.name === 'frame') frames.push({ kind: n.attrs.kind, mode: n.attrs.float?.mode, hRel: n.attrs.float?.hRel, hOff: Math.round(n.attrs.float?.hOff ?? -1), vRel: n.attrs.float?.vRel, w: n.attrs.width, fill: n.attrs.fill, border: n.attrs.border?.c, text: n.textContent.slice(0, 40) }); return false; });
+    const paper = document.querySelector('.paper').getBoundingClientRect();
+    const rect = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.left - paper.left), y: Math.round(r.top - paper.top), w: Math.round(r.width), h: Math.round(r.height) }; };
+    return {
+      frames, lossy: E.getMeta().lossy, header: JSON.stringify(E.getMeta().hf.header).includes('"frame"'),
+      box: rect('.ProseMirror .frame-box.fr-front'), wrap: [...document.querySelectorAll('.ProseMirror .frame-box.fr-wrap')].map((e) => ({ float: getComputedStyle(e).float, table: e.classList.contains('fr-table') })),
+      hf: rect('.paper .hf .frame-box'),
+    };
+  });
+  const tb = info.frames.find((f) => f.fill === '#FFF2CC');
+  ok(tb && tb.mode === 'front' && tb.hRel === 'page' && Math.abs(tb.hOff - 315) <= 2 && tb.border === '#FF0000' && tb.text.includes('Надпись'), `надпись: ${JSON.stringify(info.frames)}`);
+  ok(info.frames.some((f) => f.kind === 'table') && info.frames.some((f) => f.text.includes('Рамка абзацев')), 'плавающая таблица и рамка абзацев прочитаны');
+  ok(info.header, 'надпись в колонтитуле прочитана');
+  ok(info.box && Math.abs(info.box.x - 315) <= 3 && Math.abs(info.box.y - 189) <= 3 && info.box.w > 270, `надпись на листе: ${JSON.stringify(info.box)}`);
+  ok(info.hf && Math.abs(info.hf.x - 76) <= 3 && Math.abs(info.hf.y - 38) <= 3, `надпись в колонтитуле: ${JSON.stringify(info.hf)}`);
+  ok(info.wrap.length >= 2 && info.wrap.every((w) => w.float === 'left' || w.float === 'right'), `обтекание: ${JSON.stringify(info.wrap)}`);
+  eq(info.lossy.filter((x) => /надпис|фигур/.test(x)), [], 'о надписях не предупреждает');
+  // запись обратно: положение, заливка, текст, плавающая таблица
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'f'));
+    const frames = [];
+    d.doc.descendants((n) => { if (n.type.name === 'frame') frames.push({ kind: n.attrs.kind, mode: n.attrs.float?.mode, hOff: Math.round(n.attrs.float?.hOff ?? -1), fill: n.attrs.fill, text: n.textContent.slice(0, 20) }); return false; });
+    return { frames, hdr: JSON.stringify(d.meta.hf.header).includes('"frame"') };
+  });
+  const tb2 = back.frames.find((f) => f.fill === '#FFF2CC');
+  ok(tb2 && tb2.mode === 'front' && Math.abs(tb2.hOff - 315) <= 2 && tb2.text.includes('Надпись'), `после docx: ${JSON.stringify(back.frames)}`);
+  ok(back.frames.some((f) => f.kind === 'table') && back.hdr, 'таблица и надпись колонтитула после docx');
+  // LibreOffice открывает записанный файл и видит текст надписи
+  const bytes = await p.evaluate(() => [...window.ens.exportDocx(window.ens.view.state.doc, window.ens.getMeta(), 'f')]);
+  const tmp = mkdtempSync(join(tmpdir(), 'ens-frames-'));
+  writeFileSync(join(tmp, 'f.docx'), Buffer.from(bytes));
+  execSync(`soffice --headless --convert-to pdf --outdir "${tmp}" "${tmp}/f.docx"`, { stdio: 'pipe', timeout: 90000 });
+  const txt = execSync(`pdftotext "${tmp}/f.pdf" -`).toString().replace(/\s+/g, ' ');
+  ok(/Надпись\s*:\s*реквизиты/.test(txt) && txt.includes('Шапка организации') && txt.includes('Директору') && txt.includes('Рамка абзацев'), `LibreOffice увидел надписи: ${txt.slice(0, 120).replace(/\n/g, ' | ')}`);
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();

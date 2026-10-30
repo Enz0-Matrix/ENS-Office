@@ -49,6 +49,7 @@ import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
+import { frameViews } from './frameview';
 import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -363,7 +364,8 @@ function layoutFloats(): void {
   floatRaf = requestAnimationFrame(() => {
     const dom = view.dom as HTMLElement;
     const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
-    placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale });
+    // Если у рамок с обтеканием сменились поля, строки вокруг них перераскладываются — страницы считаем заново.
+    if (placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale })) replan(view);
     updateOverlay();
   });
 }
@@ -383,7 +385,7 @@ function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): v
       if (kind === 'header') e.style.top = `${meta.hf.headerDist}pt`;
       else e.style.bottom = `${meta.hf.footerDist}pt`;
       paper.append(e);
-      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front')) {
+      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front, .frame-box.fr')) {
         const sc = e.getBoundingClientRect().width / (e.offsetWidth || 1) || 1;
         placeFloats({ root: e, boxes: [], sheetW: 0, scale: sc, fixed: { box: boxes[i], originX: -e.offsetLeft, originY: -e.offsetTop } });
       }
@@ -428,6 +430,7 @@ const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
+  nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {

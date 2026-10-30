@@ -317,3 +317,16 @@
 .ruler-tip { position: fixed; z-index: 50; background: #222; color: #fff; font: 11px "Segoe UI", sans-serif; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
 .ruler-guide { position: fixed; z-index: 49; pointer-events: none; border-left: 1px dashed var(--accent, #2b579a); border-top: 1px dashed var(--accent, #2b579a); }
 @media print { .deskgrid { display: block; } .rcorner, .hruler, .vruler, .ruler-tip, .ruler-guide { display: none !important; } }
+
+/* Надписи и плавающие таблицы (frame) */
+.ProseMirror .frame-anchor { margin: 0; padding: 0; }
+.ProseMirror .frame-anchor.fa-out { height: 0; }
+.ProseMirror .frame-box { position: relative; background-clip: padding-box; }
+.ProseMirror .frame-box.fr-behind, .ProseMirror .frame-box.fr-front { position: absolute; max-width: none; }
+.ProseMirror .frame-box.fr-behind { z-index: -1; }
+.ProseMirror .frame-box.fr-front { z-index: 3; }
+.ProseMirror .frame-box.fr-wrap { position: static; }
+.ProseMirror .frame-box.fr-table table { width: auto; }
+.ProseMirror .frame-box > p:first-child { margin-top: 0; }
+.ProseMirror .frame-box > :last-child { margin-bottom: 0; }
+.hf-edit .frame-box.fr { position: static !important; float: none !important; margin: 0 !important; }

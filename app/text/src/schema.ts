@@ -6,6 +6,9 @@ import { tableNodes } from 'prosemirror-tables';
 import { fontStack } from '../../table/src/fonts';
 import { FLOAT_CLASS, floatStyle, type Float } from './floats';
 
+/** Рамка надписи: линия и поля внутри. */
+export interface FrameLine { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' }
+
 /** Свойства абзаца: хранятся прямо в узле (как прямое форматирование в docx). */
 export interface ParaAttrs {
   align: 'left' | 'center' | 'right' | 'justify' | null;
@@ -156,6 +159,45 @@ const nodes: Record<string, NodeSpec> = {
         a.style = `${floatStyle(fl, n.attrs.width, n.attrs.height)};${a.style ?? ''}`;
       }
       return ['img', a];
+    },
+  },
+  /**
+   * Надпись (текстовое поле), рамка абзацев и плавающая таблица: блок с собственным текстом, который стоит вне потока
+   * (за текстом, перед текстом) или обтекается. kind: textbox — надпись, table — плавающая таблица (в docx w:tblpPr).
+   */
+  frame: {
+    group: 'block',
+    content: '(paragraph | heading | bullet_list | ordered_list | table)+',
+    isolating: true,
+    attrs: { float: { default: null }, width: { default: null }, height: { default: null }, border: { default: null }, fill: { default: null }, pad: { default: null }, kind: { default: 'textbox' } },
+    parseDOM: [{
+      tag: 'div.frame-anchor',
+      contentElement: '.frame-box',
+      getAttrs: (d) => {
+        const b = (d as HTMLElement).querySelector('.frame-box') as HTMLElement | null;
+        const j = (k: string) => { try { return JSON.parse(b?.getAttribute(k) ?? 'null'); } catch { return null; } };
+        return { float: j('data-float'), width: j('data-w'), height: j('data-h'), border: j('data-border'), fill: b?.getAttribute('data-fill') || null, pad: j('data-pad'), kind: b?.getAttribute('data-kind') ?? 'textbox' };
+      },
+    }],
+    toDOM: (n) => {
+      const fl = n.attrs.float as Float | null;
+      const bd = n.attrs.border as FrameLine | null;
+      const pad = n.attrs.pad as number[] | null;
+      const st: string[] = ['box-sizing:border-box'];
+      if (n.attrs.width) st.push(`width:${Math.round(n.attrs.width)}px`);
+      if (n.attrs.height) st.push(`min-height:${Math.round(n.attrs.height)}px`);
+      if (bd) st.push(`border:${bd.w}pt ${bd.s} ${bd.c}`);
+      if (n.attrs.fill) st.push(`background:${n.attrs.fill}`);
+      if (pad) st.push(`padding:${pad.map((x) => `${Math.round(x)}px`).join(' ')}`);
+      if (fl?.mode === 'wrap') st.push(`float:${fl.side === 'right' ? 'right' : 'left'}`, `margin:${fl.dist.map((x) => `${Math.round(x)}px`).join(' ')}`);
+      const a: Record<string, string> = { class: `frame-box fr${fl ? ` fr-${fl.mode}` : ''}${n.attrs.kind === 'table' ? ' fr-table' : ''}`, style: st.join(';'), 'data-kind': n.attrs.kind };
+      if (fl) a['data-float'] = JSON.stringify(fl);
+      if (n.attrs.width) a['data-w'] = String(n.attrs.width);
+      if (n.attrs.height) a['data-h'] = String(n.attrs.height);
+      if (bd) a['data-border'] = JSON.stringify(bd);
+      if (n.attrs.fill) a['data-fill'] = n.attrs.fill;
+      if (pad) a['data-pad'] = JSON.stringify(pad);
+      return ['div', { class: `frame-anchor ${fl ? 'fa-out' : 'fa-flow'}` }, ['div', a, 0]];
     },
   },
   /**

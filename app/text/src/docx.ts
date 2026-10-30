@@ -10,7 +10,7 @@ import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
-import type { CellBorders, Edge } from './schema';
+import type { CellBorders, Edge, FrameLine } from './schema';
 
 export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
@@ -72,6 +72,8 @@ const kids = (el: Element | null | undefined, name?: string): Element[] =>
 const kid = (el: Element | null | undefined, name: string): Element | undefined => kids(el, name)[0];
 const attr = (el: Element | null | undefined, name: string): string | null =>
   el ? (el.getAttributeNS(NS.w, name) ?? el.getAttribute(`w:${name}`)) : null;
+/** Атрибут DrawingML (без пространства имён). */
+const dattr = (el: Element | null | undefined, name: string): string | null => (el ? el.getAttribute(name) : null);
 const relAttr = (el: Element, name: string): string | null => el.getAttributeNS(NS.r, name) ?? el.getAttribute(`r:${name}`);
 const num = (v: string | null): number | null => (v == null || v === '' || isNaN(+v) ? null : +v);
 /** Переключатель Word: <w:b/> — да, <w:b w:val="0"/> — нет. */
@@ -283,7 +285,7 @@ function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml' };
 
 /** Состояние разбора одного абзаца: накопленное содержимое и ссылка. */
-interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean }[]; breakNext: boolean }
+interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean }[]; breakNext: boolean; /** Блоки, вынесенные из абзаца (надписи): встают перед ним. */ blocks: PMNode[] }
 
 function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[] {
   const m: Mark[] = [];
@@ -308,9 +310,9 @@ function addText(acc: InlineAcc, text: string, marks: readonly Mark[]): void {
 const EMU = 9525;
 
 /** wp:anchor → плавающий рисунок. null — «сверху и снизу» и прочее, что остаётся в строке. */
-function parseAnchor(a: Element): Float | null {
+function parseAnchor(a: Element, box = false): Float | null {
   const wrap = [...a.children].map((c) => c.localName).find((n) => /^wrap/.test(n ?? '')) ?? 'wrapNone';
-  if (wrap === 'wrapTopAndBottom') return null;
+  if (wrap === 'wrapTopAndBottom' && !box) return null;
   const dist = (n: string) => (num(a.getAttribute(n)) ?? 0) / EMU;
   const pos = (tag: string) => {
     const e = kid(a, tag);
@@ -338,7 +340,82 @@ function parseAnchor(a: Element): Float | null {
   return f;
 }
 
+const FRAME_TYPES = new Set(['paragraph', 'heading', 'bullet_list', 'ordered_list', 'table']);
+
+/** Блоки для содержимого рамки: только допустимые (разрывы разделов и вложенные рамки отбрасываются). */
+function frameBlocks(blocks: PMNode[]): PMNode[] {
+  const ok = blocks.filter((b) => FRAME_TYPES.has(b.type.name));
+  return ok.length ? ok : [schema.nodes.paragraph.create()];
+}
+
+const hexColor = (v: string | null | undefined): string | null => (v && /^[0-9a-f]{6}$/i.test(v) ? `#${v.toUpperCase()}` : null);
+
+/** Надпись из DrawingML (wps:wsp с wps:txbx): размер, положение, заливка, линия, поля внутри. */
+function parseTextBox(ctx: Ctx, el: Element, acc: InlineAcc): boolean {
+  const tx = descendants(el, 'txbxContent')[0];
+  if (!tx) return false;
+  const blocks = frameBlocks(walkBlocks(ctx, tx));
+  const extent = descendants(el, 'extent')[0];
+  const cx = num(extent?.getAttribute('cx') ?? null), cy = num(extent?.getAttribute('cy') ?? null);
+  const anchor = descendants(el, 'anchor')[0];
+  const float = anchor ? parseAnchor(anchor, true) : null;
+  const sp = descendants(el, 'spPr')[0];
+  const solid = sp ? kid(sp, 'solidFill') : undefined;
+  const fill = hexColor(dattr(kid(solid, 'srgbClr'), 'val'));
+  const ln = sp ? kid(sp, 'ln') : undefined;
+  let border: FrameLine | null = null;
+  if (ln && !kid(ln, 'noFill')) {
+    const w = (num(dattr(ln, 'w')) ?? 9525) / 12700;
+    const c = hexColor(dattr(kid(kid(ln, 'solidFill'), 'srgbClr'), 'val')) ?? '#000000';
+    const dash = dattr(kid(ln, 'prstDash'), 'val') ?? 'solid';
+    border = { w: Math.max(0.25, Math.round(w * 100) / 100), c, s: /dot/i.test(dash) ? 'dotted' : /dash/i.test(dash) ? 'dashed' : 'solid' };
+  }
+  const body = descendants(el, 'bodyPr')[0];
+  const ins = (n: string, d: number) => Math.round((num(body?.getAttribute(n) ?? null) ?? d) / 9525);
+  acc.blocks.push(schema.nodes.frame.create({
+    float, width: cx ? Math.round(cx / 9525) : null, height: cy ? Math.round(cy / 9525) : null, border, fill,
+    pad: [ins('tIns', 45720), ins('rIns', 91440), ins('bIns', 45720), ins('lIns', 91440)], kind: 'textbox',
+  }, blocks));
+  return true;
+}
+
+/** VML-надпись (w:pict → v:shape/v:rect с v:textbox): положение из style. */
+function parseVmlTextBox(ctx: Ctx, pict: Element, acc: InlineAcc): boolean {
+  const tx = descendants(pict, 'txbxContent')[0];
+  if (!tx) return false;
+  const shape = [...pict.children].find((c) => c.localName !== 'txbxContent' && c.getAttribute('style')) ?? descendants(pict, 'shape')[0] ?? descendants(pict, 'rect')[0];
+  const style = shape?.getAttribute('style') ?? '';
+  const st = (k: string) => new RegExp(`(?:^|;)\\s*${k}\\s*:\\s*([^;]+)`).exec(style)?.[1]?.trim();
+  const pt = (v: string | undefined) => { const m = v ? /^(-?[\d.]+)(pt|in|cm|mm|px)?$/.exec(v) : null; if (!m) return null; const n = parseFloat(m[1]); const u = m[2] ?? 'pt'; return (u === 'pt' ? n : u === 'in' ? n * 72 : u === 'cm' ? n * 28.3465 : u === 'mm' ? n * 2.83465 : n * 0.75) * (4 / 3); };
+  const w = pt(st('width')), h = pt(st('height'));
+  const hrel = st('mso-position-horizontal-relative') ?? 'margin';
+  const vrel = st('mso-position-vertical-relative') ?? 'margin';
+  const absolute = /absolute/.test(st('position') ?? '');
+  const z = parseInt(st('z-index') ?? '1', 10);
+  const hAl = st('mso-position-horizontal');
+  const vAl = st('mso-position-vertical');
+  const float: Float | null = absolute ? {
+    mode: z < 0 ? 'behind' : 'front',
+    hRel: hrel === 'page' ? 'page' : hrel === 'text' ? 'column' : 'margin', hOff: hAl && hAl !== 'absolute' ? null : (pt(st('margin-left')) ?? 0),
+    hAlign: hAl === 'right' ? 'right' : hAl === 'center' ? 'center' : hAl === 'left' ? 'left' : null,
+    vRel: vrel === 'page' ? 'page' : vrel === 'text' ? 'paragraph' : vrel === 'line' ? 'line' : 'margin', vOff: vAl && vAl !== 'absolute' ? null : (pt(st('margin-top')) ?? 0),
+    vAlign: vAl === 'bottom' ? 'bottom' : vAl === 'center' ? 'center' : vAl === 'top' ? 'top' : null,
+    dist: [0, 0, 8, 8],
+  } : null;
+  const filled = shape?.getAttribute('filled') !== 'f' ? hexColor((shape?.getAttribute('fillcolor') ?? '').replace('#', '')) : null;
+  const stroked = shape?.getAttribute('stroked') !== 'f';
+  const weight = shape?.getAttribute('strokeweight');
+  const border: FrameLine | null = stroked ? { w: weight ? Math.max(0.25, parseFloat(weight)) || 0.75 : 0.75, c: hexColor((shape?.getAttribute('strokecolor') ?? '').replace('#', '')) ?? '#000000', s: 'solid' } : null;
+  const inset = (shape ? descendants(shape, 'textbox')[0]?.getAttribute('inset') : null)?.split(',').map((x) => pt(x.trim())) ?? [];
+  acc.blocks.push(schema.nodes.frame.create({
+    float, width: w ? Math.round(w) : null, height: h ? Math.round(h) : null, border, fill: filled,
+    pad: [inset[1] ?? 4, inset[2] ?? 8, inset[3] ?? 4, inset[0] ?? 8].map((x) => Math.round(x as number)), kind: 'textbox',
+  }, frameBlocks(walkBlocks(ctx, tx))));
+  return true;
+}
+
 function parseDrawing(ctx: Ctx, el: Element, acc: InlineAcc, marks: readonly Mark[]): void {
+  if (parseTextBox(ctx, el, acc)) return;
   const blip = descendants(el, 'blip')[0];
   const embed = blip ? relAttr(blip, 'embed') : null;
   const rel = embed ? ctx.rels.get(embed) : undefined;
@@ -425,6 +502,7 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       case 'pict':
       case 'object': {
+        if (parseVmlTextBox(ctx, c, acc)) break;
         const img = descendants(c, 'imagedata')[0];
         const id = img ? relAttr(img, 'id') : null;
         const rel = id ? ctx.rels.get(id) : undefined;
@@ -532,13 +610,13 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
   const info = listInfo(ctx, para.numId, para.ilvl ?? 0);
   const d = ctx.defaults;
 
-  const acc: InlineAcc = { nodes: [], chunks: [], breakNext: false };
+  const acc: InlineAcc = { nodes: [], chunks: [], breakNext: false, blocks: [] };
   ctx.baseR = fromStyle.r;
   walkInline(ctx, p, acc, undefined);
   ctx.baseR = {};
   acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
 
-  const entries: Entry[] = [];
+  const entries: Entry[] = acc.blocks.map((node) => ({ node }));
   acc.chunks.forEach((chunk, k) => {
     // Абзац, состоящий только из разрыва страницы, не оставляет пустого абзаца до разрыва.
     if (!chunk.nodes.length && !chunk.breakBefore && k < acc.chunks.length - 1) return;
@@ -715,14 +793,56 @@ function parseTable(ctx: Ctx, tbl: Element): PMNode {
   return t;
 }
 
+/** Положение рамки абзацев (w:framePr) или плавающей таблицы (w:tblpPr) → плавающий блок. Размеры — в px (1 px = 15 twips). */
+function framePosition(el: Element, table: boolean): { float: Float | null; width: number | null; height: number | null } {
+  const A = (n: string) => attr(el, n);
+  const N = (n: string) => { const v = num(A(n)); return v == null ? null : v / 15; };
+  const hAnchor = A(table ? 'horzAnchor' : 'hAnchor') ?? 'text';
+  const vAnchor = A(table ? 'vertAnchor' : 'vAnchor') ?? 'text';
+  const x = N(table ? 'tblpX' : 'x'), y = N(table ? 'tblpY' : 'y');
+  const xSpec = A(table ? 'tblpXSpec' : 'xAlign'), ySpec = A(table ? 'tblpYSpec' : 'yAlign');
+  const wrap = table ? 'around' : (A('wrap') ?? 'auto');
+  const al = (v: string | null | undefined) => (v === 'right' || v === 'outside' ? 'right' : v === 'center' ? 'center' : v === 'left' || v === 'inside' ? 'left' : null);
+  const vAl = (v: string | null | undefined) => (v === 'bottom' || v === 'outside' ? 'bottom' : v === 'center' ? 'center' : v === 'top' || v === 'inside' ? 'top' : null);
+  const dist: [number, number, number, number] = table
+    ? [N('topFromText') ?? 0, N('bottomFromText') ?? 0, N('leftFromText') ?? 0, N('rightFromText') ?? 0]
+    : [N('vSpace') ?? 0, N('vSpace') ?? 0, N('hSpace') ?? 0, N('hSpace') ?? 0];
+  const pinned = (vAnchor === 'page' || vAnchor === 'margin') && (y != null || !!ySpec);
+  const mode: Float['mode'] = pinned || wrap === 'none' ? 'front' : 'wrap';
+  const float: Float | null = wrap === 'notBeside' && !pinned ? null : {
+    mode, side: al(xSpec) === 'right' ? 'right' : 'left',
+    hRel: hAnchor === 'page' ? 'page' : hAnchor === 'margin' ? 'margin' : 'column', hOff: al(xSpec) ? null : (x ?? 0), hAlign: al(xSpec),
+    vRel: vAnchor === 'page' ? 'page' : vAnchor === 'margin' ? 'margin' : 'paragraph', vOff: vAl(ySpec) ? null : (y ?? 0), vAlign: vAl(ySpec),
+    dist,
+  };
+  return { float, width: table ? null : N('w'), height: table ? null : N('h') };
+}
+
 function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
   const entries: Entry[] = [];
+  // Подряд идущие абзацы с одинаковым w:framePr — одна рамка.
+  let frame: { key: string; fp: Element; entries: Entry[] } | null = null;
+  const flushFrame = () => {
+    if (!frame) return;
+    const pos = framePosition(frame.fp, false);
+    entries.push({ node: schema.nodes.frame.create({ float: pos.float, width: pos.width, height: pos.height, border: null, fill: null, pad: null, kind: 'textbox' }, frameBlocks(assemble(frame.entries))) });
+    frame = null;
+  };
   const visit = (el: Element) => {
     for (const c of el.children) {
       switch (c.localName) {
         case 'p': {
           const es = paraEntries(ctx, c);
+          const fp = kid(kid(c, 'pPr'), 'framePr');
           const sp = kid(kid(c, 'pPr'), 'sectPr');
+          if (fp && !sp && attr(fp, 'dropCap') == null) {
+            const key = [...fp.attributes].map((a) => `${a.name}=${a.value}`).sort().join('|');
+            if (frame && frame.key !== key) flushFrame();
+            if (!frame) frame = { key, fp, entries: [] };
+            frame.entries.push(...es);
+            break;
+          }
+          flushFrame();
           if (!sp || !ctx.sects) { entries.push(...es); break; }
           // Абзац с w:sectPr закрывает раздел. Пустой абзац-носитель не нужен: разрыв раздела — отдельный блок.
           const carrier = es.length === 1 && !es[0].list && es[0].node.type === schema.nodes.paragraph && es[0].node.content.size === 0;
@@ -732,8 +852,14 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
           break;
         }
         case 'tbl':
+          flushFrame();
           try {
-            entries.push({ node: parseTable(ctx, c) });
+            const t = parseTable(ctx, c);
+            const tp = kid(kid(c, 'tblPr'), 'tblpPr');
+            if (tp) {
+              const pos = framePosition(tp, true);
+              entries.push({ node: schema.nodes.frame.create({ float: pos.float, width: null, height: null, border: null, fill: null, pad: [0, 0, 0, 0], kind: 'table' }, [t]) });
+            } else entries.push({ node: t });
           } catch {
             lose(ctx, 'таблицы сложной структуры (преобразованы в текст)');
             for (const tr of descendants(c, 'tr')) {
@@ -755,6 +881,7 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
     }
   };
   visit(parent);
+  flushFrame();
   return assemble(entries);
 }
 
@@ -951,6 +1078,43 @@ function cropXml(c: number[] | null): string {
   return `<a:srcRect l="${l}" t="${t}" r="${r}" b="${b}"/>`;
 }
 
+const emuOf = (px: number) => Math.round(px * 9525);
+const posXml = (tag: 'positionH' | 'positionV', rel: string, off: number | null, align: string | null) =>
+  `<wp:${tag} relativeFrom="${rel}">${align ? `<wp:align>${align}</wp:align>` : `<wp:posOffset>${emuOf(off ?? 0)}</wp:posOffset>`}</wp:${tag}>`;
+
+/** Начало wp:anchor до обтекания включительно: положение, размер, обтекание. */
+function anchorOpen(fl: Float, cx: number, cy: number): string {
+  return `<wp:anchor distT="${emuOf(fl.dist[0])}" distB="${emuOf(fl.dist[1])}" distL="${emuOf(fl.dist[2])}" distR="${emuOf(fl.dist[3])}" simplePos="0" relativeHeight="251658240" behindDoc="${fl.mode === 'behind' ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>` +
+    posXml('positionH', fl.hRel, fl.hOff, fl.hAlign) + posXml('positionV', fl.vRel, fl.vOff, fl.vAlign) +
+    `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    (fl.mode === 'wrap' ? `<wp:wrapSquare wrapText="${fl.side === 'right' ? 'left' : 'right'}"/>` : '<wp:wrapNone/>');
+}
+
+/** Надпись: wps-фигура с текстом внутри; Word 2010+ и LibreOffice читают её как «Надпись». Рамка, заливка и поля сохраняются. */
+function frameXml(ctx: ExportCtx, node: PMNode): string {
+  if (node.attrs.kind === 'table' && node.firstChild?.type.name === 'table') return tableXml(ctx, node.firstChild, node.attrs.float as Float | null);
+  const fl = node.attrs.float as Float | null;
+  const cx = emuOf((node.attrs.width as number | null) ?? 240), cy = emuOf((node.attrs.height as number | null) ?? 60);
+  const n = ctx.docIds.n++;
+  const bd = node.attrs.border as FrameLine | null;
+  const fill = node.attrs.fill as string | null;
+  const pad = ((node.attrs.pad as number[] | null) ?? [5, 10, 5, 10]).map(emuOf);
+  let inner = blocksXml(ctx, node);
+  if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
+  const open = fl ? anchorOpen(fl, cx, cy) : `<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>`;
+  const dash = bd ? (bd.s === 'dashed' ? 'dash' : bd.s === 'dotted' ? 'sysDot' : 'solid') : 'solid';
+  const sp = `<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    (fill ? `<a:solidFill><a:srgbClr val="${fill.replace('#', '')}"/></a:solidFill>` : '<a:noFill/>') +
+    (bd ? `<a:ln w="${Math.round(bd.w * 12700)}"><a:solidFill><a:srgbClr val="${bd.c.replace('#', '')}"/></a:solidFill><a:prstDash val="${dash}"/></a:ln>` : '<a:ln><a:noFill/></a:ln>') + '</wps:spPr>';
+  const drawing = `<w:drawing>${open}<wp:docPr id="${n}" name="Надпись ${n}"/><wp:cNvGraphicFramePr/>` +
+    '<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/>' + sp +
+    `<wps:txbx><w:txbxContent>${inner}</w:txbxContent></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="${pad[3]}" tIns="${pad[0]}" rIns="${pad[1]}" bIns="${pad[2]}" anchor="t"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic>` +
+    `</${fl ? 'wp:anchor' : 'wp:inline'}></w:drawing>`;
+  // Плавающая надпись цепляется за пустой абзац «в одну точку», чтобы не сдвигать текст.
+  const ppr = fl ? '<w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/></w:pPr>' : '';
+  return `<w:p>${ppr}<w:r><mc:AlternateContent><mc:Choice Requires="wps">${drawing}</mc:Choice></mc:AlternateContent></w:r></w:p>`;
+}
+
 function imageXml(ctx: ExportCtx, node: PMNode): string {
   const m = /^data:([^;,]+);base64,(.*)$/s.exec(node.attrs.src as string);
   if (!m) return '';
@@ -965,14 +1129,8 @@ function imageXml(ctx: ExportCtx, node: PMNode): string {
   const cy = Math.round((node.attrs.height || 150) * 9525);
   const n = ctx.docIds.n++;
   const fl = node.attrs.float as Float | null;
-  const emu = (px: number) => Math.round(px * EMU);
-  const posXml = (tag: 'positionH' | 'positionV', rel: string, off: number | null, align: string | null) =>
-    `<wp:${tag} relativeFrom="${rel}">${align ? `<wp:align>${align}</wp:align>` : `<wp:posOffset>${emu(off ?? 0)}</wp:posOffset>`}</wp:${tag}>`;
   const open = fl
-    ? `<wp:anchor distT="${emu(fl.dist[0])}" distB="${emu(fl.dist[1])}" distL="${emu(fl.dist[2])}" distR="${emu(fl.dist[3])}" simplePos="0" relativeHeight="251658240" behindDoc="${fl.mode === 'behind' ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>` +
-      posXml('positionH', fl.hRel, fl.hOff, fl.hAlign) + posXml('positionV', fl.vRel, fl.vOff, fl.vAlign) +
-      `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
-      (fl.mode === 'wrap' ? `<wp:wrapSquare wrapText="${fl.side === 'right' ? 'left' : 'right'}"/>` : '<wp:wrapNone/>')
+    ? anchorOpen(fl, cx, cy)
     : `<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>`;
   return `<w:r><w:drawing>${open}` +
     `<wp:docPr id="${n}" name="Рисунок ${n}" descr="${esc(node.attrs.alt || '')}"/>` +
@@ -1102,7 +1260,7 @@ function listXml(ctx: ExportCtx, list: PMNode, numId: number, level: number): st
   return out;
 }
 
-function tableXml(ctx: ExportCtx, table: PMNode): string {
+function tableXml(ctx: ExportCtx, table: PMNode, pos: Float | null = null): string {
   const map = TableMap.get(table);
   const usable = (ctx.meta.page.w - ctx.meta.page.left - ctx.meta.page.right) * 20;
   const widths: number[] = new Array(map.width).fill(0);
@@ -1128,7 +1286,14 @@ function tableXml(ctx: ExportCtx, table: PMNode): string {
     ? '<w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((s) => `<w:${s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>`).join('') + '</w:tblBorders>'
     : '';
   const jcT = table.attrs.align ? `<w:jc w:val="${table.attrs.align}"/>` : '';
-  let out = `<w:tbl><w:tblPr><w:tblW w:w="${total}" w:type="dxa"/>${jcT}${borders}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>` +
+  const tw15 = (px: number) => Math.round(px * 15);
+  // Плавающая таблица: w:tblpPr — положение от страницы, поля или абзаца и отступы от текста.
+  const tblp = pos
+    ? `<w:tblpPr w:leftFromText="${tw15(pos.dist[2])}" w:rightFromText="${tw15(pos.dist[3])}" w:topFromText="${tw15(pos.dist[0])}" w:bottomFromText="${tw15(pos.dist[1])}" ` +
+      `w:vertAnchor="${pos.vRel === 'page' ? 'page' : pos.vRel === 'margin' ? 'margin' : 'text'}" w:horzAnchor="${pos.hRel === 'page' ? 'page' : pos.hRel === 'margin' ? 'margin' : 'text'}" ` +
+      (pos.hAlign ? `w:tblpXSpec="${pos.hAlign}"` : `w:tblpX="${tw15(pos.hOff ?? 0)}"`) + ' ' + (pos.vAlign ? `w:tblpYSpec="${pos.vAlign}"` : `w:tblpY="${tw15(pos.vOff ?? 0)}"`) + '/>'
+    : '';
+  let out = `<w:tbl><w:tblPr>${tblp}<w:tblW w:w="${total}" w:type="dxa"/>${jcT}${borders}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>` +
     widths.map((w) => `<w:gridCol w:w="${w}"/>`).join('') + '</w:tblGrid>';
   const edgeXml = (tag: string, e: Edge | null): string => (!e ? '' : e.s === 'none'
     ? `<w:${tag} w:val="nil"/>`
@@ -1175,6 +1340,9 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
         break;
       case 'table':
         out += tableXml(ctx, n);
+        break;
+      case 'frame':
+        out += frameXml(ctx, n);
         break;
       default:
         break;
@@ -1231,7 +1399,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
       path, tag, kind, rels: sub.rels,
       xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
         `<w:${tag} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
-        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
         `${inner}</w:${tag}>`,
     });
     const id = relId(ctx, `${REL_BASE}/${kind}`, `${kind}${n}.xml`);
@@ -1247,7 +1415,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   const sect = sectOf(pagesOf[lastChunk], lastChunk === 0);
   const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
-    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
 
   const base = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
