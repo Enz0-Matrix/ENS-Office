@@ -1172,7 +1172,7 @@ await test('рисунок с обрезкой: srcRect читается и пи
     return { crop };
   });
   ok(r.crop && Math.abs(r.crop[0] - 0.1) < 1e-4 && Math.abs(r.crop[1] - 0.2) < 1e-4 && Math.abs(r.crop[2] - 0.3) < 1e-4 && Math.abs(r.crop[3] - 0.1) < 1e-4, `обрезка в docx: ${JSON.stringify(r.crop)}`);
-  const style = await p.$eval('.ProseMirror img', (e) => e.getAttribute('style'));
+  const style = await p.$eval('.ProseMirror img[data-crop]', (e) => e.getAttribute('style'));
   ok(/object-view-box:\s*inset\(20\.000% 30\.000% 10\.000% 10\.000%\)/.test(style), `стиль: ${style}`);
   const h = await p.$eval('.notice span', (e) => e.getBoundingClientRect().height);
   ok(h > 30, `предупреждение переносится по строкам (высота ${h})`);
