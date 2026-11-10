@@ -38,7 +38,7 @@ import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
-import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
+import { checkDialog, formatSearchDialog, renderInspector, toggleInspector } from './inspector-ui';
 import type { CheckHost } from './checks';
 import { applyScheme, continueList, convertManual, currentStart, setListStart } from './listtools';
 import { PRESETS, presetOf, type Scheme } from './numbering';
@@ -682,6 +682,7 @@ register(
     checked: () => !!focusKey.getState(view.state),
     run: () => { view.dispatch(view.state.tr.setMeta(focusKey, !focusKey.getState(view.state))); updateUi(); },
   },
+  { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
@@ -1032,6 +1033,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
           { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
+          { type: 'large', command: 'review.findFormat', icon: 'search', label: 'Поиск по формату' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
           { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
         ],

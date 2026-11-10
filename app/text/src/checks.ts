@@ -92,24 +92,91 @@ export interface CheckHost {
   pageNumbers(where: 'header' | 'footer', align: string, skipFirst: boolean): void;
 }
 
-const bodyBlocks = (doc: PMNode): { node: PMNode; pos: number }[] => {
+const bodyBlocks = (doc: PMNode, nested = false): { node: PMNode; pos: number }[] => {
   const out: { node: PMNode; pos: number }[] = [];
-  doc.forEach((node, pos) => { if (node.type === schema.nodes.paragraph) out.push({ node, pos }); });
+  if (nested) doc.descendants((node, pos) => {
+    if (node.isTextblock) { out.push({ node, pos }); return false; }
+    return true;
+  });
+  else doc.forEach((node, pos) => { if (node.type === schema.nodes.paragraph) out.push({ node, pos }); });
   return out;
 };
 
 const isBodyText = (n: PMNode) => n.textContent.trim().length > 60 && n.attrs.align !== 'center' && n.attrs.align !== 'right';
 
-const effFont = (n: PMNode, from: number, to: number, d: DocDefaults): { font: string; size: number }[] => {
-  const out: { font: string; size: number }[] = [];
+interface CharacterFormat {
+  font: string; size: number; directFont: string | null; directSize: number | null;
+  bold: boolean; italic: boolean;
+}
+
+const effFont = (n: PMNode, from: number, to: number, d: DocDefaults): CharacterFormat[] => {
+  const out: CharacterFormat[] = [];
   n.nodesBetween(from, to, (c) => {
     if (!c.isText) return true;
     const ts = c.marks.find((m) => m.type.name === 'textStyle');
-    out.push({ font: (ts?.attrs.font as string) || d.font, size: (ts?.attrs.size as number) || d.size });
+    out.push({
+      font: (ts?.attrs.font as string) || d.font, size: (ts?.attrs.size as number) || d.size,
+      directFont: (ts?.attrs.font as string) || null, directSize: (ts?.attrs.size as number) || null,
+      bold: c.marks.some((m) => m.type.name === 'strong'), italic: c.marks.some((m) => m.type.name === 'em'),
+    });
     return false;
   });
   return out;
 };
+
+export interface FormatQuery { font?: string; size?: number; bold?: boolean; italic?: boolean; style?: string }
+
+/** Условия в одну строку: Arial 14 курсив; стиль:"Заголовок 1". */
+export function parseFormatQuery(text: string): FormatQuery {
+  const query: FormatQuery = {};
+  const font: string[] = [];
+  if ((text.match(/"/g)?.length ?? 0) % 2) throw new Error('Закройте кавычки в запросе.');
+  const tokens = text.match(/(?:[^\s"]|"[^"]*")+/g) ?? [];
+  const set = <K extends keyof FormatQuery>(key: K, value: FormatQuery[K]) => {
+    if (query[key] !== undefined) throw new Error('Каждое условие можно задать только один раз.');
+    query[key] = value;
+  };
+  for (const raw of tokens) {
+    const token = raw.replace(/"/g, '');
+    const lower = token.toLocaleLowerCase('ru');
+    const colon = token.indexOf(':');
+    if (colon >= 0) {
+      const key = lower.slice(0, colon);
+      const value = token.slice(colon + 1).trim();
+      if (!value) throw new Error('После двоеточия нужно значение.');
+      if (key === 'шрифт') set('font', value);
+      else if (key === 'размер') {
+        if (!/^\d+(?:[.,]\d+)?$/.test(value)) throw new Error('Размер должен быть положительным числом.');
+        set('size', Number(value.replace(',', '.')));
+      }
+      else if (key === 'стиль') set('style', value.toLocaleLowerCase('ru'));
+      else throw new Error(`Неизвестное условие: ${key}.`);
+    } else if (['жирный', 'полужирный', 'без-жирного'].includes(lower)) set('bold', lower !== 'без-жирного');
+    else if (['курсив', 'без-курсива'].includes(lower)) set('italic', lower === 'курсив');
+    else if (/^\d+(?:[.,]\d+)?$/.test(token)) set('size', Number(token.replace(',', '.')));
+    else font.push(token);
+  }
+  if (font.length) set('font', font.join(' '));
+  if (query.size !== undefined && (!Number.isFinite(query.size) || query.size <= 0)) throw new Error('Размер должен быть положительным числом.');
+  if (query.style && !/^(обычный|заголовок [1-6])$/.test(query.style)) throw new Error('Стиль: «Обычный» или «Заголовок 1» … «Заголовок 6».');
+  return query;
+}
+
+/** Второй запрос к существующим данным проверки: один результат на абзац, включая вложенные. */
+export function findFormatting(doc: PMNode, defaults: DocDefaults, query: FormatQuery): { pos: number; text: string }[] {
+  if (!Object.keys(query).length) return [];
+  const hasChars = query.font !== undefined || query.size !== undefined || query.bold !== undefined || query.italic !== undefined;
+  return bodyBlocks(doc, true).filter(({ node }) => {
+    const style = node.type.name === 'heading' ? `заголовок ${node.attrs.level}` : 'обычный';
+    if (query.style && query.style !== style) return false;
+    // Все свойства должны совпасть на одном фрагменте, не в разных концах абзаца.
+    return !hasChars || effFont(node, 0, node.content.size, defaults).some((f) =>
+      (query.font === undefined || f.directFont?.toLocaleLowerCase('ru') === query.font.toLocaleLowerCase('ru')) &&
+      (query.size === undefined || f.directSize === query.size) &&
+      (query.bold === undefined || f.bold === query.bold) &&
+      (query.italic === undefined || f.italic === query.italic));
+  }).map(({ node, pos }) => ({ pos, text: node.textContent }));
+}
 
 export function runChecks(host: CheckHost, profile: Profile | null): Issue[] {
   const issues: Issue[] = [];

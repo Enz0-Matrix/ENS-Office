@@ -54,6 +54,9 @@ async function test(name, f) {
   } catch (e) {
     failed++;
     console.log(`  ✗ ${name}\n      ${e.message}`);
+  } finally {
+    // Не копим вкладки между тестами: это важно в среде с ограниченной памятью.
+    await Promise.all(browser.contexts().map((ctx) => ctx.close()));
   }
 }
 const fixture = (n) => [...readFileSync(join(here, 'fixtures', n))];
@@ -1700,6 +1703,74 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
 
   eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
   await p.context().close();
+});
+
+await test('поиск формата в строку: условия, стили, вложенные абзацы и переходы', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const fmt = (font, size) => s.marks.textStyle.create({ font, size });
+    const em = s.marks.em.create(), strong = s.marks.strong.create();
+    const P = (text, marks = []) => s.nodes.paragraph.create(null, s.text(text, marks));
+    const body = [
+      P('Совпадает', [fmt('Arial', 14), strong, em]), P('По умолчанию'),
+      s.nodes.paragraph.create(null, [s.text('Шрифт', [fmt('Arial', 12)]), s.text('Размер', [fmt('Tinos', 14), em])]),
+      s.nodes.heading.create({ level: 1 }, s.text('Заголовок', [fmt('Arial', 14)])),
+      s.nodes.bullet_list.create(null, s.nodes.list_item.create(null, P('В списке', [fmt('Arial', 14), em]))),
+      s.nodes.table.create(null, s.nodes.table_row.create(null, s.nodes.table_cell.create(null, P('В таблице', [fmt('Arial', 14), em])))),
+      P('С кавычками', [fmt('Times New Roman', 12.5)]), s.nodes.paragraph.create(),
+    ];
+    const meta = E.getMeta();
+    meta.defaults = { ...meta.defaults, font: 'Arial', size: 14 };
+    E.loadDoc(s.nodes.doc.create(null, body), meta, 'format-search');
+    E.run('review.findFormat');
+  });
+  const input = p.locator('.format-search input');
+  const hits = () => p.locator('.format-hit').allTextContents();
+  eq(await hits(), [], 'пустой запрос');
+  await input.fill('arial 14 курсив');
+  const expected = ['1. Совпадает', '2. В списке', '3. В таблице'];
+  eq(await hits(), expected, 'один фрагмент, без наследования настроек документа');
+  await input.fill('Arial 14 жирный курсив');
+  eq(await hits(), ['1. Совпадает'], 'сочетание жирного и курсива');
+  await input.fill('Arial 14 без-жирного');
+  eq(await hits(), ['1. Заголовок', '2. В списке', '3. В таблице'], 'без жирного');
+  await input.fill('стиль:"Заголовок 1"');
+  eq(await hits(), ['1. Заголовок'], 'стиль заголовка');
+  await input.fill('стиль:Обычный Arial 14 курсив');
+  eq(await hits(), expected, 'стиль и прямое форматирование');
+  await input.fill('шрифт:"Times New Roman" размер:12,5');
+  eq(await hits(), ['1. С кавычками'], 'пробелы в шрифте и дробный размер');
+  await input.fill('стиль:Обычный');
+  ok((await hits()).some((x) => x.includes('(пустой абзац)')), 'поиск пустого абзаца по стилю');
+  for (const invalid of ['размер:abc', 'размер:0', 'размер:0x10', 'стиль:Нет', 'цвет:красный', 'шрифт:"Arial', 'жирный без-жирного', '14 12', 'шрифт:']) {
+    await input.fill(invalid);
+    eq(await hits(), [], 'ошибка очищает результаты');
+    ok(!(await p.locator('.format-search [role=status]').textContent()).includes('Найдено'), 'ошибка запроса');
+  }
+  await input.fill('Несуществующий 99');
+  eq(await p.locator('.format-search [role=status]').textContent(), 'Найдено абзацев: 0', 'нет совпадений');
+  await input.fill('Arial 14 курсив');
+  await p.locator('.format-hit').nth(2).click();
+  ok(await p.locator('#dialog').isHidden(), 'диалог закрыт');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'В таблице', 'переход в таблицу');
+  await p.evaluate(() => window.ens.run('review.findFormat'));
+  await input.fill('жирный'); await input.press('Enter');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'Совпадает', 'Enter: первый результат');
+  await p.evaluate(() => window.ens.run('review.findFormat'));
+  await p.keyboard.press('Escape');
+  ok(await p.locator('#dialog').isHidden(), 'Escape закрывает окно');
+  await p.context().close();
+});
+
+await test('Alt+Q открывает однострочный поиск форматирования', async () => {
+  const p = await page();
+  await p.click('.ProseMirror'); await p.keyboard.press('Alt+KeyQ');
+  ok(await p.locator('#search').evaluate((e) => e === document.activeElement), 'Alt+Q: фокус поиска команд');
+  await p.locator('#search').fill('Поиск по форматированию'); await p.keyboard.press('Enter');
+  await p.waitForSelector('.format-search input');
+  ok(await p.locator('.format-search input').evaluate((e) => e === document.activeElement), 'фокус строки запроса');
+  await p.keyboard.press('Escape'); await p.context().close();
 });
 
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);

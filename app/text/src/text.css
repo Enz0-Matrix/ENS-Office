@@ -337,3 +337,8 @@
 .ProseMirror .frame-box > p:first-child { margin-top: 0; }
 .ProseMirror .frame-box > :last-child { margin-bottom: 0; }
 .hf-edit .frame-box.fr { position: static !important; float: none !important; margin: 0 !important; }
+
+/* Однострочный поиск форматирования и переходы к найденным абзацам. */
+.format-search > input { width: 100%; box-sizing: border-box; }
+.format-search .check-list { display: flex; flex-direction: column; gap: 4px; }
+.format-hit { text-align: left; overflow-wrap: anywhere; }
