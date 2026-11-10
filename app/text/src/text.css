@@ -95,6 +95,13 @@
 .dlg-list { margin: 6px 0; padding-left: 18px; }
 .menu-list { display: flex; flex-direction: column; gap: 4px; }
 .menu-list button { text-align: left; padding: 8px 12px !important; }
+/* Шапка меню «Файл»: слева название, справа «Закрыть» — как кнопка закрытия в ENS-Table. */
+.menu-head { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+.menu-head h2 { margin: 0; flex: 1; min-width: 0; }
+.menu-close { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer; color: var(--muted); flex: none; }
+.menu-close:hover { background: #ececec; color: #000; }
+.menu-close svg { width: 16px; height: 16px; fill: currentColor; }
+.menu-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Колонтитулы */
 .paper .hf { position: absolute; pointer-events: none; user-select: none; }

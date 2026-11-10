@@ -16,6 +16,35 @@ export function toast(text: string): void {
   (toast as unknown as { h?: number }).h = window.setTimeout(() => { t.hidden = true; }, 3500);
 }
 
+/** Открыто ли окно (оверлей #dialog). Нужно, чтобы не пустить перезапуск за спиной окна. */
+function isDialogOpen(): boolean {
+  const ov = document.getElementById('dialog');
+  return !!ov && !ov.hidden;
+}
+
+/** Перезапуск страницы: F5, Ctrl+R и Ctrl+Shift+R. */
+const isReloadKey = (e: KeyboardEvent): boolean => {
+  const k = e.key.toLowerCase();
+  if (k === 'f5') return true;
+  return (e.ctrlKey || e.metaKey) && k === 'r';
+};
+
+// Пока открыто окно, меню WebView по правой кнопке не показывается: в нём есть «Обновить»,
+// которое перезапускает программу и уносит несохранённый документ. Заодно Ctrl+R и F5.
+// В полях ввода меню остаётся — иначе пропадёт «Вставить» (правило как в ENS-Table).
+// Слушатели навешиваются один раз на весь модуль, состояние берётся из разметки —
+// так вложенные окна не оставляют за собой висящих обработчиков.
+document.addEventListener('contextmenu', (e) => {
+  if (!isDialogOpen()) return;
+  if ((e.target as HTMLElement | null)?.closest('input, textarea')) return;
+  e.preventDefault();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (!isDialogOpen() || !isReloadKey(e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+
 export function dialog(build: (box: HTMLElement, close: () => void) => void, small = true): void {
   const ov = $('dialog');
   const box = document.createElement('div');
@@ -26,7 +55,7 @@ export function dialog(build: (box: HTMLElement, close: () => void) => void, sma
   build(box, close);
   ov.replaceChildren(box);
   ov.hidden = false;
-  box.querySelector<HTMLElement>('input,button.primary')?.focus();
+  box.querySelector<HTMLElement>('input,button.primary,.menu-close')?.focus();
 }
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> & { class?: string } = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {

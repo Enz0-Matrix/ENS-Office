@@ -1734,8 +1734,12 @@ function askName(current: string): Promise<string | null> {
 function fileMenu(): void {
   dialog((box, close) => {
     const item = (label: string, id: string) => el('button', { textContent: label, onclick: () => { close(); run(id); } });
+    // «Закрыть» — в шапке, как в ENS-Table: та же иконка dismiss, чтобы меню не выглядело ловушкой:
+    // Esc работает, но не каждый о нём догадается.
+    const closeBtn = el('button', { class: 'menu-close', type: 'button', title: 'Закрыть меню (Esc)', onclick: close });
+    closeBtn.innerHTML = `${ICONS.dismiss_20 ?? ''}<span>Закрыть</span>`;
     box.append(
-      el('h2', { textContent: 'Файл' }),
+      el('div', { class: 'menu-head' }, el('h2', { textContent: 'Файл' }), closeBtn),
       el('div', { class: 'menu-list' },
         item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),

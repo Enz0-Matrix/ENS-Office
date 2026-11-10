@@ -1643,6 +1643,65 @@ await test('«рентген» форматирования: что задано
   await p.context().close();
 });
 
+await test('меню «Файл»: кнопка «Закрыть» видна, в фокусе и закрывает меню', async () => {
+  const p = await page();
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden]) .menu-close', { timeout: 3000 });
+  const st = await p.evaluate(() => {
+    const b = document.querySelector('#dialog .menu-close');
+    const r = b.getBoundingClientRect();
+    return { text: b.textContent.trim(), icon: !!b.querySelector('svg'), w: Math.round(r.width), h: Math.round(r.height), title: b.getAttribute('title'), focused: document.activeElement === b };
+  });
+  eq(st.text, 'Закрыть', 'подпись кнопки');
+  ok(st.icon, 'значок как в ENS-Table');
+  ok(st.w > 40 && st.h > 16, `кнопка не нулевая: ${JSON.stringify(st)}`);
+  ok(/Esc/.test(st.title || ''), 'подсказка про Esc');
+  ok(st.focused, 'кнопка в фокусе');
+  await p.click('#dialog .menu-close');
+  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
+  ok(true, 'меню закрылось кнопкой');
+  await p.context().close();
+});
+
+await test('меню открыто: правая кнопка и Ctrl+R/F5 не проходят; в полях ввода меню остаётся', async () => {
+  const p = await page();
+  const outcome = () => p.evaluate(() => {
+    const fire = (el, init) => { const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }); el.dispatchEvent(e); return e.defaultPrevented; };
+    const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.querySelector('.ProseMirror').dispatchEvent(ctx);
+    return {
+      ctx: ctx.defaultPrevented,
+      ctrlR: fire(document.body, { key: 'r', ctrlKey: true }),
+      f5: fire(document.body, { key: 'F5' }),
+    };
+  });
+  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'без меню ничего не подавляется');
+
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden])', { timeout: 3000 });
+  eq(await outcome(), { ctx: true, ctrlR: true, f5: true }, 'при открытом меню перезапуск заблокирован');
+
+  await p.keyboard.press('Escape');
+  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
+
+  // В окне с полем ввода системное меню должно остаться, иначе пропадёт «Вставить».
+  await p.evaluate(() => window.ens.run('file.saveAs'));
+  await p.waitForSelector('#dialog:not([hidden]) input[type=text]', { timeout: 3000 });
+  const inField = await p.evaluate(() => {
+    const input = document.querySelector('#dialog input[type=text]');
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(e);
+    const r = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.querySelector('#dialog h2').dispatchEvent(r);
+    return { input: e.defaultPrevented, heading: r.defaultPrevented };
+  });
+  eq(inField, { input: false, heading: true }, 'поле ввода — меню можно, остальное окно — нельзя');
+  await p.keyboard.press('Escape');
+
+  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
+  await p.context().close();
+});
+
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
