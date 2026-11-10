@@ -151,6 +151,15 @@ function doUpdate(): void {
     `<rect x="${ml}" y="0" width="${Math.max(0, W - ml - mr)}" height="${RH}" fill="#fff"/><g stroke="#555" fill="#555" stroke-width="1">${ticks(W, ml, false)}</g>`;
   mLeft.style.left = `${ml}px`;
   mRight.style.left = `${W - mr}px`;
+  // Поля хранятся в пунктах текущего раздела, экранная шкала — в сантиметрах.
+  for (const [handle, key] of [[mLeft, 'left'], [mRight, 'right'], [mTop, 'top'], [mBottom, 'bottom']] as const) {
+    const horizontal = key === 'left' || key === 'right';
+    const max = Math.max(0, (horizontal ? page.w - page.left - page.right : page.h - page.top - page.bottom) + page[key] - 72);
+    handle.setAttribute('aria-valuemax', String(max));
+    handle.setAttribute('aria-valuenow', String(page[key]));
+    handle.setAttribute('aria-valuetext', cmText(page[key]));
+    handle.setAttribute('aria-disabled', String(H.locked()));
+  }
 
   vin.style.top = `${pr.top - vrr.top}px`;
   vin.style.height = `${Hh}px`;
@@ -334,6 +343,29 @@ export function initRuler(host: RulerHost): void {
     });
   });
   marginDrag(mLeft, 'left'); marginDrag(mRight, 'right'); marginDrag(mTop, 'top'); marginDrag(mBottom, 'bottom');
+
+  // Та же операция доступна без мыши: стрелка в сторону текста увеличивает поле.
+  // Шаг — 1 мм (Shift — 5 мм): поля по ГОСТ задают в миллиметрах, линейка показывает сантиметры.
+  const KEY_STEP_PT = 72 / 25.4;
+  for (const [handle, key] of [[mLeft, 'left'], [mRight, 'right'], [mTop, 'top'], [mBottom, 'bottom']] as const) {
+    handle.tabIndex = 0;
+    handle.setAttribute('role', 'slider');
+    handle.setAttribute('aria-label', handle.title);
+    handle.setAttribute('aria-valuemin', '0');
+    handle.addEventListener('keydown', (e) => {
+      if (H.locked() || e.altKey || e.ctrlKey || e.metaKey) return;
+      const inward = { left: 'ArrowRight', right: 'ArrowLeft', top: 'ArrowDown', bottom: 'ArrowUp' }[key];
+      const outward = { left: 'ArrowLeft', right: 'ArrowRight', top: 'ArrowUp', bottom: 'ArrowDown' }[key];
+      if (e.key !== inward && e.key !== outward) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const page = H.page();
+      const max = (key === 'left' || key === 'right' ? page.w - page.left - page.right : page.h - page.top - page.bottom) + page[key] - 72;
+      const delta = (e.shiftKey ? 5 : 1) * KEY_STEP_PT * (e.key === inward ? 1 : -1);
+      const next = Math.max(0, Math.min(max, page[key] + delta));
+      if (next !== page[key]) H.changePage({ [key]: next });
+    });
+  }
 
   // Отступы абзаца.
   const indentDrag = (m: HTMLElement, kind: 'first' | 'hang' | 'left' | 'right') => m.addEventListener('mousedown', (e) => {

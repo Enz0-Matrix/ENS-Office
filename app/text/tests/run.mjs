@@ -1356,6 +1356,45 @@ await test('рисунки: ручки размера мышью, обрезка
   await p.evaluate(() => window.ens.run('image.align'));
 });
 
+await test('линейки: поля клавиатурой меняются только в текущем разделе и сохраняются в DOCX', async () => {
+  const p = await page();
+  await p.waitForSelector('#hr-inner .rm[role=slider][aria-valuenow]');
+  await p.waitForSelector('#vr-inner .rm[role=slider][aria-valuenow]');
+  const left = p.locator('#hr-inner .rm[aria-label="Левое поле"]');
+  const right = p.locator('#hr-inner .rm[aria-label="Правое поле"]');
+  const top = p.locator('#vr-inner .rm[aria-label="Верхнее поле"]');
+  const bottom = p.locator('#vr-inner .rm[aria-label="Нижнее поле"]');
+  const initial = await p.evaluate(() => ({ ...window.ens.getMeta().page }));
+  await left.focus(); await left.press('ArrowRight');
+  await right.focus(); await right.press('Shift+ArrowLeft');
+  await top.focus(); await top.press('ArrowDown');
+  await bottom.focus(); await bottom.press('ArrowUp');
+  const first = await p.evaluate(() => ({ ...window.ens.getMeta().page }));
+  const MM = 72 / 25.4; // шаг клавиш: 1 мм, с Shift — 5 мм
+  const moved = [first.left - initial.left, first.right - initial.right, first.top - initial.top, first.bottom - initial.bottom];
+  ok(moved.every((d, i) => Math.abs(d - MM * [1, 5, 1, 1][i]) < 0.5), `четыре поля: ${JSON.stringify(moved)}`);
+  await left.focus(); await left.press('ArrowLeft');
+  ok(Math.abs((await p.evaluate(() => window.ens.getMeta().page.left)) - initial.left) < 0.5, 'обратная стрелка');
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const meta = E.getMeta();
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый раздел'), s.nodes.section_break.create({ page: { ...meta.page } }), P('Второй раздел')]), meta, 'ruler-section');
+    const doc = E.view.state.doc;
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(doc, doc.content.size - 2)));
+  });
+  await p.waitForTimeout(300);
+  await left.focus(); await left.press('Shift+ArrowRight');
+  const result = await p.evaluate(() => {
+    const E = window.ens, doc = E.view.state.doc;
+    const section = doc.child(1).attrs.page;
+    const back = E.importDocx(E.exportDocx(doc, E.getMeta(), 'ruler-section'));
+    return { first: E.getMeta().page.left, second: section.left, backFirst: back.meta.page.left, backSecond: back.doc.child(1).attrs.page.left };
+  });
+  ok(Math.abs(result.first - initial.left) < 0.5 && Math.abs(result.second - (initial.left + 5 * MM)) < 0.5, `независимые поля: ${JSON.stringify(result)}`);
+  ok(Math.abs(result.backFirst - result.first) < 0.1 && Math.abs(result.backSecond - result.second) < 0.1, `поля после DOCX: ${JSON.stringify(result)}`);
+  await p.context().close();
+});
+
 await test('линейки: поля и отступы абзаца тянутся мышью, видны метки столбцов и строк таблицы', async () => {
   const p = await page();
   await p.evaluate(() => {
