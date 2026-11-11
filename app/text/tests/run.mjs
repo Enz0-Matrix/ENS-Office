@@ -1356,6 +1356,45 @@ await test('рисунки: ручки размера мышью, обрезка
   await p.evaluate(() => window.ens.run('image.align'));
 });
 
+await test('линейки: поля клавиатурой меняются только в текущем разделе и сохраняются в DOCX', async () => {
+  const p = await page();
+  await p.waitForSelector('#hr-inner .rm[role=slider][aria-valuenow]');
+  await p.waitForSelector('#vr-inner .rm[role=slider][aria-valuenow]');
+  const left = p.locator('#hr-inner .rm[aria-label="Левое поле"]');
+  const right = p.locator('#hr-inner .rm[aria-label="Правое поле"]');
+  const top = p.locator('#vr-inner .rm[aria-label="Верхнее поле"]');
+  const bottom = p.locator('#vr-inner .rm[aria-label="Нижнее поле"]');
+  const initial = await p.evaluate(() => ({ ...window.ens.getMeta().page }));
+  await left.focus(); await left.press('ArrowRight');
+  await right.focus(); await right.press('Shift+ArrowLeft');
+  await top.focus(); await top.press('ArrowDown');
+  await bottom.focus(); await bottom.press('ArrowUp');
+  const first = await p.evaluate(() => ({ ...window.ens.getMeta().page }));
+  const MM = 72 / 25.4; // шаг клавиш: 1 мм, с Shift — 5 мм
+  const moved = [first.left - initial.left, first.right - initial.right, first.top - initial.top, first.bottom - initial.bottom];
+  ok(moved.every((d, i) => Math.abs(d - MM * [1, 5, 1, 1][i]) < 0.5), `четыре поля: ${JSON.stringify(moved)}`);
+  await left.focus(); await left.press('ArrowLeft');
+  ok(Math.abs((await p.evaluate(() => window.ens.getMeta().page.left)) - initial.left) < 0.5, 'обратная стрелка');
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const meta = E.getMeta();
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый раздел'), s.nodes.section_break.create({ page: { ...meta.page } }), P('Второй раздел')]), meta, 'ruler-section');
+    const doc = E.view.state.doc;
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(doc, doc.content.size - 2)));
+  });
+  await p.waitForTimeout(300);
+  await left.focus(); await left.press('Shift+ArrowRight');
+  const result = await p.evaluate(() => {
+    const E = window.ens, doc = E.view.state.doc;
+    const section = doc.child(1).attrs.page;
+    const back = E.importDocx(E.exportDocx(doc, E.getMeta(), 'ruler-section'));
+    return { first: E.getMeta().page.left, second: section.left, backFirst: back.meta.page.left, backSecond: back.doc.child(1).attrs.page.left };
+  });
+  ok(Math.abs(result.first - initial.left) < 0.5 && Math.abs(result.second - (initial.left + 5 * MM)) < 0.5, `независимые поля: ${JSON.stringify(result)}`);
+  ok(Math.abs(result.backFirst - result.first) < 0.1 && Math.abs(result.backSecond - result.second) < 0.1, `поля после DOCX: ${JSON.stringify(result)}`);
+  await p.context().close();
+});
+
 await test('линейки: поля и отступы абзаца тянутся мышью, видны метки столбцов и строк таблицы', async () => {
   const p = await page();
   await p.evaluate(() => {
@@ -1773,6 +1812,107 @@ await test('Alt+Q открывает однострочный поиск фор�
   await p.keyboard.press('Escape'); await p.context().close();
 });
 
+await test('слияние: независимые правки, вставки, удаления, конфликты и вложенные абзацы', async () => {
+  const p = await page();
+  const failures = await p.evaluate(async () => {
+    const { planMerge, resolveMerge } = await import('/src/merge.ts');
+    const s = window.ens.schema;
+    const P = (t, bold = false) => s.nodes.paragraph.create(null, t ? s.text(t, bold ? [s.marks.strong.create()] : []) : null);
+    const D = (a) => s.nodes.doc.create(null, a.map((x) => typeof x === 'string' ? P(x) : x));
+    const failures = [];
+    const check = (b, m, t, expected, count = 0, choice = 'mine') => {
+      const plan = planMerge(D(b), D(m), D(t));
+      if (plan.conflicts !== count) failures.push('число конфликтов: ' + JSON.stringify([b, m, t, plan.conflicts]));
+      const choices = new Map(Array.from({ length: count }, (_, i) => [i, choice]));
+      const doc = resolveMerge(plan, choices);
+      if (!doc.eq(D(expected.length ? expected : ['']))) failures.push('результат: ' + JSON.stringify(doc.toJSON()) + ' / ' + JSON.stringify(expected));
+      if (count) {
+        try { resolveMerge(plan, new Map()); failures.push('конфликт разрешён без выбора'); } catch { /* ожидаемая ошибка */ }
+      }
+    };
+    check(['A', 'B', 'C'], ['X', 'B', 'C'], ['A', 'B', 'Y'], ['X', 'B', 'Y']);
+    check(['A', 'B'], ['X', 'A', 'B'], ['A', 'B', 'Y'], ['X', 'A', 'B', 'Y']);
+    check(['A', 'B', 'C'], ['A', 'C'], ['A', 'B', 'Y'], ['A', 'Y']);
+    check(['A'], ['X'], ['Y'], ['Y'], 1, 'theirs');
+    check(['A'], ['X'], ['Y'], ['A'], 1, 'base');
+    check(['A'], [], ['Y'], [], 1);
+    check(['A'], ['X', 'A'], ['Y', 'A'], ['X', 'A'], 1);
+    check(['A'], ['X'], ['X'], ['X']);
+    check(['A'], [P('A', true)], ['B'], [P('A', true)], 1);
+    const list = (a) => s.nodes.bullet_list.create(null, a.map((t) => s.nodes.list_item.create(null, P(t))));
+    check([list(['A', 'B', 'C'])], [list(['X', 'B', 'C'])], [list(['A', 'B', 'Y'])], [list(['X', 'B', 'Y'])]);
+    const table = (a) => s.nodes.table.create(null, s.nodes.table_row.create(null, a.map((t) => s.nodes.table_cell.create(null, P(t)))));
+    check([table(['A', 'B', 'C'])], [table(['X', 'B', 'C'])], [table(['A', 'B', 'Y'])], [table(['X', 'B', 'Y'])]);
+    for (let i = 1; i < 20; i++) {
+      const a = Array.from({ length: i }, (_, j) => 'абзац ' + j);
+      check(a, [...a, 'новый'], a, [...a, 'новый']);
+      check(a, a, a.slice(1), a.slice(1));
+      check(a, a.slice(1), a.slice(1), a.slice(1));
+    }
+    return failures;
+  });
+  eq(failures, [], 'регрессии слияния');
+  await p.context().close();
+});
+
+await test('слияние: локальные DOCX, выбор конфликтов, отмена и сохранение результата', async () => {
+  const p = await page();
+  const files = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const make = (texts) => [...E.exportDocx(s.nodes.doc.create(null, texts.map((t) => s.nodes.paragraph.create(null, s.text(t)))), E.getMeta(), 'copy')];
+    return [make(['Основа', 'Общий']), make(['Мой', 'Общий']), make(['Коллега', 'Общий'])];
+  });
+  await p.click('.ProseMirror'); await p.keyboard.type('Текущий документ');
+  const before = await json(p);
+  await p.evaluate(() => window.ens.run('review.mergeCopies'));
+  await p.locator('.merge-dialog button', { hasText: 'Сравнить копии' }).click();
+  ok((await p.locator('.merge-dialog [role=status]').textContent()).includes('все три'), 'нужны три файла');
+  for (let i = 0; i < 3; i++) await p.locator(`[data-merge-file="${i}"]`).setInputFiles({ name: `copy-${i}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files[i]) });
+  await p.locator('.merge-dialog button', { hasText: 'Сравнить копии' }).click();
+  await p.waitForSelector('.merge-conflict select');
+  ok(await p.locator('.merge-results > button.primary').isDisabled(), 'без выбора применять нельзя');
+  eq(await json(p), before, 'сравнение не меняет текущий документ');
+  await p.keyboard.press('Escape');
+  eq(await json(p), before, 'отмена не меняет документ');
+  await p.evaluate(() => window.ens.run('review.mergeCopies'));
+  for (let i = 0; i < 3; i++) await p.locator(`[data-merge-file="${i}"]`).setInputFiles({ name: `copy-${i}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files[i]) });
+  await p.locator('.merge-dialog button', { hasText: 'Сравнить копии' }).click();
+  await p.waitForSelector('.merge-conflict select');
+  eq(await p.locator('.merge-conflict select').inputValue(), '', 'до выбора показан пустой пункт, а не готовое решение');
+  await p.locator('.merge-conflict select').selectOption('theirs');
+  await p.locator('.merge-results > button.primary').click();
+  await p.locator('.modal button', { hasText: 'Не сохранять' }).click();
+  eq(await text(p), 'Коллега|Общий', 'выбран вариант коллеги');
+  ok(await p.evaluate(() => window.ens.isDirty()), 'объединённый документ не сохранён');
+  const back = await p.evaluate(() => { const E = window.ens; return E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'merged')).doc.toJSON(); });
+  eq(back, await json(p), 'результат переживает DOCX');
+  await p.context().close();
+});
+
+await test('слияние: ключи параметров, бинарные данные и подсказка о неверной основе', async () => {
+  const p = await page();
+  const failures = await p.evaluate(async () => {
+    const { mergeKey, describeMeta, baseOverlap } = await import('/src/merge.ts');
+    const failures = [];
+    const t = (cond, msg) => { if (!cond) failures.push(msg); };
+    t(mergeKey({ a: 1, b: [2, { c: 3, d: 4 }] }) === mergeKey({ b: [2, { d: 4, c: 3 }], a: 1 }), 'порядок ключей');
+    t(mergeKey({ a: 1, b: undefined }) === mergeKey({ a: 1 }), 'undefined как отсутствие свойства');
+    t(mergeKey({ a: 1 }) !== mergeKey({ a: 2 }), 'разные значения');
+    t(mergeKey(new Uint8Array([1, 2, 3])) === mergeKey(new Uint8Array([1, 2, 3])), 'одинаковые байты');
+    t(mergeKey(new Uint8Array([1, 2, 3])) !== mergeKey(new Uint8Array([1, 2, 4])), 'разные байты');
+    t(mergeKey(new Map([['x', 1]])) !== mergeKey(new Map([['x', 2]])), 'Map сравнивается по содержимому');
+    t(mergeKey(new Map([['x', 1], ['y', 2]])) === mergeKey(new Map([['y', 2], ['x', 1]])), 'порядок записей Map');
+    t(describeMeta({ img: new Uint8Array(100000) }).length < 200, 'бинарные данные не раздувают просмотр');
+    const s = window.ens.schema;
+    const doc = (texts) => s.nodes.doc.create(null, texts.map((x) => s.nodes.paragraph.create(null, s.text(x))));
+    t(baseOverlap(doc(['a', 'b', 'c', 'd']), doc(['a', 'b', 'c', 'd', 'e'])) === 1, 'основа целиком сохранена');
+    t(baseOverlap(doc(['a', 'b', 'c', 'd']), doc(['x', 'y', 'z'])) === 0, 'общего нет');
+    t(baseOverlap(doc(['a', 'b', 'c', 'd']), doc(['a', 'b', 'x'])) === 0.5, 'половина общего');
+    return failures;
+  });
+  eq(failures, [], 'ключи и основа слияния');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

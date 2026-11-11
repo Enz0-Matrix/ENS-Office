@@ -342,3 +342,8 @@
 .format-search > input { width: 100%; box-sizing: border-box; }
 .format-search .check-list { display: flex; flex-direction: column; gap: 4px; }
 .format-hit { text-align: left; overflow-wrap: anywhere; }
+/* Слияние локальных копий: длинные фрагменты не раздвигают окно. */
+.merge-dialog { max-height: 85vh; overflow: auto; }
+.merge-conflict { border: 1px solid var(--border, #888); padding: 12px; margin: 12px 0; }
+.merge-conflict pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+.merge-results > .primary { margin-top: 12px; }
