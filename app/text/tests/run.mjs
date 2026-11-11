@@ -54,6 +54,9 @@ async function test(name, f) {
   } catch (e) {
     failed++;
     console.log(`  ✗ ${name}\n      ${e.message}`);
+  } finally {
+    // Не копим вкладки между тестами: это важно в среде с ограниченной памятью.
+    await Promise.all(browser.contexts().map((ctx) => ctx.close()));
   }
 }
 const fixture = (n) => [...readFileSync(join(here, 'fixtures', n))];
@@ -1275,6 +1278,323 @@ await test('обтекание рисунка из ленты: в тексте, 
   eq(await p.$$eval('.ProseMirror img.fl', (e) => e.length), 0, 'снова в тексте');
 });
 
+await test('рисунки: ручки размера мышью, обрезка, окно «Формат», подпись, перетаскивание плавающего', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  const setup = (float) => p.evaluate(({ png, float }) => {
+    const E = window.ens, s = E.schema;
+    const img = s.nodes.image.create({ src: png, width: 120, height: 80, float });
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Строка '), img, s.text(' текста')]), s.nodes.paragraph.create(null, s.text('Вторая строка'))]), E.getMeta(), 'img');
+  }, { png: PNG, float });
+  const attrs = () => p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') a = n.attrs; }); return a; });
+  await setup(null);
+  await p.waitForTimeout(300);
+  // щелчок выделяет рисунок, появляются ручки
+  const box = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await p.waitForSelector('.img-ov:not([hidden]) .img-h-se');
+  // угловая ручка сохраняет пропорции
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x + 64, se.y + 14, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  let a = await attrs();
+  ok(a.width > 160 && Math.abs(a.width / a.height - 1.5) < 0.05, `угол: размер ${a.width}×${a.height}, пропорции 3:2`);
+  // боковая ручка меняет только ширину
+  const e = await (await p.$('.img-h-e')).boundingBox();
+  await p.mouse.move(e.x + 4, e.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(e.x + 44, e.y + 4, { steps: 4 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const a2 = await attrs();
+  ok(a2.width > a.width + 30 && a2.height === a.height, `край: ширина ${a.width}→${a2.width}, высота ${a2.height}`);
+  // обрезка слева
+  await p.evaluate(() => window.ens.run('image.crop'));
+  const w = await (await p.$('.img-h-w')).boundingBox();
+  await p.mouse.move(w.x + 4, w.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(w.x + 44, w.y + 4, { steps: 4 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const a3 = await attrs();
+  ok(a3.crop && a3.crop[0] > 0.1 && a3.width < a2.width - 30, `обрезка: ${JSON.stringify(a3.crop)}, ширина ${a3.width}`);
+  await p.evaluate(() => window.ens.run('image.crop'));
+  await p.evaluate(() => window.ens.run('image.cropReset'));
+  await p.waitForTimeout(100);
+  eq((await attrs()).crop, null, 'обрезка убрана');
+  // окно «Формат рисунка»: ширина 5 см с сохранением пропорций
+  await p.evaluate(() => window.ens.run('image.format'));
+  await p.waitForSelector('.modal');
+  await p.fill('.modal .dlg-row:has-text("Ширина") input[type=text]', '5');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(200);
+  a = await attrs();
+  ok(Math.abs(a.width - 189) <= 2, `5 см ≈ 189 px: ${a.width}`);
+  // подпись
+  await p.evaluate(() => window.ens.run('image.caption'));
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('Рисунок 1 — '), 'подпись добавлена');
+  // плавающий рисунок: Alt+щелчок выбирает, перетаскивание меняет положение
+  await setup({ mode: 'behind', hRel: 'page', hOff: 200, hAlign: null, vRel: 'page', vOff: 300, vAlign: null, dist: [0, 0, 8, 8] });
+  await p.waitForTimeout(400);
+  const fb = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  await p.keyboard.down('Alt');
+  await p.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await p.keyboard.up('Alt');
+  await p.waitForSelector('.img-ov.abs:not([hidden])');
+  const body = await (await p.$('.img-ov-body')).boundingBox();
+  const before = await attrs();
+  await p.mouse.move(body.x + 20, body.y + 20);
+  await p.mouse.down();
+  await p.mouse.move(body.x + 80, body.y + 50, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(300);
+  const moved = await attrs();
+  ok(moved.float.hOff - before.float.hOff >= 50 && moved.float.vOff - before.float.vOff >= 25, `перетащили: ${before.float.hOff},${before.float.vOff} → ${moved.float.hOff},${moved.float.vOff}`);
+  await p.evaluate(() => window.ens.run('image.align'));
+});
+
+await test('линейки: поля и отступы абзаца тянутся мышью, видны метки столбцов и строк таблицы', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый абзац для проверки отступов на линейке. '.repeat(4)), P('Второй абзац')]), E.getMeta(), 'ruler');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 5)));
+  });
+  await p.waitForTimeout(400);
+  await p.waitForSelector('#hr-inner svg line', { state: 'attached' });
+  await p.waitForSelector('#vr-inner svg line', { state: 'attached' });
+  const drag = async (sel, dx, dy) => {
+    const b = await (await p.$(sel)).boundingBox();
+    await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + dy, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForTimeout(250);
+  };
+  // левое поле: +1 см (≈38 px) → +28 pt
+  const left0 = await p.evaluate(() => window.ens.getMeta().page.left);
+  await drag('#hr-inner .rm >> nth=0', 38, 0);
+  const left1 = await p.evaluate(() => window.ens.getMeta().page.left);
+  ok(left1 - left0 > 25 && left1 - left0 < 32, `левое поле ${left0} → ${left1} pt`);
+  // верхнее поле: −0,5 см
+  const top0 = await p.evaluate(() => window.ens.getMeta().page.top);
+  await drag('#vr-inner .rm >> nth=0', 0, -19);
+  const top1 = await p.evaluate(() => window.ens.getMeta().page.top);
+  ok(top0 - top1 > 10 && top0 - top1 < 18, `верхнее поле ${top0} → ${top1} pt`);
+  // красная строка (первая строка) +1 см
+  const attrs = () => p.evaluate(() => { const n = window.ens.view.state.doc.child(0); return { indent: n.attrs.indent, first: n.attrs.first, rindent: n.attrs.rindent }; });
+  await drag('.ri-first', 38, 0);
+  let a = await attrs();
+  ok(a.first > 25 && a.first < 32 && !a.indent, `красная строка: ${JSON.stringify(a)}`);
+  // отступ слева (квадрат): абзац целиком +1 см, красная строка сохраняется
+  await drag('.ri-left', 38, 0);
+  a = await attrs();
+  ok(a.indent > 25 && a.indent < 32 && a.first > 25, `отступ слева: ${JSON.stringify(a)}`);
+  // выступ (нижний треугольник): первая строка остаётся на месте, остальные сдвигаются
+  const firstPos = a.indent + a.first;
+  await drag('.ri-hang', 19, 0);
+  a = await attrs();
+  ok(Math.abs(a.indent + a.first - firstPos) < 1.5 && a.indent > 38, `выступ: ${JSON.stringify(a)}`);
+  // отступ справа
+  await drag('.ri-right', -38, 0);
+  a = await attrs();
+  ok(a.rindent > 25, `отступ справа: ${JSON.stringify(a)}`);
+  const docx = await p.evaluate(() => { const E = window.ens; const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'r')); const n = b.doc.child(0); return { i: n.attrs.indent, f: n.attrs.first, r: n.attrs.rindent }; });
+  ok(docx.r > 25 && docx.i > 38, `отступы после docx: ${JSON.stringify(docx)}`);
+  // таблица: метки столбцов и строк, перетаскивание
+  await p.evaluate(() => window.ens.run('insert.table'));
+  await p.waitForSelector('.modal input');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(400);
+  await p.waitForSelector('.rc');
+  eq(await p.$$eval('.rc', (e) => e.length), 4, 'границы 3 столбцов');
+  ok((await p.$$eval('.rr', (e) => e.length)) >= 3, 'границы строк');
+  const widths = () => p.evaluate(() => { let w = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_row' && !w) w = n.content.content.map((c) => (c.attrs.colwidth ?? [null])[0]); }); return w; });
+  await drag('.rc >> nth=1', 40, 0);
+  const w1 = await widths();
+  ok(w1[0] > 0 && w1[1] > 0, `ширины после перетаскивания: ${JSON.stringify(w1)}`);
+  await drag('.rr >> nth=1', 0, 25);
+  const rh = await p.evaluate(() => { let h = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_row' && h == null) h = n.attrs.height; }); return h; });
+  ok(rh > 15, `высота первой строки: ${rh} pt`);
+});
+
+await test('таблица: границы и заливка, выравнивание, свойства; всё доживает до docx', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cell = (t) => s.nodes.table_cell.create({ colwidth: [150] }, s.nodes.paragraph.create(null, s.text(t)));
+    const row = (a, b) => s.nodes.table_row.create(null, [cell(a), cell(b)]);
+    const table = s.nodes.table.create({ borders: true }, [row('А1', 'Б1'), row('А2', 'Б2')]);
+    E.loadDoc(s.nodes.doc.create(null, [table, s.nodes.paragraph.create()]), E.getMeta(), 'tbl');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 4)));
+  });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.ens.run('table.borderDialog'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select >> nth=0', 'table');
+  // только внешние границы, пунктир 1 пт, красный; заливка
+  await p.click('.modal button:has-text("Внешние")');
+  await p.selectOption('.modal select >> nth=1', 'dashed');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(250);
+  const cells = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') out.push(n.attrs); }); return out; });
+  let c = await cells();
+  ok(c[0].borders && c[0].borders.t.s === 'dashed' && c[0].borders.l.s === 'dashed', `внешние границы A1: ${JSON.stringify(c[0].borders)}`);
+  ok(c[0].borders.r.s === 'solid' && c[0].borders.b.s === 'solid', 'внутренние границы остались прежними');
+  // заливка и выравнивание по вертикали
+  await p.evaluate(() => window.ens.run('table.borderDialog'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select >> nth=0', 'table');
+  await p.click('.modal button:has-text("Внутренние")');
+  await p.check('.modal label:has-text("залить") input');
+  await p.click('.modal button:has-text("Убрать границы")');
+  await p.waitForTimeout(250);
+  c = await cells();
+  ok(c[0].background && c[0].borders.r.s === 'none' && c[0].borders.t.s === 'dashed', `внутренние убраны, заливка есть: ${JSON.stringify(c[0])}`);
+  await p.evaluate(() => window.ens.run('table.valign'));
+  // свойства таблицы: по центру страницы, высота строки
+  await p.evaluate(() => window.ens.run('table.props'));
+  await p.waitForSelector('.modal');
+  await p.selectOption('.modal select', 'center');
+  await p.fill('.modal input[placeholder="авто"]', '1');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(250);
+  const t = await p.evaluate(() => { let a = null, h = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table') a = n.attrs.align; if (n.type.name === 'table_row' && h == null) h = n.attrs.height; }); return { a, h }; });
+  ok(t.a === 'center' && Math.abs(t.h - 28.3) < 1, `свойства: ${JSON.stringify(t)}`);
+  // docx туда и обратно
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 't'));
+    const out = { cells: [], align: null, h: null };
+    d.doc.descendants((n) => { if (n.type.name === 'table_cell') out.cells.push(n.attrs); if (n.type.name === 'table') out.align = n.attrs.align; if (n.type.name === 'table_row' && out.h == null) out.h = n.attrs.height; });
+    return out;
+  });
+  ok(back.align === 'center' && Math.abs(back.h - 28.3) < 1, `положение и высота после docx: ${back.align}, ${back.h}`);
+  ok(back.cells[0].background && back.cells[0].borders && back.cells[0].borders.t.s === 'dashed' && back.cells[0].borders.r.s === 'none', `границы и заливка после docx: ${JSON.stringify(back.cells[0])}`);
+});
+
+await test('надписи, рамки абзацев и плавающие таблицы: чтение, положение на листе, запись обратно (и LibreOffice)', async () => {
+  const p = await page();
+  await p.setInputFiles('#file-input', join(here, 'fixtures', 'frames.docx'));
+  await p.waitForSelector('.ProseMirror .frame-box', { timeout: 5000 });
+  await p.waitForTimeout(500);
+  const info = await p.evaluate(() => {
+    const E = window.ens;
+    const frames = [];
+    E.view.state.doc.descendants((n) => { if (n.type.name === 'frame') frames.push({ kind: n.attrs.kind, mode: n.attrs.float?.mode, hRel: n.attrs.float?.hRel, hOff: Math.round(n.attrs.float?.hOff ?? -1), vRel: n.attrs.float?.vRel, w: n.attrs.width, fill: n.attrs.fill, border: n.attrs.border?.c, text: n.textContent.slice(0, 40) }); return false; });
+    const paper = document.querySelector('.paper').getBoundingClientRect();
+    const rect = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.left - paper.left), y: Math.round(r.top - paper.top), w: Math.round(r.width), h: Math.round(r.height) }; };
+    return {
+      frames, lossy: E.getMeta().lossy, header: JSON.stringify(E.getMeta().hf.header).includes('"frame"'),
+      box: rect('.ProseMirror .frame-box.fr-front'), wrap: [...document.querySelectorAll('.ProseMirror .frame-box.fr-wrap')].map((e) => ({ float: getComputedStyle(e).float, table: e.classList.contains('fr-table') })),
+      hf: rect('.paper .hf .frame-box'),
+    };
+  });
+  const tb = info.frames.find((f) => f.fill === '#FFF2CC');
+  ok(tb && tb.mode === 'front' && tb.hRel === 'page' && Math.abs(tb.hOff - 315) <= 2 && tb.border === '#FF0000' && tb.text.includes('Надпись'), `надпись: ${JSON.stringify(info.frames)}`);
+  ok(info.frames.some((f) => f.kind === 'table') && info.frames.some((f) => f.text.includes('Рамка абзацев')), 'плавающая таблица и рамка абзацев прочитаны');
+  ok(info.header, 'надпись в колонтитуле прочитана');
+  ok(info.box && Math.abs(info.box.x - 315) <= 3 && Math.abs(info.box.y - 189) <= 3 && info.box.w > 270, `надпись на листе: ${JSON.stringify(info.box)}`);
+  ok(info.hf && Math.abs(info.hf.x - 76) <= 3 && Math.abs(info.hf.y - 38) <= 3, `надпись в колонтитуле: ${JSON.stringify(info.hf)}`);
+  ok(info.wrap.length >= 2 && info.wrap.every((w) => w.float === 'left' || w.float === 'right'), `обтекание: ${JSON.stringify(info.wrap)}`);
+  eq(info.lossy.filter((x) => /надпис|фигур/.test(x)), [], 'о надписях не предупреждает');
+  // запись обратно: положение, заливка, текст, плавающая таблица
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'f'));
+    const frames = [];
+    d.doc.descendants((n) => { if (n.type.name === 'frame') frames.push({ kind: n.attrs.kind, mode: n.attrs.float?.mode, hOff: Math.round(n.attrs.float?.hOff ?? -1), fill: n.attrs.fill, text: n.textContent.slice(0, 20) }); return false; });
+    return { frames, hdr: JSON.stringify(d.meta.hf.header).includes('"frame"') };
+  });
+  const tb2 = back.frames.find((f) => f.fill === '#FFF2CC');
+  ok(tb2 && tb2.mode === 'front' && Math.abs(tb2.hOff - 315) <= 2 && tb2.text.includes('Надпись'), `после docx: ${JSON.stringify(back.frames)}`);
+  ok(back.frames.some((f) => f.kind === 'table') && back.hdr, 'таблица и надпись колонтитула после docx');
+  // LibreOffice открывает записанный файл и видит текст надписи
+  const bytes = await p.evaluate(() => [...window.ens.exportDocx(window.ens.view.state.doc, window.ens.getMeta(), 'f')]);
+  const tmp = mkdtempSync(join(tmpdir(), 'ens-frames-'));
+  writeFileSync(join(tmp, 'f.docx'), Buffer.from(bytes));
+  execSync(`soffice --headless --convert-to pdf --outdir "${tmp}" "${tmp}/f.docx"`, { stdio: 'pipe', timeout: 90000 });
+  const txt = execSync(`pdftotext "${tmp}/f.pdf" -`).toString().replace(/\s+/g, ' ');
+  ok(/Надпись\s*:\s*реквизиты/.test(txt) && txt.includes('Шапка организации') && txt.includes('Директору') && txt.includes('Рамка абзацев'), `LibreOffice увидел надписи: ${txt.slice(0, 120).replace(/\n/g, ' | ')}`);
+});
+
+await test('надпись: вставка, выделение, ручки размера, перетаскивание, окно «Формат надписи»', async () => {
+  const p = await page();
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Абзац под надписью.')), s.nodes.paragraph.create(null, s.text('Второй абзац.'))]), E.getMeta(), 'tb'); });
+  await p.waitForTimeout(300);
+  await p.evaluate(() => window.ens.run('insert.textbox'));
+  await p.waitForSelector('.ProseMirror .frame-box');
+  await p.waitForTimeout(300);
+  await p.keyboard.type('Реквизиты');
+  eq(await p.evaluate(() => { let t = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'frame') t = n.textContent; }); return t; }), 'Реквизиты', 'в надписи можно печатать');
+  await p.evaluate(() => window.ens.run('frame.select'));
+  await p.waitForSelector('.img-ov:not([hidden]) .img-h-se');
+  const attrs = () => p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'frame') a = n.attrs; }); return a; });
+  const w0 = (await attrs()).width;
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x + 64, se.y + 44, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(250);
+  let a = await attrs();
+  ok(a.width > w0 + 50 && a.height > 100, `размер надписи ${w0} → ${a.width}×${a.height}`);
+  // перетаскивание
+  const body = await (await p.$('.img-ov-body')).boundingBox();
+  const h0 = a.float.hOff;
+  await p.mouse.move(body.x + 30, body.y + 30);
+  await p.mouse.down();
+  await p.mouse.move(body.x + 90, body.y + 50, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(300);
+  a = await attrs();
+  ok(a.float.hRel === 'page' && a.float.hOff > h0 + 40, `надпись перетащена: ${JSON.stringify(a.float)}`);
+  // окно: рамка, заливка, обтекание
+  await p.evaluate(() => window.ens.run('image.format'));
+  await p.waitForSelector('.modal');
+  await p.fill('.modal .dlg-row:has-text("Ширина") input', '8');
+  await p.selectOption('.modal .dlg-row:has-text("Рамка") select >> nth=0', 'dashed');
+  await p.check('.modal label:has-text("залить") input');
+  await p.selectOption('.modal .dlg-row:has-text("Обтекание") select', 'right');
+  await p.click('.modal button.primary');
+  await p.waitForTimeout(300);
+  a = await attrs();
+  ok(Math.abs(a.width - 302) <= 2 && a.border.s === 'dashed' && a.fill && a.float.mode === 'wrap' && a.float.side === 'right', `формат: ${JSON.stringify({ w: a.width, b: a.border, f: a.fill, fl: a.float.mode })}`);
+  eq(await p.$eval('.ProseMirror .frame-box', (e) => getComputedStyle(e).float), 'right', 'обтекание справа');
+  // в docx и обратно
+  const back = await p.evaluate(() => { const E = window.ens; const d = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 't')); let f = null; d.doc.descendants((n) => { if (n.type.name === 'frame') f = { mode: n.attrs.float?.mode, side: n.attrs.float?.side, fill: n.attrs.fill, text: n.textContent, dash: n.attrs.border?.s }; }); return f; });
+  ok(back && back.mode === 'wrap' && back.text === 'Реквизиты' && back.fill && back.dash === 'dashed', `после docx: ${JSON.stringify(back)}`);
+  // удаление
+  await p.evaluate(() => window.ens.run('image.delete'));
+  eq(await p.$$eval('.ProseMirror .frame-box', (e) => e.length), 0, 'надпись удалена');
+});
+
+await test('таблица: сделать плавающей справа и вернуть в текст', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cell = (t) => s.nodes.table_cell.create({ colwidth: [120] }, s.nodes.paragraph.create(null, s.text(t)));
+    const table = s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('Кому'), cell('Иванову')])]);
+    E.loadDoc(s.nodes.doc.create(null, [table, s.nodes.paragraph.create(null, s.text('Обычный абзац, который обтекает таблицу справа налево. '.repeat(5)))]), E.getMeta(), 'fl');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 4)));
+  });
+  await p.waitForTimeout(300);
+  await p.click('#tabs .tab:has-text("Таблица")');
+  await p.selectOption('select[data-command="table.wrap"]', 'right');
+  await p.waitForTimeout(400);
+  eq(await p.$eval('.ProseMirror .frame-box.fr-table', (e) => getComputedStyle(e).float), 'right', 'таблица справа');
+  const cols = await p.$$eval('.rc', (e) => e.length);
+  ok(cols >= 2, `линейка видит столбцы плавающей таблицы: ${cols}`);
+  await p.selectOption('select[data-command="table.wrap"]', 'inline');
+  await p.waitForTimeout(300);
+  eq(await p.$$eval('.ProseMirror .frame-box', (e) => e.length), 0, 'рамка-обёртка снята');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.type.name), 'table', 'таблица снова в потоке');
+});
+
 // ---- Проверка оформления и «рентген» ----
 await test('проверка по ГОСТ: находит нарушения, «Исправить всё» приводит документ к профилю', async () => {
   const p = await page();
@@ -1324,6 +1644,133 @@ await test('«рентген» форматирования: что задано
   eq(after, [null, 0], 'формат сброшен');
   await p.keyboard.press('Control+Alt+KeyI');
   await p.context().close();
+});
+
+await test('меню «Файл»: кнопка «Закрыть» видна, в фокусе и закрывает меню', async () => {
+  const p = await page();
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden]) .menu-close', { timeout: 3000 });
+  const st = await p.evaluate(() => {
+    const b = document.querySelector('#dialog .menu-close');
+    const r = b.getBoundingClientRect();
+    return { text: b.textContent.trim(), icon: !!b.querySelector('svg'), w: Math.round(r.width), h: Math.round(r.height), title: b.getAttribute('title'), focused: document.activeElement === b };
+  });
+  eq(st.text, 'Закрыть', 'подпись кнопки');
+  ok(st.icon, 'значок как в ENS-Table');
+  ok(st.w > 40 && st.h > 16, `кнопка не нулевая: ${JSON.stringify(st)}`);
+  ok(/Esc/.test(st.title || ''), 'подсказка про Esc');
+  ok(st.focused, 'кнопка в фокусе');
+  await p.click('#dialog .menu-close');
+  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
+  ok(true, 'меню закрылось кнопкой');
+  await p.context().close();
+});
+
+await test('меню открыто: правая кнопка и Ctrl+R/F5 не проходят; в полях ввода меню остаётся', async () => {
+  const p = await page();
+  const outcome = () => p.evaluate(() => {
+    const fire = (el, init) => { const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }); el.dispatchEvent(e); return e.defaultPrevented; };
+    const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.querySelector('.ProseMirror').dispatchEvent(ctx);
+    return {
+      ctx: ctx.defaultPrevented,
+      ctrlR: fire(document.body, { key: 'r', ctrlKey: true }),
+      f5: fire(document.body, { key: 'F5' }),
+    };
+  });
+  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'без меню ничего не подавляется');
+
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden])', { timeout: 3000 });
+  eq(await outcome(), { ctx: true, ctrlR: true, f5: true }, 'при открытом меню перезапуск заблокирован');
+
+  await p.keyboard.press('Escape');
+  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
+
+  // В окне с полем ввода системное меню должно остаться, иначе пропадёт «Вставить».
+  await p.evaluate(() => window.ens.run('file.saveAs'));
+  await p.waitForSelector('#dialog:not([hidden]) input[type=text]', { timeout: 3000 });
+  const inField = await p.evaluate(() => {
+    const input = document.querySelector('#dialog input[type=text]');
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    input.dispatchEvent(e);
+    const r = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    document.querySelector('#dialog h2').dispatchEvent(r);
+    return { input: e.defaultPrevented, heading: r.defaultPrevented };
+  });
+  eq(inField, { input: false, heading: true }, 'поле ввода — меню можно, остальное окно — нельзя');
+  await p.keyboard.press('Escape');
+
+  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
+  await p.context().close();
+});
+
+await test('поиск формата в строку: условия, стили, вложенные абзацы и переходы', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const fmt = (font, size) => s.marks.textStyle.create({ font, size });
+    const em = s.marks.em.create(), strong = s.marks.strong.create();
+    const P = (text, marks = []) => s.nodes.paragraph.create(null, s.text(text, marks));
+    const body = [
+      P('Совпадает', [fmt('Arial', 14), strong, em]), P('По умолчанию'),
+      s.nodes.paragraph.create(null, [s.text('Шрифт', [fmt('Arial', 12)]), s.text('Размер', [fmt('Tinos', 14), em])]),
+      s.nodes.heading.create({ level: 1 }, s.text('Заголовок', [fmt('Arial', 14)])),
+      s.nodes.bullet_list.create(null, s.nodes.list_item.create(null, P('В списке', [fmt('Arial', 14), em]))),
+      s.nodes.table.create(null, s.nodes.table_row.create(null, s.nodes.table_cell.create(null, P('В таблице', [fmt('Arial', 14), em])))),
+      P('С кавычками', [fmt('Times New Roman', 12.5)]), s.nodes.paragraph.create(),
+    ];
+    const meta = E.getMeta();
+    meta.defaults = { ...meta.defaults, font: 'Arial', size: 14 };
+    E.loadDoc(s.nodes.doc.create(null, body), meta, 'format-search');
+    E.run('review.findFormat');
+  });
+  const input = p.locator('.format-search input');
+  const hits = () => p.locator('.format-hit').allTextContents();
+  eq(await hits(), [], 'пустой запрос');
+  await input.fill('arial 14 курсив');
+  const expected = ['1. Совпадает', '2. В списке', '3. В таблице'];
+  eq(await hits(), expected, 'один фрагмент, без наследования настроек документа');
+  await input.fill('Arial 14 жирный курсив');
+  eq(await hits(), ['1. Совпадает'], 'сочетание жирного и курсива');
+  await input.fill('Arial 14 без-жирного');
+  eq(await hits(), ['1. Заголовок', '2. В списке', '3. В таблице'], 'без жирного');
+  await input.fill('стиль:"Заголовок 1"');
+  eq(await hits(), ['1. Заголовок'], 'стиль заголовка');
+  await input.fill('стиль:Обычный Arial 14 курсив');
+  eq(await hits(), expected, 'стиль и прямое форматирование');
+  await input.fill('шрифт:"Times New Roman" размер:12,5');
+  eq(await hits(), ['1. С кавычками'], 'пробелы в шрифте и дробный размер');
+  await input.fill('стиль:Обычный');
+  ok((await hits()).some((x) => x.includes('(пустой абзац)')), 'поиск пустого абзаца по стилю');
+  for (const invalid of ['размер:abc', 'размер:0', 'размер:0x10', 'стиль:Нет', 'цвет:красный', 'шрифт:"Arial', 'жирный без-жирного', '14 12', 'шрифт:']) {
+    await input.fill(invalid);
+    eq(await hits(), [], 'ошибка очищает результаты');
+    ok(!(await p.locator('.format-search [role=status]').textContent()).includes('Найдено'), 'ошибка запроса');
+  }
+  await input.fill('Несуществующий 99');
+  eq(await p.locator('.format-search [role=status]').textContent(), 'Найдено абзацев: 0', 'нет совпадений');
+  await input.fill('Arial 14 курсив');
+  await p.locator('.format-hit').nth(2).click();
+  ok(await p.locator('#dialog').isHidden(), 'диалог закрыт');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'В таблице', 'переход в таблицу');
+  await p.evaluate(() => window.ens.run('review.findFormat'));
+  await input.fill('жирный'); await input.press('Enter');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'Совпадает', 'Enter: первый результат');
+  await p.evaluate(() => window.ens.run('review.findFormat'));
+  await p.keyboard.press('Escape');
+  ok(await p.locator('#dialog').isHidden(), 'Escape закрывает окно');
+  await p.context().close();
+});
+
+await test('Alt+Q открывает однострочный поиск форматирования', async () => {
+  const p = await page();
+  await p.click('.ProseMirror'); await p.keyboard.press('Alt+KeyQ');
+  ok(await p.locator('#search').evaluate((e) => e === document.activeElement), 'Alt+Q: фокус поиска команд');
+  await p.locator('#search').fill('Поиск по форматированию'); await p.keyboard.press('Enter');
+  await p.waitForSelector('.format-search input');
+  ok(await p.locator('.format-search input').evaluate((e) => e === document.activeElement), 'фокус строки запроса');
+  await p.keyboard.press('Escape'); await p.context().close();
 });
 
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);

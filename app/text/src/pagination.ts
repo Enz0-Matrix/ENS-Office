@@ -106,6 +106,8 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
 
   const items: Item[] = [];
   view.state.doc.descendants((node, pos) => {
+    // Надписи стоят вне потока: их абзацы страницы не делят.
+    if (node.type.name === 'frame') return false;
     if (node.type.name === 'section_break') {
       const el = view.nodeDOM(pos) as HTMLElement | null;
       if (el) items.push({ sect: true, pos, end: pos + node.nodeSize, node, el, row: false, cols: 0, padPos: pos, padEnd: pos + node.nodeSize });

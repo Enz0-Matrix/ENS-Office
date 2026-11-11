@@ -20,6 +20,8 @@ export interface Float {
   dist: [number, number, number, number];
 }
 
+const isFrameBox = (e: HTMLElement) => e.classList.contains('frame-box');
+
 export const FLOAT_CLASS: Record<Float['mode'], string> = { behind: 'fl fl-behind', front: 'fl fl-front', wrap: 'fl fl-wrap' };
 
 /** Начальный CSS рисунка (до расчёта положения). */
@@ -46,15 +48,19 @@ interface Ctx {
 const num = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 /** Расставить плавающие рисунки (за и перед текстом) внутри root по параметрам их страницы. */
-export function placeFloats(ctx: Ctx): void {
+/** Возвращает true, если у рамок с обтеканием изменились поля (вёрстку страниц надо пересчитать). */
+export function placeFloats(ctx: Ctx): boolean {
+  let flow = false;
   const rootRect = ctx.root.getBoundingClientRect();
-  for (const img of ctx.root.querySelectorAll<HTMLImageElement>('img.fl-behind, img.fl-front')) {
+  for (const img of ctx.root.querySelectorAll<HTMLElement>('img.fl-behind, img.fl-front, .frame-box.fr-behind, .frame-box.fr-front, .frame-box.fr-wrap')) {
     let f: Float;
     try { f = JSON.parse(img.dataset.float ?? 'null') as Float; } catch { continue; }
     if (!f) continue;
-    const w = parseFloat(img.style.width) || img.offsetWidth;
-    const h = parseFloat(img.style.height) || img.offsetHeight;
-    const para = img.closest('p, h1, h2, h3, h4, h5, h6, li') as HTMLElement | null;
+    const w = isFrameBox(img) ? img.offsetWidth : parseFloat(img.style.width) || img.offsetWidth;
+    const h = isFrameBox(img) ? img.offsetHeight : parseFloat(img.style.height) || img.offsetHeight;
+    const isFrame = img.classList.contains('frame-box');
+    // Надпись стоит в потоке пустой «якорной» оболочкой нулевой высоты — от неё и считается положение.
+    const para = isFrame ? img.parentElement : (img.closest('p, h1, h2, h3, h4, h5, h6, li') as HTMLElement | null);
     const paraRect = (para ?? img).getBoundingClientRect();
     const paraY = (paraRect.top - rootRect.top) / ctx.scale;
     const paraX = (paraRect.left - rootRect.left) / ctx.scale;
@@ -72,6 +78,23 @@ export function placeFloats(ctx: Ctx): void {
     }
     const pg = box.page;
     const L = pg.left * PX, R = pg.right * PX, T = pg.top * PX, B = pg.bottom * PX;
+    if (img.classList.contains('fr-wrap')) {
+      // Обтекание: рамка «прижата» к левому или правому краю полосы текста, положение из файла — отступ от поля или страницы.
+      const textW = box.W - L - R;
+      let off: number | null = null;
+      if (f.hAlign === 'right') off = textW - w;
+      else if (f.hAlign === 'center') off = (textW - w) / 2;
+      else if (f.hAlign === 'left') off = 0;
+      else if (f.hOff != null) off = Math.max(0, f.hRel === 'page' ? f.hOff - L : f.hOff);
+      if (off == null) continue;
+      const right = off + w / 2 > textW / 2;
+      const set = (prop: 'float' | 'marginLeft' | 'marginRight' | 'marginTop', val: string) => { if (img.style[prop] !== val) { img.style[prop] = val; flow = true; } };
+      set('float', right ? 'right' : 'left');
+      set('marginLeft', right ? `${f.dist[2]}px` : `${Math.round(off + f.dist[2])}px`);
+      set('marginRight', right ? `${Math.round(Math.max(0, textW - off - w) + f.dist[3])}px` : `${f.dist[3]}px`);
+      if (f.vRel === 'paragraph' && f.vOff) set('marginTop', `${Math.round(f.vOff + f.dist[0])}px`);
+      continue;
+    }
 
     // По горизонтали: от страницы, поля (колонки) или от абзаца.
     let b0 = 0, b1 = box.W;
@@ -97,4 +120,5 @@ export function placeFloats(ctx: Ctx): void {
     img.style.left = `${ox + x}px`;
     img.style.top = `${oy + y}px`;
   }
+  return flow;
 }

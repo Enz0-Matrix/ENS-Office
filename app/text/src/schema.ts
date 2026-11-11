@@ -6,6 +6,9 @@ import { tableNodes } from 'prosemirror-tables';
 import { fontStack } from '../../table/src/fonts';
 import { FLOAT_CLASS, floatStyle, type Float } from './floats';
 
+/** Рамка надписи: линия и поля внутри. */
+export interface FrameLine { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' }
+
 /** Свойства абзаца: хранятся прямо в узле (как прямое форматирование в docx). */
 export interface ParaAttrs {
   align: 'left' | 'center' | 'right' | 'justify' | null;
@@ -13,6 +16,8 @@ export interface ParaAttrs {
   indent: number | null;
   /** Отступ первой строки, pt (отрицательный — выступ). */
   first: number | null;
+  /** Отступ справа, pt. */
+  rindent: number | null;
   before: number | null;
   after: number | null;
   /** Межстрочный интервал: множитель (1, 1.15, 1.5, 2). */
@@ -24,6 +29,7 @@ const paraAttrs = {
   align: { default: null },
   indent: { default: null },
   first: { default: null },
+  rindent: { default: null },
   before: { default: null },
   after: { default: null },
   line: { default: null },
@@ -37,6 +43,7 @@ function paraStyle(a: ParaAttrs): string {
   if (a.align) s.push(`text-align:${a.align}`);
   if (a.indent) s.push(`margin-left:${a.indent}pt`);
   if (a.first) s.push(`text-indent:${a.first}pt`);
+  if (a.rindent) s.push(`margin-right:${a.rindent}pt`);
   if (a.before != null) s.push(`margin-top:${a.before}pt`);
   if (a.after != null) s.push(`margin-bottom:${a.after}pt`);
   // Одинарный интервал Word — естественная высота строки шрифта; остальные кратны ей (~1,15 кегля).
@@ -68,6 +75,7 @@ function parseParaAttrs(el: HTMLElement): Partial<ParaAttrs> {
     align: ['left', 'center', 'right', 'justify'].includes(align as string) ? align : null,
     indent: st.marginLeft ? pt(st.marginLeft) : null,
     first: st.textIndent ? pt(st.textIndent) : null,
+    rindent: st.marginRight ? pt(st.marginRight) : null,
   };
 }
 
@@ -134,12 +142,16 @@ const nodes: Record<string, NodeSpec> = {
       if (n.attrs.width) a.width = String(Math.round(n.attrs.width));
       if (n.attrs.height) a.height = String(Math.round(n.attrs.height));
       const c = n.attrs.crop as number[] | null;
+      // Размер из документа: ширина и пропорции (aspect-ratio) — рисунок можно растянуть, а при сжатии до ширины страницы пропорции остаются.
+      const st: string[] = [];
+      if (n.attrs.width && n.attrs.height) st.push(`width:${Math.round(n.attrs.width)}px`, `aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)}`, 'height:auto');
       if (c && c.some((x) => x > 0)) {
         // Обрезка: окно просмотра по исходной картинке (object-view-box), размер рамки — как в документе.
         const pc = c.map((x) => `${(x * 100).toFixed(3)}%`);
         a['data-crop'] = c.map((x) => x.toFixed(5)).join(',');
-        a.style = `${n.attrs.width && n.attrs.height ? `width:${Math.round(n.attrs.width)}px;aspect-ratio:${Math.round(n.attrs.width)}/${Math.round(n.attrs.height)};height:auto;` : ''}object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`;
+        st.push(`object-view-box:inset(${pc[1]} ${pc[2]} ${pc[3]} ${pc[0]})`);
       }
+      if (st.length) a.style = st.join(';');
       const fl = n.attrs.float as Float | null;
       if (fl) {
         a['data-float'] = JSON.stringify(fl);
@@ -147,6 +159,45 @@ const nodes: Record<string, NodeSpec> = {
         a.style = `${floatStyle(fl, n.attrs.width, n.attrs.height)};${a.style ?? ''}`;
       }
       return ['img', a];
+    },
+  },
+  /**
+   * Надпись (текстовое поле), рамка абзацев и плавающая таблица: блок с собственным текстом, который стоит вне потока
+   * (за текстом, перед текстом) или обтекается. kind: textbox — надпись, table — плавающая таблица (в docx w:tblpPr).
+   */
+  frame: {
+    group: 'block',
+    content: '(paragraph | heading | bullet_list | ordered_list | table)+',
+    isolating: true,
+    attrs: { float: { default: null }, width: { default: null }, height: { default: null }, border: { default: null }, fill: { default: null }, pad: { default: null }, kind: { default: 'textbox' } },
+    parseDOM: [{
+      tag: 'div.frame-anchor',
+      contentElement: '.frame-box',
+      getAttrs: (d) => {
+        const b = (d as HTMLElement).querySelector('.frame-box') as HTMLElement | null;
+        const j = (k: string) => { try { return JSON.parse(b?.getAttribute(k) ?? 'null'); } catch { return null; } };
+        return { float: j('data-float'), width: j('data-w'), height: j('data-h'), border: j('data-border'), fill: b?.getAttribute('data-fill') || null, pad: j('data-pad'), kind: b?.getAttribute('data-kind') ?? 'textbox' };
+      },
+    }],
+    toDOM: (n) => {
+      const fl = n.attrs.float as Float | null;
+      const bd = n.attrs.border as FrameLine | null;
+      const pad = n.attrs.pad as number[] | null;
+      const st: string[] = ['box-sizing:border-box'];
+      if (n.attrs.width) st.push(`width:${Math.round(n.attrs.width)}px`);
+      if (n.attrs.height) st.push(`min-height:${Math.round(n.attrs.height)}px`);
+      if (bd) st.push(`border:${bd.w}pt ${bd.s} ${bd.c}`);
+      if (n.attrs.fill) st.push(`background:${n.attrs.fill}`);
+      if (pad) st.push(`padding:${pad.map((x) => `${Math.round(x)}px`).join(' ')}`);
+      if (fl?.mode === 'wrap') st.push(`float:${fl.side === 'right' ? 'right' : 'left'}`, `margin:${fl.dist.map((x) => `${Math.round(x)}px`).join(' ')}`);
+      const a: Record<string, string> = { class: `frame-box fr${fl ? ` fr-${fl.mode}` : ''}${n.attrs.kind === 'table' ? ' fr-table' : ''}`, style: st.join(';'), 'data-kind': n.attrs.kind };
+      if (fl) a['data-float'] = JSON.stringify(fl);
+      if (n.attrs.width) a['data-w'] = String(n.attrs.width);
+      if (n.attrs.height) a['data-h'] = String(n.attrs.height);
+      if (bd) a['data-border'] = JSON.stringify(bd);
+      if (n.attrs.fill) a['data-fill'] = n.attrs.fill;
+      if (pad) a['data-pad'] = JSON.stringify(pad);
+      return ['div', { class: `frame-anchor ${fl ? 'fa-out' : 'fa-flow'}` }, ['div', a, 0]];
     },
   },
   /**
@@ -191,15 +242,45 @@ const nodes: Record<string, NodeSpec> = {
         getFromDOM: (d) => (d as HTMLElement).style.backgroundColor || null,
         setDOMAttr: (v, attrs) => { if (v) attrs.style = `${attrs.style ?? ''};background-color:${v}`; },
       },
+      /** Вертикальное выравнивание текста в ячейке: top, middle, bottom. */
+      valign: {
+        default: null,
+        getFromDOM: (d) => { const v = (d as HTMLElement).style.verticalAlign; return v === 'middle' || v === 'bottom' ? v : null; },
+        setDOMAttr: (v, attrs) => { if (v) attrs.style = `${attrs.style ?? ''};vertical-align:${v}`; },
+      },
+      /** Границы ячейки: { t, r, b, l }, каждая { w (pt), c (цвет), s (solid, dashed, dotted, double, none) } или null — как у таблицы. */
+      borders: {
+        default: null,
+        getFromDOM: (d) => { try { return JSON.parse((d as HTMLElement).getAttribute('data-borders') ?? 'null'); } catch { return null; } },
+        setDOMAttr: (v, attrs) => { if (v) { attrs['data-borders'] = JSON.stringify(v); attrs.style = `${attrs.style ?? ''};${cellBorderCss(v as CellBorders)}`; } },
+      },
     },
   }),
+};
+
+export const tableAlignCss = (a: string): string => (a === 'center' ? 'margin-left:auto;margin-right:auto' : a === 'right' ? 'margin-left:auto;margin-right:0' : 'margin-left:0;margin-right:auto');
+
+/** Граница одной стороны ячейки. */
+export interface Edge { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' | 'none' }
+export interface CellBorders { t: Edge | null; r: Edge | null; b: Edge | null; l: Edge | null }
+
+const edgeCss = (side: string, e: Edge | null): string => (!e ? '' : e.s === 'none' ? `border-${side}:hidden` : `border-${side}:${e.w}pt ${e.s} ${e.c}`);
+/** CSS границ ячейки; «нет границы» — hidden, чтобы сосед не рисовал свою на общей линии. */
+export const cellBorderCss = (b: CellBorders): string => [edgeCss('top', b.t), edgeCss('right', b.r), edgeCss('bottom', b.b), edgeCss('left', b.l)].filter(Boolean).join(';');
+
+nodes.table_row = {
+  ...nodes.table_row,
+  attrs: { height: { default: null } },
+  parseDOM: [{ tag: 'tr', getAttrs: (d) => { const m = /^([\d.]+)pt$/.exec((d as HTMLElement).style.height); return { height: m ? parseFloat(m[1]) : null }; } }],
+  toDOM: (n) => (n.attrs.height ? ['tr', { style: `height:${n.attrs.height}pt` }, 0] : ['tr', 0]),
 };
 
 // Таблица: признак «с границами» (стиль «Сетка таблицы» в docx).
 nodes.table = {
   ...nodes.table,
-  attrs: { borders: { default: true } },
-  toDOM: (n) => ['table', { class: n.attrs.borders ? 'bordered' : 'plain' }, ['tbody', 0]],
+  /** align — положение таблицы на странице (left, center, right), если она уже полосы текста. */
+  attrs: { borders: { default: true }, align: { default: null } },
+  toDOM: (n) => ['table', { class: n.attrs.borders ? 'bordered' : 'plain', ...(n.attrs.align ? { style: tableAlignCss(n.attrs.align as string) } : {}) }, ['tbody', 0]],
 };
 
 /** Выделение «Основной текст» не нужно: текст без шрифта наследует шрифт документа. */

@@ -154,3 +154,38 @@ to_anchor(r5b, False,
     f'<wp:wrapSquare xmlns:wp="{WP}" wrapText="right"/>')
 d5.save(os.path.join(out, 'floats.docx'))
 os.remove(os.path.join(out, 'logo-blue.png')); os.remove(os.path.join(out, 'pic-red.png'))
+
+# Надписи, рамка абзацев, плавающая таблица (тело) и надпись в колонтитуле «за текстом» от страницы.
+W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+WPS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+
+def textbox_run(text, behind, hx, vy, w, h, fill=None, line=None):
+    ln = f'<a:ln w="12700"><a:solidFill><a:srgbClr val="{line}"/></a:solidFill></a:ln>' if line else '<a:ln><a:noFill/></a:ln>'
+    fl = f'<a:solidFill><a:srgbClr val="{fill}"/></a:solidFill>' if fill else '<a:noFill/>'
+    return parse_xml(
+        f'<w:r xmlns:w="{W_NS}" xmlns:mc="{MC}" xmlns:wp="{WP}" xmlns:a="{A_NS}" xmlns:wps="{WPS}"><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>'
+        f'<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" behindDoc="{1 if behind else 0}" locked="0" layoutInCell="1" allowOverlap="1">'
+        f'<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>{hx}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>{vy}</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="77" name="Надпись 1"/><wp:cNvGraphicFramePr/>'
+        f'<a:graphic><a:graphicData uri="{WPS}"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{w}" cy="{h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{fl}{ln}</wps:spPr>'
+        f'<wps:txbx><w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:p><w:r><w:t>Вторая строка надписи</w:t></w:r></w:p></w:txbxContent></wps:txbx>'
+        f'<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r>')
+
+d6 = Document()
+hp = d6.sections[0].header.paragraphs[0]
+hp._p.append(textbox_run('Шапка организации', True, 720000, 360000, 2700000, 600000, None, None))
+d6.add_paragraph('Основной текст перед надписью.')
+pt = d6.add_paragraph()
+pt._p.append(textbox_run('Надпись: реквизиты', False, 3000000, 1800000, 2700000, 900000, 'FFF2CC', 'FF0000'))
+pt.add_run('Абзац с якорем надписи.')
+fr = d6.add_paragraph('Рамка абзацев: текст внутри рамки.')
+fr._p.get_or_add_pPr().append(parse_xml(f'<w:framePr xmlns:w="{W_NS}" w:w="3000" w:h="900" w:hRule="atLeast" w:wrap="around" w:vAnchor="text" w:hAnchor="page" w:x="5400" w:y="1"/>'))
+d6.add_paragraph('Обычный абзац после рамки. ' * 3)
+tb = d6.add_table(rows=1, cols=2)
+tb.cell(0, 0).text = 'Директору'
+tb.cell(0, 1).text = 'Иванову И. И.'
+tb._tbl.tblPr.append(parse_xml(f'<w:tblpPr xmlns:w="{W_NS}" w:leftFromText="180" w:rightFromText="180" w:vertAnchor="text" w:horzAnchor="page" w:tblpX="5400" w:tblpY="1"/>'))
+d6.add_paragraph('Текст после плавающей таблицы.')
+d6.save(os.path.join(out, 'frames.docx'))

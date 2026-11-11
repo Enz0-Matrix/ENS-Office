@@ -38,7 +38,7 @@ import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
 import { journalDialog, wizardDialog } from './forms-ui';
 import { initThemes, themeDialog } from './themes-ui';
-import { checkDialog, renderInspector, toggleInspector } from './inspector-ui';
+import { checkDialog, formatSearchDialog, renderInspector, toggleInspector } from './inspector-ui';
 import type { CheckHost } from './checks';
 import { applyScheme, continueList, convertManual, currentStart, setListStart } from './listtools';
 import { PRESETS, presetOf, type Scheme } from './numbering';
@@ -49,6 +49,13 @@ import { allCommands, matchScore } from '../../table/src/commands';
 import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats as pagStats, type PageBox } from './pagination';
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
+import { frameViews } from './frameview';
+import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
+import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
+import {
+  addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
+  scaleImage, selectFrame, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
+} from './images-ui';
 import { hfFor, measureHf, openHfEditor, renderHf, setHf, type HfKind, type HfSession } from './hf';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -347,6 +354,7 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   paintHf(pages, list);
   updatePageStatus(pages);
   layoutFloats();
+  updateRuler();
 }
 
 /** Плавающие рисунки основного текста: положение считается после вёрстки страниц и после каждой правки. */
@@ -356,7 +364,9 @@ function layoutFloats(): void {
   floatRaf = requestAnimationFrame(() => {
     const dom = view.dom as HTMLElement;
     const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
-    placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale });
+    // Если у рамок с обтеканием сменились поля, строки вокруг них перераскладываются — страницы считаем заново.
+    if (placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale })) replan(view);
+    updateOverlay();
   });
 }
 
@@ -375,7 +385,7 @@ function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): v
       if (kind === 'header') e.style.top = `${meta.hf.headerDist}pt`;
       else e.style.bottom = `${meta.hf.footerDist}pt`;
       paper.append(e);
-      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front')) {
+      if (boxes[i] && e.querySelector('img.fl-behind, img.fl-front, .frame-box.fr')) {
         const sc = e.getBoundingClientRect().width / (e.offsetWidth || 1) || 1;
         placeFloats({ root: e, boxes: [], sheetW: 0, scale: sc, fixed: { box: boxes[i], originX: -e.offsetLeft, originY: -e.offsetTop } });
       }
@@ -407,6 +417,8 @@ function setZoom(z: number): void {
   zoom = Math.min(3, Math.max(0.3, Math.round(z * 10) / 10));
   ($('sheet-wrap').style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
+  updateOverlay();
+  updateRuler();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -418,6 +430,7 @@ const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
+  nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
@@ -458,8 +471,23 @@ const view = new EditorView($('sheet'), {
 let statsTimer = 0;
 let recoveryTimer = 0;
 
+/** Выделен ли рисунок: лента сама показывает вкладку «Рисунок», а когда рисунок отпущен, возвращается к «Главной». */
+let imageTabOn = false;
+function syncImageTab(): void {
+  const on = !!imgSelected() && !hfSession;
+  if (on === imageTabOn) return;
+  imageTabOn = on;
+  const active = document.querySelector('#tabs .tab.active')?.textContent;
+  const click = (name: string) => document.querySelectorAll<HTMLButtonElement>('#tabs .tab').forEach((t) => { if (t.textContent === name) t.click(); });
+  if (on && active === 'Главная') click('Рисунок');
+  else if (!on && active === 'Рисунок') click('Главная');
+}
+
 function afterChange(docChanged: boolean): void {
   updateUi();
+  updateOverlay();
+  updateRuler();
+  syncImageTab();
   renderInspector(inspectorSource, inspectorActions);
   if (docChanged) {
     layoutFloats();
@@ -579,6 +607,31 @@ register(
   { id: 'table.merge', label: 'Объединить ячейки', run: () => dispatchCmd(mergeCells) },
   { id: 'table.split', label: 'Разделить ячейку', run: () => dispatchCmd(splitCell) },
   { id: 'table.borders', label: 'Границы таблицы', run: () => toggleBorders() },
+  { id: 'table.borderDialog', label: 'Границы и заливка…', keywords: ['таблица', 'границы', 'заливка', 'линии', 'цвет ячейки'], run: () => bordersDialog(() => view) },
+  { id: 'table.props', label: 'Свойства таблицы…', keywords: ['таблица', 'ширина столбцов', 'высота строки', 'положение таблицы'], run: () => tablePropsDialog(() => view, () => (curPage().w - curPage().left - curPage().right) * PX) },
+  { id: 'table.equalCols', label: 'Выровнять ширину столбцов', keywords: ['таблица', 'столбцы'], run: () => equalColumns(view) },
+  { id: 'table.equalRows', label: 'Выровнять высоту строк', keywords: ['таблица', 'строки'], run: () => equalRows(view) },
+  { id: 'table.fit', label: 'Таблица по ширине текста', keywords: ['таблица', 'по ширине'], run: () => fitTable(view, (curPage().w - curPage().left - curPage().right) * PX) },
+  { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
+  { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
+  { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
+  { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
+  { id: 'frame.select', label: 'Выделить надпись', keywords: ['надпись', 'выделить рамку'], run: () => selectFrame() },
+  { id: 'image.format', label: 'Формат рисунка…', keywords: ['рисунок', 'размер', 'обрезка', 'положение', 'описание', 'логотип'], run: () => void imageDialog() },
+  { id: 'image.grow', label: 'Рисунок крупнее на 10%', keywords: ['рисунок', 'увеличить'], run: () => scaleImage(1.1) },
+  { id: 'image.shrink', label: 'Рисунок мельче на 10%', keywords: ['рисунок', 'уменьшить'], run: () => scaleImage(1 / 1.1) },
+  { id: 'image.reset', label: 'Исходный размер рисунка', keywords: ['рисунок', 'сбросить размер'], run: () => void resetImageSize() },
+  { id: 'image.fit', label: 'Рисунок по ширине текста', keywords: ['рисунок', 'по ширине', 'вписать'], run: () => fitImageWidth() },
+  { id: 'image.crop', label: 'Обрезка рисунка', keywords: ['рисунок', 'обрезка', 'кадрировать'], checked: () => isCropMode(), run: () => setCropMode(!isCropMode()) },
+  { id: 'image.cropReset', label: 'Убрать обрезку', keywords: ['рисунок', 'обрезка', 'сбросить'], run: () => clearCrop() },
+  { id: 'image.next', label: 'Следующий рисунок', keywords: ['рисунок', 'выбрать', 'перейти'], run: () => selectNextImage() },
+  { id: 'image.front', label: 'Рисунок на передний план', keywords: ['рисунок', 'перед текстом'], run: () => arrangeImage(true) },
+  { id: 'image.back', label: 'Рисунок на задний план', keywords: ['рисунок', 'за текстом'], run: () => arrangeImage(false) },
+  { id: 'image.align', label: 'Выровнять рисунок на странице', keywords: ['рисунок', 'выровнять'], run: (v) => { if (v) alignImage(v); setSelect('image.align', ''); } },
+  { id: 'image.replace', label: 'Заменить рисунок…', keywords: ['рисунок', 'заменить'], run: () => replaceImage() },
+  { id: 'image.caption', label: 'Подпись к рисунку', keywords: ['рисунок', 'подпись', 'название'], run: () => addCaption() },
+  { id: 'image.delete', label: 'Удалить рисунок', keywords: ['рисунок', 'удалить'], run: () => deleteImage() },
   { id: 'image.wrap', label: 'Обтекание рисунка', keywords: ['рисунок', 'логотип', 'за текстом', 'перед текстом', 'обтекание', 'в тексте'], run: (v) => setImageWrap(v ?? 'inline') },
   { id: 'page.size', label: 'Размер страницы', run: (v) => setPageSize(v ?? 'a4') },
   { id: 'page.orientation', label: 'Ориентация', run: (v) => setOrientation(v === 'landscape') },
@@ -629,6 +682,7 @@ register(
     checked: () => !!focusKey.getState(view.state),
     run: () => { view.dispatch(view.state.tr.setMeta(focusKey, !focusKey.getState(view.state))); updateUi(); },
   },
+  { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
@@ -882,6 +936,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'insert.table', icon: 'table', label: 'Таблица' },
           { type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' },
+          { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
@@ -978,6 +1033,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
           { type: 'large', command: 'review.inspector', icon: 'search', label: 'Рентген формата' },
+          { type: 'large', command: 'review.findFormat', icon: 'search', label: 'Поиск по формату' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
           { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
         ],
@@ -1024,8 +1080,77 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'table.merge', icon: 'merge', label: 'Объединить' },
           { type: 'large', command: 'table.split', icon: 'cell_split', label: 'Разделить' },
-          { type: 'large', command: 'table.borders', icon: 'border_all', label: 'Границы' },
           { type: 'large', command: 'table.delete', icon: 'eraser', label: 'Удалить таблицу' },
+        ],
+      },
+      {
+        name: 'Оформление',
+        items: [
+          { type: 'large', command: 'table.borders', icon: 'border_all', label: 'Границы вкл/выкл' },
+          { type: 'large', command: 'table.borderDialog', icon: 'paint_brush', label: 'Границы и заливка' },
+          { type: 'select', command: 'table.valign', width: 170, options: [{ value: '', label: 'Текст в ячейке по высоте…' }, { value: 'top', label: 'Вверху' }, { value: 'middle', label: 'По центру' }, { value: 'bottom', label: 'Внизу' }] },
+          { type: 'medium', command: 'table.fillClear', icon: 'eraser', label: 'Убрать заливку' },
+        ],
+      },
+      {
+        name: 'Размер',
+        items: [
+          { type: 'large', command: 'table.props', icon: 'grid', label: 'Свойства таблицы' },
+          { type: 'large', command: 'table.equalCols', icon: 'col_add', label: 'Выровнять столбцы' },
+          { type: 'large', command: 'table.equalRows', icon: 'row_add', label: 'Выровнять строки' },
+          { type: 'large', command: 'table.fit', icon: 'arrow_autofit_width', label: 'По ширине текста' },
+          { type: 'select', command: 'table.wrap', width: 190, options: [{ value: '', label: 'Положение таблицы…' }, { value: 'inline', label: 'В тексте' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'left', label: 'Слева, текст справа' }] },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'picture', label: 'Рисунок',
+    groups: [
+      {
+        name: 'Выбор',
+        items: [
+          { type: 'large', command: 'image.next', icon: 'image', label: 'Следующий объект' },
+          { type: 'large', command: 'frame.select', icon: 'text_box', label: 'Выделить надпись' },
+          { type: 'large', command: 'image.format', icon: 'resize_image', label: 'Формат' },
+        ],
+      },
+      {
+        name: 'Размер',
+        items: [
+          { type: 'medium', command: 'image.grow', icon: 'arrow_maximize' },
+          { type: 'medium', command: 'image.shrink', icon: 'arrow_minimize' },
+          { type: 'medium', command: 'image.reset', icon: 'image_arrow_counterclockwise' },
+          { type: 'medium', command: 'image.fit', icon: 'arrow_autofit_width' },
+        ],
+      },
+      {
+        name: 'Обрезка',
+        items: [
+          { type: 'large', command: 'image.crop', icon: 'crop', label: 'Обрезка' },
+          { type: 'large', command: 'image.cropReset', icon: 'eraser', label: 'Убрать обрезку' },
+        ],
+      },
+      {
+        name: 'Положение',
+        items: [
+          { type: 'select', command: 'image.wrap', width: 170, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] },
+          { type: 'select', command: 'image.align', width: 170, options: [{ value: '', label: 'Выровнять на странице…' }, { value: 'left', label: 'По левому краю' }, { value: 'center', label: 'По центру' }, { value: 'right', label: 'По правому краю' }, { value: 'top', label: 'Вверху' }, { value: 'middle', label: 'Посередине по высоте' }, { value: 'bottom', label: 'Внизу' }] },
+        ],
+      },
+      {
+        name: 'Порядок',
+        items: [
+          { type: 'medium', command: 'image.front', icon: 'position_to_front' },
+          { type: 'medium', command: 'image.back', icon: 'position_to_back' },
+        ],
+      },
+      {
+        name: 'Рисунок',
+        items: [
+          { type: 'large', command: 'image.replace', icon: 'image_edit', label: 'Заменить' },
+          { type: 'large', command: 'image.caption', icon: 'text_font', label: 'Подпись' },
+          { type: 'large', command: 'image.delete', icon: 'delete', label: 'Удалить' },
         ],
       },
     ],
@@ -1041,7 +1166,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.zoomReset', icon: 'document_text', label: '100%' },
         ],
       },
-      { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }] },
+      { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }, { type: 'large', command: 'view.ruler', icon: 'grid', label: 'Линейка' }] },
     ],
   },
 ];
@@ -1055,7 +1180,7 @@ function setSelect(cmd: string, value: string): void {
   sel.value = value;
 }
 
-const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete']);
+const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.wrap', 'table.fillClear']);
 
 const NIGHT_KEY = 'ens-text.night';
 let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
@@ -1094,7 +1219,7 @@ function updateUi(): void {
   setSelect('page.orientation', curPage().w > curPage().h ? 'landscape' : 'portrait');
   setSelect('ver.reminder', String(settings.saveReminderMinutes));
   setSelect('list.scheme', presetOf(currentScheme()) === 'custom' ? '' : presetOf(currentScheme()) === 'simple' ? '' : presetOf(currentScheme()));
-  const imgSel = selectedImage();
+  const imgSel = imgSelected();
   const fl = imgSel?.node.attrs.float as Float | null | undefined;
   setSelect('image.wrap', !imgSel ? '' : !fl ? 'inline' : fl.mode === 'wrap' ? (fl.side ?? 'left') : fl.mode);
   setSelect('page.size', sizeKey());
@@ -1138,22 +1263,15 @@ function changePage(next: Partial<PageSetup>): void {
   scheduleRecovery();
 }
 
-/** Выделенный рисунок (NodeSelection) и его позиция. */
-function selectedImage(): { pos: number; node: PMNode } | null {
-  const sel = view.state.selection;
-  if (sel instanceof NodeSelection && sel.node.type === schema.nodes.image) return { pos: sel.from, node: sel.node };
-  return null;
-}
-
 /** Обтекание выделенного рисунка: в тексте, слева/справа с обтеканием, за текстом, перед текстом. */
 function setImageWrap(mode: string): void {
-  const img = selectedImage();
+  const img = imgSelected();
   if (!img) { toast('Сначала выделите рисунок (щёлкните по нему).'); return; }
   const old = img.node.attrs.float as Float | null;
   let float: Float | null = null;
   const base: Float = old ?? { mode: 'behind', hRel: 'column', hOff: 0, hAlign: null, vRel: 'paragraph', vOff: 0, vAlign: null, dist: [0, 0, 8, 8] };
   if (mode === 'behind' || mode === 'front') float = { ...base, mode };
-  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, dist: old?.dist ?? [0, 4, 8, 8] };
+  else if (mode === 'left' || mode === 'right') float = { ...base, mode: 'wrap', side: mode, ...(img.frame ? { hAlign: mode, hOff: null } : {}), dist: old?.dist ?? [0, 4, 8, 8] };
   view.dispatch(view.state.tr.setNodeMarkup(img.pos, undefined, { ...img.node.attrs, float }));
   view.focus();
   updateUi();
@@ -1618,8 +1736,12 @@ function askName(current: string): Promise<string | null> {
 function fileMenu(): void {
   dialog((box, close) => {
     const item = (label: string, id: string) => el('button', { textContent: label, onclick: () => { close(); run(id); } });
+    // «Закрыть» — в шапке, как в ENS-Table: та же иконка dismiss, чтобы меню не выглядело ловушкой:
+    // Esc работает, но не каждый о нём догадается.
+    const closeBtn = el('button', { class: 'menu-close', type: 'button', title: 'Закрыть меню (Esc)', onclick: close });
+    closeBtn.innerHTML = `${ICONS.dismiss_20 ?? ''}<span>Закрыть</span>`;
     box.append(
-      el('h2', { textContent: 'Файл' }),
+      el('div', { class: 'menu-head' }, el('h2', { textContent: 'Файл' }), closeBtn),
       el('div', { class: 'menu-list' },
         item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
         el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
@@ -1726,6 +1848,14 @@ $('ribbon').addEventListener('change', () => setTimeout(() => view.focus(), 0));
 
 initThemes();
 document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
+initRuler({
+  view: () => view, papers: () => $('papers'), zoom: () => zoom, pageIndex: () => Math.max(0, currentPage() - 1), page: () => curPage(),
+  changePage: (next) => changePage(next), locked: () => !!hfSession,
+});
+initImageTools({
+  view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
+  textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
+});
 initCommandSearch();
 applyPage();
 setZoom(1);

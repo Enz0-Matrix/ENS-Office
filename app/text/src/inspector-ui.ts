@@ -4,7 +4,7 @@ import type { EditorState } from 'prosemirror-state';
 import { TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { DocDefaults } from './docx';
-import { allProfiles, CUSTOM_ID, defaultCustomProfile, loadCustomProfile, runChecks, saveCustomProfile, type CheckHost, type Issue, type Profile } from './checks';
+import { allProfiles, CUSTOM_ID, defaultCustomProfile, loadCustomProfile, findFormatting, parseFormatQuery, runChecks, saveCustomProfile, type CheckHost, type Issue, type Profile } from './checks';
 import { dialog, el, toast } from './ui';
 
 // --- Панель «Рентген»
@@ -71,6 +71,48 @@ export function renderInspector(get: () => { view: EditorView; defaults: DocDefa
       el('button', { textContent: 'Сбросить формат абзаца', onclick: actions.resetPara }),
       el('button', { textContent: 'Сбросить формат текста', onclick: actions.resetChars })),
   );
+}
+
+// --- Поиск по прямому форматированию
+
+export function formatSearchDialog(get: () => { view: EditorView; defaults: DocDefaults }): void {
+  dialog((box, close) => {
+    box.classList.add('format-search');
+    const input = el('input', { type: 'text', placeholder: 'Arial 14 курсив', ariaLabel: 'Условия форматирования' });
+    const status = el('p', { class: 'check-note', role: 'status' });
+    const list = el('div', { class: 'check-list' });
+    const render = () => {
+      list.replaceChildren();
+      try {
+        const { view, defaults } = get();
+        const doc = view.state.doc;
+        const hits = findFormatting(doc, defaults, parseFormatQuery(input.value));
+        status.textContent = input.value.trim() ? `Найдено абзацев: ${hits.length}` : 'Введите условия поиска.';
+        for (const [i, hit] of hits.entries()) list.append(el('button', {
+          class: 'format-hit', textContent: `${i + 1}. ${hit.text.slice(0, 120) || '(пустой абзац)'}`,
+          onclick: () => {
+            const { view } = get();
+            // При внешней правке не используем устаревшие позиции.
+            if (view.state.doc !== doc) { render(); return; }
+            close();
+            view.dispatch(view.state.tr.setSelection(TextSelection.near(doc.resolve(hit.pos + 1))).scrollIntoView());
+            view.focus();
+          },
+        }));
+      } catch (error) { status.textContent = (error as Error).message; }
+    };
+    input.addEventListener('input', render);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); list.querySelector<HTMLButtonElement>('button')?.click(); }
+    });
+    box.append(
+      el('h2', { textContent: 'Поиск по форматированию' }), input,
+      el('p', { class: 'check-note', textContent: 'Примеры: Arial 14 курсив; жирный; шрифт:"Times New Roman" размер:12; стиль:"Заголовок 1". Без-жирного / без-курсива — отсутствие начертания. Шрифт и размер — только заданные вручную, не настройки документа. Все условия совпадают на одном фрагменте; стиль — свойство абзаца. Enter — перейти к первому результату.' }),
+      status, list,
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Закрыть', onclick: close })),
+    );
+    render();
+  }, false);
 }
 
 // --- Окно «Проверка оформления»

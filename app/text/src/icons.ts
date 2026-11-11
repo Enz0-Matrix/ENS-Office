@@ -35,6 +35,21 @@ import numRot24 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_
 import check24 from '@fluentui/svg-icons/icons/checkmark_24_regular.svg?raw';
 import person24 from '@fluentui/svg-icons/icons/person_24_regular.svg?raw';
 
+import crop24 from '@fluentui/svg-icons/icons/crop_24_regular.svg?raw';
+import resizeImage24 from '@fluentui/svg-icons/icons/resize_image_24_regular.svg?raw';
+import imageEdit24 from '@fluentui/svg-icons/icons/image_edit_24_regular.svg?raw';
+import imageReset24 from '@fluentui/svg-icons/icons/image_arrow_counterclockwise_24_regular.svg?raw';
+import toFront24 from '@fluentui/svg-icons/icons/position_to_front_24_regular.svg?raw';
+import toBack24 from '@fluentui/svg-icons/icons/position_to_back_24_regular.svg?raw';
+import delete24 from '@fluentui/svg-icons/icons/delete_24_regular.svg?raw';
+import maximize24 from '@fluentui/svg-icons/icons/arrow_maximize_24_regular.svg?raw';
+import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?raw';
+
+Object.assign(ICONS, {
+  crop_24: crop24, resize_image_24: resizeImage24, image_edit_24: imageEdit24, image_arrow_counterclockwise_24: imageReset24,
+  position_to_front_24: toFront24, position_to_back_24: toBack24, delete_24: delete24, arrow_maximize_24: maximize24, arrow_minimize_24: minimize24,
+});
+
 Object.assign(ICONS, {
   person_24: person24,
   checkmark_24: check24,
