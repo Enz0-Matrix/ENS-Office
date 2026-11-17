@@ -2620,6 +2620,18 @@ await test('выбор шрифта: образец своим начертан�
   await p.context().close();
 });
 
+await test('чёткие значки ленты: большие — рисунок 32/28 px, средние и малые — 20 px, виден один рисунок', async () => {
+  const p = await page();
+  await p.click('#tabs .tab:has-text("Вставка")');
+  const info = (sel) => p.$eval(sel, (b) => [...b.querySelectorAll('svg')].filter((s) => getComputedStyle(s).display !== 'none').map((s) => [s.getAttribute('viewBox'), Math.round(s.getBoundingClientRect().width)]));
+  eq(await info('.btn.large[data-command="insert.table"]'), [['0 0 32 32', 32]], 'Таблица: значок под 32 px');
+  await p.click('#tabs .tab:has-text("Главная")');
+  const small = await p.$$eval('#ribbon .btn.small, #ribbon .btn.medium', (bs) => bs.map((b) => [...b.querySelectorAll('svg')].filter((s) => getComputedStyle(s).display !== 'none').map((s) => [s.getAttribute('viewBox'), Math.round(s.getBoundingClientRect().width)])).filter((x) => x.length));
+  ok(small.every((x) => x.length === 1), 'у каждой кнопки виден один рисунок');
+  ok(small.every((x) => x[0][0] === `0 0 ${x[0][1]} ${x[0][1]}`), `рисунок не растянут: ${JSON.stringify(small.filter((x) => x[0][0] !== `0 0 ${x[0][1]} ${x[0][1]}`))}`);
+  await p.context().close();
+});
+
 await test('линейки тоньше и точнее: 22 px, деления на целых пикселях, миллиметры видны', async () => {
   const p = await page();
   await p.click('.ProseMirror');

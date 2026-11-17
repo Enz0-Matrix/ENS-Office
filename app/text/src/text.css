@@ -411,7 +411,15 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 #ribbon .btn.large svg { width: 32px; height: 32px; flex: none; }
 #ribbon .btn.small svg { width: 20px; height: 20px; }
 #ribbon .btn.medium { height: 28px; width: 34px; }
-#ribbon .btn.medium svg { width: 22px; height: 22px; }
+#ribbon .btn.medium svg { width: 20px; height: 20px; }
+/* Чёткие значки (icons.ts): рисунок под размер кнопки, без растяжения. */
+svg.ic-l, svg.ic-m { display: none; }
+#ribbon .btn.large svg.ic-l { display: block; }
+#ribbon .btn.large svg.ic-o { display: none; }
+#ribbon .btn:not(.large) svg.ic-m { display: inline-block; flex: none; }
+#ribbon .btn:not(.large) svg.ic-o { display: none; }
+/* Линии Fluent тоньше привычных по Office: обводим контур тем же цветом — значок плотнее и читается чётче. */
+#ribbon .btn svg path { stroke: currentColor; stroke-width: .35px; paint-order: stroke; }
 #ribbon .split.medium .split-arrow { height: 28px; }
 #ribbon .ribbon-select { margin: 0; height: 26px; }
 #ribbon .group-name { margin-top: auto; white-space: nowrap; }

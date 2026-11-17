@@ -1,6 +1,7 @@
 // Значки ENS-Text: Fluent UI System Icons (MIT). Добавляются к набору ENS-Table (ICONS).
 
 import { ICONS } from '../../table/src/icons';
+import { CRISP } from './icons-crisp';
 import bullets20 from '@fluentui/svg-icons/icons/text_bullet_list_ltr_20_regular.svg?raw';
 import numbers20 from '@fluentui/svg-icons/icons/text_number_list_ltr_20_regular.svg?raw';
 import indentMore20 from '@fluentui/svg-icons/icons/text_indent_increase_20_regular.svg?raw';
@@ -86,3 +87,13 @@ Object.assign(ICONS, {
   highlight_20: highlight20,
   document_text_24: docText24,
 });
+
+// Чёткие значки ленты: значок 24 px, растянутый до 32 px, размыт и тонок. В строку значка кладём три рисунка —
+// под большую кнопку (32/28 px, ic-l), исходный (ic-o) и под 20 px (ic-m); text.css показывает нужный по размеру
+// кнопки. Вне ленты виден исходный, как раньше.
+const tag = (svg: string, cls: string) => svg.replace('<svg ', `<svg class="${cls}" `);
+for (const [key, v] of Object.entries(CRISP)) {
+  const orig = ICONS[key];
+  if (!orig || orig.includes('ic-o')) continue;
+  ICONS[key] = tag(v.l ?? orig, 'ic-l') + tag(orig, 'ic-o') + tag(v.m ?? orig, 'ic-m');
+}
