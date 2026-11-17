@@ -1,5 +1,6 @@
 // Меню «Файл» (Backstage), как в Office 2021–2024: слева разделы, справа содержимое.
 
+import { run } from './commands';
 import { FONTS, icon } from './ribbon';
 import { settings, saveSettings } from './settings';
 import { isDesktop } from './platform';
@@ -80,6 +81,7 @@ export function showBackstage(section: Section = 'info'): void {
       <hr>
       <button data-go="save">${icon('save', 20)}Сохранить</button>
       <button data-go="saveAs">${icon('save_edit', 20)}Сохранить как</button>
+      <button data-go="csv" title="Значения текущего листа в CSV (разделитель «;»)">${icon('save', 20)}Сохранить лист в CSV</button>
       <button data-go="print">${icon('print', 20)}Печать</button>
       <button data-go="close">${icon('dismiss', 20)}Закрыть</button>
       <div class="bs-spacer"></div>
@@ -110,6 +112,7 @@ function go(target: string): void {
     case 'back': hideBackstage(); return;
     case 'save': hideBackstage(); host.save(); return;
     case 'saveAs': hideBackstage(); host.saveAs(); return;
+    case 'csv': hideBackstage(); run('file.saveCsv'); return;
     case 'close': hideBackstage(); host.close(); return;
     default: render(target as Section);
   }
