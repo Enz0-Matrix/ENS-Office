@@ -691,11 +691,23 @@ impl<'a> UserModel<'a> {
     pub fn delete_sheet(&mut self, sheet: u32) -> Result<(), String> {
         self.guard_structure()?;
         let worksheet = self.model.workbook.worksheet(sheet)?;
-
-        self.push_diff_list(vec![Diff::DeleteSheet {
+        let old_tables = self.model.workbook.tables.clone();
+        let sheet_name = worksheet.name.clone();
+        let mut new_tables = old_tables.clone();
+        new_tables.retain(|_, t| t.sheet_name != sheet_name);
+        let diff_list = vec![Diff::DeleteSheet {
             sheet,
             old_data: Box::new(worksheet.clone()),
-        }]);
+        }];
+        let diff_list = if new_tables.len() == old_tables.len() {
+            diff_list
+        } else {
+            let mut v = vec![Diff::SetTables { old_value: Some(old_tables), new_value: None }];
+            v.extend(diff_list);
+            v.push(Diff::SetTables { old_value: None, new_value: Some(new_tables) });
+            v
+        };
+        self.push_diff_list(diff_list);
 
         let sheet_count = self.model.workbook.worksheets.len() as u32;
         // If we are deleting the last sheet we need to change the selected sheet
@@ -1151,6 +1163,7 @@ impl<'a> UserModel<'a> {
     /// See also [`Model::insert_rows`].
     pub fn insert_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
         self.guard_perm(sheet, "insertRows")?;
+        let old_tables = self.model.workbook.tables.clone();
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_rows(sheet, row, row_count)?;
 
@@ -1161,6 +1174,7 @@ impl<'a> UserModel<'a> {
             row,
             count: row_count,
         });
+        let diff_list = self.with_tables_diff(old_tables, diff_list);
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1185,6 +1199,7 @@ impl<'a> UserModel<'a> {
         column_count: i32,
     ) -> Result<(), String> {
         self.guard_perm(sheet, "insertColumns")?;
+        let old_tables = self.model.workbook.tables.clone();
         let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_columns(sheet, column, column_count)?;
 
@@ -1195,6 +1210,7 @@ impl<'a> UserModel<'a> {
             column,
             count: column_count,
         });
+        let diff_list = self.with_tables_diff(old_tables, diff_list);
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1209,6 +1225,7 @@ impl<'a> UserModel<'a> {
     /// See also [`Model::delete_rows`].
     pub fn delete_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
         self.guard_perm(sheet, "deleteRows")?;
+        let old_tables = self.model.workbook.tables.clone();
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all rows to be deleted
@@ -1266,6 +1283,7 @@ impl<'a> UserModel<'a> {
             count: row_count,
             old_data,
         });
+        let diff_list = self.with_tables_diff(old_tables, diff_list);
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1285,6 +1303,7 @@ impl<'a> UserModel<'a> {
         column_count: i32,
     ) -> Result<(), String> {
         self.guard_perm(sheet, "deleteColumns")?;
+        let old_tables = self.model.workbook.tables.clone();
         let worksheet = self.model.workbook.worksheet(sheet)?;
         let mut old_data = Vec::new();
         // Collect data for all columns to be deleted
@@ -1352,6 +1371,7 @@ impl<'a> UserModel<'a> {
             count: column_count,
             old_data,
         });
+        let diff_list = self.with_tables_diff(old_tables, diff_list);
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())

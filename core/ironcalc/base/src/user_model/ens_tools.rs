@@ -274,6 +274,23 @@ impl UserModel<'_> {
 
     /// ENS-Office: a step that restores the rules of the sheet after rows or columns were deleted
     /// (empty if nothing changed).
+    /// ENS-Office: если шаг изменил «умные» таблицы, обрамляет его снимками: старые
+    /// ставятся после отмены всего шага, новые — после его повтора.
+    pub(crate) fn with_tables_diff(
+        &self,
+        old_tables: std::collections::HashMap<String, crate::types::Table>,
+        diff_list: Vec<Diff>,
+    ) -> Vec<Diff> {
+        let new_tables = self.model.workbook.tables.clone();
+        if new_tables == old_tables {
+            return diff_list;
+        }
+        let mut v = vec![Diff::SetTables { old_value: Some(old_tables), new_value: None }];
+        v.extend(diff_list);
+        v.push(Diff::SetTables { old_value: None, new_value: Some(new_tables) });
+        v
+    }
+
     pub(crate) fn cf_list_diff(&self, sheet: u32, old_value: Vec<crate::cf_types::ConditionalFormatting>) -> Result<Vec<Diff>, String> {
         let new_value = self.model.workbook.worksheet(sheet)?.conditional_formatting.clone();
         Ok(if new_value == old_value { vec![] } else { vec![Diff::SetConditionalFormattingList { sheet, old_value, new_value }] })

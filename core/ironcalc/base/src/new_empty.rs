@@ -208,6 +208,7 @@ impl<'a> Model<'a> {
         let defined_names = self.workbook.get_defined_names_with_scope();
         self.parser
             .set_worksheets_and_names(self.workbook.get_worksheet_names(), defined_names);
+        self.parser.set_tables(self.workbook.tables.clone());
         self.parsed_formulas = vec![];
         self.parse_formulas();
         self.parsed_defined_names = HashMap::new();
@@ -540,6 +541,12 @@ impl<'a> Model<'a> {
 
         // Update the name of the worksheet
         self.workbook.worksheet_mut(sheet_index)?.set_name(new_name);
+        // ENS-Office: таблицы листа переезжают вместе с его новым именем.
+        for table in self.workbook.tables.values_mut() {
+            if table.sheet_name == old_name {
+                table.sheet_name = new_name.to_string();
+            }
+        }
         self.reset_parsed_structures();
         Ok(())
     }
@@ -556,7 +563,9 @@ impl<'a> Model<'a> {
         if sheet_index >= sheet_count {
             return Err("Sheet index too large".to_string());
         };
-        self.workbook.worksheets.remove(sheet_index as usize);
+        let removed = self.workbook.worksheets.remove(sheet_index as usize);
+        // ENS-Office: таблицы удалённого листа удаляются вместе с ним.
+        self.workbook.tables.retain(|_, t| t.sheet_name != removed.name);
         self.reset_parsed_structures();
         Ok(())
     }
