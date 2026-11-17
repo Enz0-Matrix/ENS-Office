@@ -13,7 +13,7 @@ import {
 } from 'prosemirror-tables';
 import type { Node as PMNode } from 'prosemirror-model';
 import { register, run, handleKey } from '../../table/src/commands';
-import { FONT_SIZES, FONTS, lastColor, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
+import { FONT_SIZES, FONTS, lastColor, onRibbonDrawn, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
 import { fontStack, loadFonts, OFFICE_FONTS } from '../../table/src/fonts';
 import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
@@ -57,6 +57,7 @@ import { tabsPlugin, tabShifts } from './tabs';
 import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
 import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
 import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
+import { attachFontPicker } from './font-picker';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
@@ -1956,6 +1957,8 @@ initFileMenu({
   applySettings: () => { updateUi(); refreshRibbon(); },
 });
 initContextMenu({ view: () => view, sheet: $('sheet'), openLink: openHref, copyText: (t) => { void copyText(t).then(() => toast('Адрес ссылки скопирован')); } });
+// Лента перерисована (другая вкладка): заново выставить значения списков (шрифт, размер, стиль…) по курсору.
+onRibbonDrawn(() => { updateUi(); attachFontPicker(); });
 initCommandSearch();
 applyPage();
 setZoom(1);

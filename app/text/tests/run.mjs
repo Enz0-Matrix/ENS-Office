@@ -2550,6 +2550,68 @@ await test('шаблон «Письмо на бланке»: поля, шапк�
   ok(r.docx[0], 'DOCX туда и обратно: блоки на месте');
   await p.context().close();
 });
+await test('лента как в Word: одна высота на всех вкладках, крупные значки, списки показывают шрифт после смены вкладки', async () => {
+  const p = await page();
+  const heights = new Set();
+  const tabs = await p.$$eval('#tabs .tab:not(.file)', (t) => t.map((x) => x.textContent));
+  for (const name of tabs) {
+    await p.click(`#tabs .tab:text-is("${name}")`);
+    const r = await p.evaluate(() => {
+      const rb = document.getElementById('ribbon');
+      // Кнопки внутри ленты не наезжают друг на друга.
+      const boxes = [...rb.querySelectorAll('.btn, .ribbon-select')].map((e) => e.getBoundingClientRect()).filter((b) => b.width > 0);
+      let overlap = 0;
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left), h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w > 2 && h > 2) overlap++;
+      }
+      const large = rb.querySelector('.btn.large svg');
+      return { h: Math.round(rb.getBoundingClientRect().height), overlap, large: large ? Math.round(large.getBoundingClientRect().width) : null, clipped: [...rb.querySelectorAll('.btn, .ribbon-select')].some((e) => e.getBoundingClientRect().bottom > rb.getBoundingClientRect().bottom + 1) };
+    });
+    heights.add(r.h);
+    eq(r.overlap, 0, `вкладка «${name}»: кнопки не наезжают`);
+    ok(!r.clipped, `вкладка «${name}»: ничего не обрезано снизу`);
+    if (r.large != null) eq(r.large, 32, `вкладка «${name}»: крупные значки 32 px`);
+  }
+  eq(heights.size, 1, `лента одной высоты: ${[...heights]}`);
+  await p.click('#tabs .tab:text-is("Главная")');
+  eq(await p.$eval('select[data-command="format.fontName"]', (s) => s.value), 'Times New Roman', 'после смены вкладки список шрифтов показывает шрифт документа');
+  eq(await p.$eval('select[data-command="format.fontSize"]', (s) => s.value), '12', 'и размер');
+  await p.context().close();
+});
+
+await test('выбор шрифта: образец своим начертанием, кириллица и аналог, поиск, применение к выделению', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Пример текста');
+  await p.keyboard.press('Control+KeyA');
+  await p.click('select[data-command="format.fontName"]');
+  await p.waitForSelector('.font-picker .fp-row');
+  const rows = await p.$$eval('.font-picker .fp-row', (r) => r.map((x) => ({ font: x.dataset.font, family: x.querySelector('.fp-name').style.fontFamily, tags: [...x.querySelectorAll('.fp-tag')].map((t) => t.textContent) })));
+  const tnr = rows.find((r) => r.font === 'Times New Roman');
+  ok(tnr && tnr.family.includes('Times New Roman') && tnr.family.includes('Tinos'), `имя показано своим шрифтом (с аналогом): ${tnr?.family}`);
+  ok(tnr.tags.includes('кириллица'), `Times New Roman: кириллица: ${tnr.tags}`);
+  ok(rows.every((r) => r.tags.length >= 1), 'у каждого шрифта есть пометка');
+  // Поиск: несуществующий шрифт — «нет в системе», но выбрать можно.
+  await p.fill('.font-picker .fp-search', 'Нетакогошрифта');
+  const missing = await p.$$eval('.font-picker .fp-row', (r) => r.map((x) => [x.dataset.font, x.textContent]));
+  ok(missing.length === 1 && missing[0][1].includes('нет в системе'), `неизвестный шрифт: ${JSON.stringify(missing)}`);
+  await p.fill('.font-picker .fp-search', 'arial');
+  await p.keyboard.press('Enter');
+  ok(!(await p.$('.font-picker')), 'окно закрылось после выбора');
+  const font = await p.evaluate(() => { let f = null; window.ens.view.state.doc.descendants((n) => { if (n.isText && !f) f = n.marks.find((m) => m.type.name === 'textStyle')?.attrs.font; }); return f; });
+  eq(font, 'Arial', 'шрифт применён к выделенному тексту');
+  // Недавние: выбранный шрифт первым.
+  await p.click('select[data-command="format.fontName"]');
+  await p.waitForSelector('.font-picker .fp-head');
+  eq(await p.$eval('.font-picker .fp-head', (h) => h.textContent), 'Недавние', 'раздел «Недавние»');
+  eq(await p.$eval('.font-picker .fp-row', (r) => r.dataset.font), 'Arial', 'последний выбранный — первым');
+  await p.keyboard.press('Escape');
+  ok(!(await p.$('.font-picker')), 'Esc закрывает окно');
+  await p.context().close();
+});
+
 await test('линейки тоньше и точнее: 22 px, деления на целых пикселях, миллиметры видны', async () => {
   const p = await page();
   await p.click('.ProseMirror');

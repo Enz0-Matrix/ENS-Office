@@ -391,3 +391,42 @@
 .text-backstage .bs-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 8px 0 12px; }
 .text-backstage .bs-wide:disabled { opacity: .5; cursor: default; }
 .text-backstage .bs-row input[type=number] { margin: 0 4px; }
+
+/* Лента ENS-Text как в Word: постоянная высота на всех вкладках (лист не прыгает при переключении), мелкие кнопки
+   встают столбиками по три, крупные занимают столбик целиком, значки крупнее. Только для ENS-Text: общие стили
+   ENS-Table (styles.css) не меняются. */
+#ribbon.ribbon { height: 112px; min-height: 112px; box-sizing: border-box; overflow-y: hidden; align-items: stretch; }
+#ribbon .group { height: 100%; box-sizing: border-box; }
+/* Сетка по столбцам: три ряда по 28 px, крупная кнопка занимает столбик целиком. */
+#ribbon .group .items, #ribbon .group .items.row { display: grid; grid-auto-flow: column; grid-template-rows: repeat(3, 28px);
+  align-content: start; justify-content: start; align-items: center; height: 88px; max-width: none; gap: 2px 3px; }
+#ribbon .group .items > .btn.large { grid-row: 1 / -1; align-self: stretch; }
+/* Группы только из списков и мелких кнопок («Шрифт», «Абзац»): строками, как в Word — списки сверху, кнопки ниже. */
+#ribbon .group .items:has(> .ribbon-select):not(:has(> .btn.large)) { display: flex; flex-direction: row; flex-wrap: wrap; align-content: flex-start;
+  align-items: center; max-width: 236px; }
+#ribbon .btn.large { height: auto; min-width: 60px; max-width: 96px; gap: 6px; justify-content: flex-start; padding-top: 8px; }
+#ribbon .btn.large svg { width: 32px; height: 32px; flex: none; }
+#ribbon .btn.small svg { width: 20px; height: 20px; }
+#ribbon .btn.medium { height: 28px; width: 34px; }
+#ribbon .btn.medium svg { width: 22px; height: 22px; }
+#ribbon .split.medium .split-arrow { height: 28px; }
+#ribbon .ribbon-select { margin: 0; height: 26px; }
+#ribbon .group-name { margin-top: auto; white-space: nowrap; }
+
+/* Окно выбора шрифта (font-picker.ts). */
+.font-picker { position: fixed; z-index: 40; width: 360px; max-height: 60vh; display: flex; flex-direction: column; background: #fff; color: #222;
+  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.font-picker .fp-search { margin: 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.font-picker .fp-list { overflow: auto; padding: 0 4px 6px; }
+.font-picker .fp-head { font-size: 11px; color: var(--muted); padding: 8px 6px 2px; text-transform: uppercase; letter-spacing: .03em; }
+.font-picker .fp-row { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; width: 100%; text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; color: inherit; }
+.font-picker .fp-row:hover, .font-picker .fp-row:focus { background: #e6f3ef; outline: none; }
+.font-picker .fp-row.on { background: #cfe9e2; }
+.font-picker .fp-name { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.font-picker .fp-sample { font-size: 15px; color: #555; white-space: nowrap; }
+.font-picker .fp-tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; font: 11px "Segoe UI", "Carlito", sans-serif; }
+.font-picker .fp-tag { padding: 0 5px; border-radius: 3px; background: #eef1f4; color: #455; }
+.font-picker .fp-tag.ok { background: #e2f3ea; color: #1d6b42; }
+.font-picker .fp-tag.warn { background: #fdecea; color: #a12a1a; }
+.font-picker .fp-tag.sub { background: #fff4d6; color: #7a5b00; }
+.font-picker .fp-more { margin: 8px 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; font: inherit; cursor: pointer; }
