@@ -2,9 +2,11 @@
 // Выбор шрифта как в Word: каждый шрифт показан своим начертанием, рядом — есть ли кириллица и чем он нарисуется,
 // если его нет в системе (встроенный аналог с теми же размерами букв, см. fonts.ts). Окно открывается поверх обычного
 // списка ленты (select[data-command="format.fontName"]) и выбирает в нём значение — команда ленты та же.
-// Шрифты системы показываются по кнопке: браузер спрашивает разрешение (Local Font Access, Chromium 103+).
+// Шрифты системы находятся замером по каталогу распространённых имён (font-catalog.ts) — без окна разрешения.
+// Полный список (Local Font Access, Chromium 103+) — только по явной кнопке: браузер спросит разрешение.
 
 import { fontStack, OFFICE_FONTS } from '../../table/src/fonts';
+import { FONT_CATALOG } from './font-catalog';
 
 const RECENT = 'ens-text.recentFonts';
 const SAMPLE = 'АаБбЖж Aa';
@@ -99,6 +101,13 @@ function row(sel: HTMLSelectElement, name: string, styles?: Set<string>): HTMLEl
   return b;
 }
 
+let detected: string[] | null = null;
+/** Шрифты каталога, которые есть в системе (замер, без разрешения). */
+export function detectedFonts(): string[] {
+  detected ??= [...new Set(FONT_CATALOG)].filter((n) => draws(n, 'abcmwXYZ')).sort((a, b) => a.localeCompare(b, 'ru'));
+  return detected;
+}
+
 async function loadSystemFonts(): Promise<void> {
   const q = (window as unknown as { queryLocalFonts?: () => Promise<{ family: string; style: string }[]> }).queryLocalFonts;
   if (!q) throw new Error('нет доступа');
@@ -152,17 +161,19 @@ export async function openFontPicker(sel: HTMLSelectElement): Promise<void> {
     const office = [...new Set([...OFFICE_FONTS, ...[...sel.options].map((o) => o.value)])].filter(Boolean);
     section('Недавние', recent().map((family) => ({ family })));
     section('Шрифты Office и документа', office.map((family) => ({ family })));
-    if (systemFonts) section('Шрифты системы', systemFonts);
-    else {
+    const shownNames = new Set(office);
+    const sys = systemFonts ?? detectedFonts().map((family) => ({ family, styles: undefined as Set<string> | undefined }));
+    section('Шрифты системы', sys.filter((x) => !shownNames.has(x.family)));
+    if (!systemFonts) {
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'fp-more';
-      more.textContent = 'Показать шрифты системы…';
-      more.title = 'Браузер может спросить разрешение на доступ к шрифтам';
+      more.textContent = 'Найти остальные шрифты…';
+      more.title = 'Показать все шрифты компьютера, включая редкие. Окно программы спросит разрешение на доступ к списку шрифтов — его можно дать один раз.';
       more.addEventListener('click', () => {
         more.disabled = true;
         more.textContent = 'Загрузка…';
-        loadSystemFonts().then(draw).catch(() => { more.textContent = 'Шрифты системы недоступны в этом окне'; });
+        loadSystemFonts().then(draw).catch(() => { more.textContent = 'Полный список недоступен: показаны найденные шрифты'; });
       });
       list.append(more);
     }

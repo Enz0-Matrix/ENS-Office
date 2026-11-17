@@ -48,6 +48,8 @@ function ok(c, what) {
   if (!c) throw new Error(what);
 }
 async function test(name, f) {
+  // ONLY=подстрока — запустить только подходящие тесты (для отладки).
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
   try {
     await f();
     console.log(`  ✓ ${name}`);
@@ -2593,6 +2595,12 @@ await test('выбор шрифта: образец своим начертан�
   ok(tnr && tnr.family.includes('Times New Roman') && tnr.family.includes('Tinos'), `имя показано своим шрифтом (с аналогом): ${tnr?.family}`);
   ok(tnr.tags.includes('кириллица'), `Times New Roman: кириллица: ${tnr.tags}`);
   ok(rows.every((r) => r.tags.length >= 1), 'у каждого шрифта есть пометка');
+  // Шрифты системы находятся сами, без окна разрешения (queryLocalFonts не вызывается).
+  const heads = await p.$$eval('.font-picker .fp-head', (h) => h.map((x) => x.textContent));
+  ok(heads.includes('Шрифты системы'), `раздел «Шрифты системы» сразу: ${heads}`);
+  ok(rows.some((r) => r.font === 'DejaVu Sans'), 'найден установленный DejaVu Sans');
+  ok(!rows.some((r) => r.font === 'Segoe Fluent Icons'), 'неустановленные шрифты каталога не показаны');
+  eq(await p.$eval('.font-picker .fp-more', (b) => b.textContent), 'Найти остальные шрифты…', 'полный список — только по кнопке');
   // Поиск: несуществующий шрифт — «нет в системе», но выбрать можно.
   await p.fill('.font-picker .fp-search', 'Нетакогошрифта');
   const missing = await p.$$eval('.font-picker .fp-row', (r) => r.map((x) => [x.dataset.font, x.textContent]));
