@@ -2966,10 +2966,17 @@ function pasteText(text: string): void {
       out.push(Array.from({ length: area.width }, (_, c) => src[c % w] ?? ''));
     }
   }
-  model.pasteCsvText(area, out.map((r) => r.join('\t')).join('\n'));
-  grid.render();
-  updateFormulaBar();
-  updateStatus();
+  try {
+    model.setSelectedCell(area.row, area.column);
+    model.pasteCsvText(area, out.map((r) => r.join('\t')).join('\n'));
+  } catch (e) {
+    showToast(`Не удалось вставить: ${e}`);
+  } finally {
+    // что бы ни случилось, на экране — то, что в книге (раньше ячейка казалась пустой до Enter)
+    grid.render();
+    updateFormulaBar();
+    updateStatus();
+  }
 }
 
 // --- Команды ---
