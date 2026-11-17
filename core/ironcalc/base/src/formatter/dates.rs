@@ -156,3 +156,34 @@ mod tests {
         );
     }
 }
+
+
+/// ENS-Office: код формата показывает календарную дату (день, месяц или год), а не только время.
+/// Такие числа зависят от системы дат книги (1900 или 1904).
+pub fn shows_calendar_date(code: &str) -> bool {
+    use super::parser::{ParsePart, Parser, TextToken};
+    let mut p = Parser::new(code);
+    p.parse();
+    p.parts.iter().any(|part| match part {
+        ParsePart::Date(d) => d.tokens.iter().any(|t| {
+            matches!(
+                t,
+                TextToken::Day
+                    | TextToken::DayPadded
+                    | TextToken::DayNameShort
+                    | TextToken::DayName
+                    | TextToken::Month
+                    | TextToken::MonthPadded
+                    | TextToken::MonthNameShort
+                    | TextToken::MonthName
+                    | TextToken::MonthLetter
+                    | TextToken::YearShort
+                    | TextToken::Year
+            )
+        }),
+        _ => false,
+    })
+}
+
+/// ENS-Office: разница систем дат: 1 января 1904 года — это 1462-й день системы 1900.
+pub const DATE1904_OFFSET: f64 = 1462.0;
