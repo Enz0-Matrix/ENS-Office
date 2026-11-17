@@ -127,6 +127,9 @@ export async function openPath(path: string): Promise<void> {
   }
 }
 
+/** Путь файла на диске, с которым связан документ ('' — ещё не сохранялся). */
+export const currentPath = (): string => file.path;
+
 /** Документ загружен вне этого модуля (например, «Создать»): забываем прежний файл. */
 export function detach(): void {
   void recovery.forget(file.id).catch(() => {});

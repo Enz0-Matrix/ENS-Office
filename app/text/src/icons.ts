@@ -18,6 +18,7 @@ import split24 from '@fluentui/svg-icons/icons/table_cells_split_24_regular.svg?
 import spacing20 from '@fluentui/svg-icons/icons/text_line_spacing_20_regular.svg?raw';
 import clearFmt20 from '@fluentui/svg-icons/icons/text_clear_formatting_20_regular.svg?raw';
 import paragraph24 from '@fluentui/svg-icons/icons/text_paragraph_24_regular.svg?raw';
+import paragraph20 from '@fluentui/svg-icons/icons/text_paragraph_20_regular.svg?raw';
 import landscape24 from '@fluentui/svg-icons/icons/document_landscape_24_regular.svg?raw';
 import zoomIn24 from '@fluentui/svg-icons/icons/zoom_in_24_regular.svg?raw';
 import highlight20 from '@fluentui/svg-icons/icons/highlight_20_regular.svg?raw';
@@ -73,6 +74,7 @@ Object.assign(ICONS, {
   line_spacing_20: spacing20,
   clear_format_20: clearFmt20,
   paragraph_24: paragraph24,
+  paragraph_20: paragraph20,
   landscape_24: landscape24,
   zoom_in_24: zoomIn24,
   highlight_20: highlight20,

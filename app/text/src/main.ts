@@ -13,7 +13,7 @@ import {
 } from 'prosemirror-tables';
 import type { Node as PMNode } from 'prosemirror-model';
 import { register, run, handleKey } from '../../table/src/commands';
-import { FONT_SIZES, FONTS, lastColor, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
+import { FONT_SIZES, FONTS, lastColor, onRibbonDrawn, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
 import { fontStack, loadFonts, OFFICE_FONTS } from '../../table/src/fonts';
 import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
@@ -29,7 +29,7 @@ import * as V from './versions';
 import { askNamedVersion, fmtWhen, openHistory, type HistoryHost } from './history-ui';
 import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
-import { readText } from '../../table/src/platform';
+import { copyText, readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
@@ -51,7 +51,15 @@ import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats a
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
-import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
+import { initTableMove, updateTableMove } from './table-move';
+import { hideContextMenu, initContextMenu } from './contextmenu';
+import { tabsPlugin, tabShifts } from './tabs';
+import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
+import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
+import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
+import { attachFontPicker } from './font-picker';
+import { builtInTemplates } from './templates';
+import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
   addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
@@ -165,6 +173,7 @@ function afterSaved(key: string): void {
 
 function markOpened(key: string): void {
   if (!key) return;
+  rememberFile(key);
   const all = { ...settings.lastOpened, [key]: Date.now() };
   const keys = Object.keys(all).sort((a, b) => all[b] - all[a]).slice(0, 200);
   settings.lastOpened = Object.fromEntries(keys.map((k) => [k, all[k]]));
@@ -316,6 +325,8 @@ function applyPage(): void {
     const first = effOf(secs[0].page), lastE = effOf(secs[secs.length - 1].page);
     view.dom.style.padding = `${first.top}pt 0 ${lastE.bottom}pt 0`;
   } else view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
+  // Расстояние от края листа до текста: им ограничен выступ первой строки (schema.ts, paraStyle).
+  view.dom.style.setProperty('--pl', `${secs.length > 1 ? 0 : e.left}pt`);
   drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;
@@ -420,6 +431,7 @@ function setZoom(z: number): void {
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
   updateOverlay();
   updateRuler();
+  updateTableMove();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -430,7 +442,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -456,15 +468,7 @@ const view = new EditorView($('sheet'), {
     const $pos = v.state.doc.resolve(pos);
     const link = schema.marks.link.isInSet($pos.marks());
     if (!link) return false;
-    if (desktop.isDesktop) {
-      desktop.openTarget(link.attrs.href).catch((e) => toast(String((e as Error)?.message ?? e)));
-      return true;
-    }
-    const a = document.createElement('a');
-    a.href = link.attrs.href;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.click();
+    openHref(link.attrs.href as string);
     return true;
   },
 });
@@ -484,9 +488,25 @@ function syncImageTab(): void {
   else if (!on && active === 'Рисунок') click('Главная');
 }
 
+/** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
+function openHref(href: string): void {
+  if (desktop.isDesktop) {
+    desktop.openTarget(href).catch((e) => toast(String((e as Error)?.message ?? e)));
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.click();
+}
+
 function afterChange(docChanged: boolean): void {
+  // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
+  if (docChanged) hideContextMenu();
   updateUi();
   updateOverlay();
+  updateTableMove();
   updateRuler();
   syncImageTab();
   renderInspector(inspectorSource, inspectorActions);
@@ -502,9 +522,12 @@ function afterChange(docChanged: boolean): void {
   }
 }
 
+const countWords = (text: string): number => (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu) ?? []).length;
+const wordCount = (): number => countWords(view.state.doc.textBetween(0, view.state.doc.content.size, '\n', ' '));
+
 function updateStats(): void {
   const text = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', ' ');
-  const words = (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu) ?? []).length;
+  const words = countWords(text);
   $('status-words').textContent = `Слов: ${words}  ·  Знаков: ${text.replace(/\n/g, '').length}`;
   updateSelStats();
 }
@@ -616,6 +639,7 @@ register(
   { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
   { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
   { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  { id: 'view.marks', label: 'Отобразить все знаки', keywords: ['скрытые символы', 'непечатаемые', 'знаки абзаца', 'пробелы', 'табуляция', '¶'], keys: ['Ctrl+Shift+Digit8'], checked: () => hiddenMarksOn(view.state), run: () => { setHiddenMarks(view, !hiddenMarksOn(view.state)); updateUi(); view.focus(); } },
   { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
   { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
   { id: 'frame.select', label: 'Выделить надпись', keywords: ['надпись', 'выделить рамку'], run: () => selectFrame() },
@@ -685,6 +709,7 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  { id: 'review.dictionary', label: 'Словарь…', keywords: ['словарь', 'орфография', 'фамилия', 'не подчёркивать', 'исключения'], run: () => dictDialog() },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
@@ -711,6 +736,14 @@ register(
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
   { id: 'file.history', label: 'История версий', run: () => showHistory() },
+  { id: 'file.menu', label: 'Файл: создать, открыть, сохранить, печать, параметры', keywords: ['файл', 'file', 'параметры', 'настройки', 'options'], keys: ['Alt+KeyF'], run: () => showFileMenu() },
+  { id: 'file.options', label: 'Параметры', keywords: ['настройки', 'параметры', 'имя', 'напоминание', 'типограф'], run: () => showFileMenu('options') },
+  {
+    id: 'file.close', label: 'Закрыть документ', keywords: ['закрыть', 'close'],
+    // Документ закрывается, окно остаётся с пустым документом (как «Закрыть» в Word). Файл на диске забывается,
+    // чтобы следующее «Сохранить» не записало пустой документ поверх него.
+    run: () => void guardUnsaved(() => { if (desktop.isDesktop) desktop.detach(); newDocument(); }),
+  },
   { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => void printDocument() },
 );
 
@@ -904,6 +937,7 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
+          { type: 'small', command: 'view.marks', icon: 'paragraph_20' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
@@ -1039,6 +1073,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'review.mergeCopies', icon: 'document_text', label: 'Объединить копии' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
           { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
+          { type: 'large', command: 'review.dictionary', icon: 'document_text', label: 'Словарь' },
         ],
       },
       { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }, { type: 'large', command: 'view.night', icon: 'paint_brush', label: 'Ночной лист' }] },
@@ -1174,7 +1209,7 @@ const TABS: RibbonTab[] = [
   },
 ];
 
-const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => fileMenu(), TABS);
+const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showFileMenu(), TABS);
 
 function setSelect(cmd: string, value: string): void {
   const sel = document.querySelector<HTMLSelectElement>(`select[data-command="${cmd}"]`);
@@ -1336,6 +1371,42 @@ function tableDialog(): void {
       el('div', { class: 'dlg-row' }, el('label', { textContent: 'С границами' }), borders),
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
     );
+  });
+}
+
+/** Окно «Словарь»: свои слова, которые проверка орфографии не подчёркивает; для фамилий — сразу все формы. */
+function dictDialog(): void {
+  dialog((box, close) => {
+    const input = el('input', { type: 'text', placeholder: 'Слово или фамилия' });
+    const forms = el('input', { type: 'checkbox', checked: true });
+    const list = el('div', { class: 'dict-list' });
+    const draw = () => {
+      const words = userWords();
+      list.replaceChildren(...(words.length ? words.map((w) => el('div', { class: 'dict-row' },
+        el('span', { textContent: w }),
+        el('button', { textContent: 'Удалить', title: `Удалить «${w}» из словаря`, onclick: () => { removeWord(view, w); draw(); } }))) : [el('p', { class: 'dict-empty', textContent: 'Своих слов пока нет.' })]));
+    };
+    const add = () => {
+      const w = input.value.trim();
+      if (!w) return;
+      const added = addWords(view, w, forms.checked);
+      toast(added.length ? `В словарь добавлено: ${added.join(', ')}` : 'Это слово уже есть в словаре');
+      input.value = '';
+      input.focus();
+      draw();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    box.append(
+      el('h2', { textContent: 'Словарь' }),
+      el('p', { textContent: 'Слова из словаря проверка орфографии не подчёркивает. Словарь хранится на этом компьютере.' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Новое слово' }), input, el('button', { class: 'primary', textContent: 'Добавить', onclick: add })),
+      el('label', { class: 'dict-forms' }, forms, ' Для фамилии на -ов, -ев, -ин добавить все формы (Иванов, Иванова, Иванову…)'),
+      list,
+      el('p', { class: 'dict-builtin', textContent: `Встроено в программу: ${BUILTIN_WORDS.slice(0, 3).join(', ')} и другие формы (${BUILTIN_WORDS.length}).` }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Закрыть', onclick: close })),
+    );
+    draw();
+    input.focus();
   });
 }
 
@@ -1606,7 +1677,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -1637,9 +1708,39 @@ function newDocument(): void {
 }
 
 const templateHost: TemplateHost = {
-  create: (doc, newMetaValue, name) => newFromWizard(doc, newMetaValue, name),
+  create: (doc, newMetaValue, name, fill) => { newFromWizard(doc, newMetaValue, name); if (fill) void fillToPageBottom(fill); },
   current: () => ({ bytes: exportDocx(view.state.doc, meta, docName), name: docName.replace(/\.docx$/i, '') }),
 };
+
+/** Пустыми строками перед последними `last` блоками прижать их к низу первой страницы (блок «Исполнитель» письма).
+ *  Считается по вёрстке после отрисовки; в историю отмены не попадает — это часть шаблона. */
+async function fillToPageBottom(last: number): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const doc = view.state.doc;
+  if (doc.childCount <= last) return;
+  let pos = 0;
+  for (let i = 0; i < doc.childCount - last; i++) pos += doc.child(i).nodeSize;
+  const lastDom = view.nodeDOM(doc.content.size - doc.lastChild!.nodeSize); // низ последнего блока
+  const box = pageBoxes(view)[0];
+  if (!(lastDom instanceof HTMLElement) || !box) return;
+  const k = zoom;
+  const sheet = $('sheet').getBoundingClientRect();
+  const bottom = (lastDom.getBoundingClientRect().bottom - sheet.top) / k;
+  const limit = box.top + box.H - box.eff.bottom * PX;
+  // Высота пустой строки — по пустому абзацу шаблона с теми же настройками (вставляем и замеряем).
+  const probe = schema.nodes.paragraph.create();
+  const tr0 = view.state.tr.insert(pos, probe).setMeta('addToHistory', false);
+  view.dispatch(tr0);
+  const pDom = view.nodeDOM(pos) as HTMLElement | null;
+  const lineH = pDom ? pDom.getBoundingClientRect().height / k : 0;
+  const free = limit - bottom - lineH; // одна строка уже вставлена
+  const more = lineH > 0 ? Math.max(0, Math.floor(free / lineH + 0.02)) : 0;
+  let tr = view.state.tr.setMeta('addToHistory', false);
+  if (more > 0) tr = tr.insert(pos, Array.from({ length: more }, () => schema.nodes.paragraph.create()));
+  // Если исполнитель не поместился и с одной строкой — убираем пробную.
+  if (free < -0.5) tr = tr.delete(pos, pos + probe.nodeSize);
+  if (tr.docChanged) view.dispatch(tr);
+}
 
 function newFromWizard(doc: PMNode, newMetaValue: DocMeta, name: string): void {
   void clearRecovery(docId);
@@ -1736,33 +1837,6 @@ function askName(current: string): Promise<string | null> {
   });
 }
 
-function fileMenu(): void {
-  dialog((box, close) => {
-    const item = (label: string, id: string) => el('button', { textContent: label, onclick: () => { close(); run(id); } });
-    // «Закрыть» — в шапке, как в ENS-Table: та же иконка dismiss, чтобы меню не выглядело ловушкой:
-    // Esc работает, но не каждый о нём догадается.
-    const closeBtn = el('button', { class: 'menu-close', type: 'button', title: 'Закрыть меню (Esc)', onclick: close });
-    closeBtn.innerHTML = `${ICONS.dismiss_20 ?? ''}<span>Закрыть</span>`;
-    box.append(
-      el('div', { class: 'menu-head' }, el('h2', { textContent: 'Файл' }), closeBtn),
-      el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
-        el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
-    );
-  });
-}
-
-function about(): void {
-  dialog((box, close) => {
-    box.append(
-      el('h2', { textContent: `ENS-Text ${APP_VERSION}` }),
-      el('p', { textContent: 'Текстовый редактор ENS-Office. Работает без интернета. Формат файлов — .docx.' }),
-      el('p', { textContent: 'Версия 0.1 — первый этап: абзацы, заголовки, списки, таблицы, изображения, ссылки, страницы, печать. Колонтитулы, сноски и совместная работа — в планах.' }),
-      el('div', { class: 'dlg-actions' }, el('button', { class: 'primary', textContent: 'Закрыть', onclick: close })),
-    );
-  });
-}
-
 // ---------------------------------------------------------------- восстановление
 
 function scheduleRecovery(): void {
@@ -1854,11 +1928,37 @@ document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
 initRuler({
   view: () => view, papers: () => $('papers'), zoom: () => zoom, pageIndex: () => Math.max(0, currentPage() - 1), page: () => curPage(),
   changePage: (next) => changePage(next), locked: () => !!hfSession,
+  previewPage: (next) => {
+    // Предпросмотр боковых полей: строки сразу перетекают. Только для документа из одного раздела;
+    // верхнее и нижнее поле меняют разбиение на страницы — их показывают линейка и направляющая.
+    if (sectionsOf(view.state.doc, meta.page).length > 1) return;
+    const p = { ...effPage(), ...(next ?? {}) };
+    view.dom.style.paddingLeft = `${p.left}pt`;
+    view.dom.style.paddingRight = `${p.right}pt`;
+  },
 });
 initImageTools({
   view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
 });
+initTableMove({ view: () => view, sheet: $('sheet'), scale: () => zoom, locked: () => !!hfSession });
+initFileMenu({
+  info: () => ({ title: docName, path: desktop.isDesktop ? desktop.currentPath() : '', dirty: isDirty(), words: wordCount(), pages: pageCount(view), versions: hist.versions.length }),
+  isDesktop: desktop.isDesktop,
+  openPath: (path) => void desktop.openPath(path),
+  create: (id) => {
+    if (id == null) { run('file.new'); return; }
+    const t = builtInTemplates().find((x) => x.id === id);
+    if (!t) return;
+    void guardUnsaved(() => { const b = t.build(); templateHost.create(b.doc, b.meta, b.name, b.fillBeforeLast); });
+  },
+  liveQuotes: () => liveQuotesOn,
+  setLiveQuotes: (on) => { if (on !== liveQuotesOn) run('typo.live'); },
+  applySettings: () => { updateUi(); refreshRibbon(); },
+});
+initContextMenu({ view: () => view, sheet: $('sheet'), openLink: openHref, copyText: (t) => { void copyText(t).then(() => toast('Адрес ссылки скопирован')); } });
+// Лента перерисована (другая вкладка): заново выставить значения списков (шрифт, размер, стиль…) по курсору.
+onRibbonDrawn(() => { updateUi(); attachFontPicker(); });
 initCommandSearch();
 applyPage();
 setZoom(1);
@@ -1905,6 +2005,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

@@ -1,5 +1,5 @@
 // Работа с рисунками: ручки размера и обрезки мышью, перетаскивание плавающих рисунков, окно «Формат рисунка», подписи, замена.
-// Рисунок выделяется щелчком (Alt+щелчок — и рисунок «за текстом», до которого иначе не добраться).
+// Рисунок выделяется щелчком. Рисунок «за текстом» — щелчком там, где над ним нет букв (как в Word); Alt+щелчок — всегда.
 
 import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { Node as PMNode } from 'prosemirror-model';
@@ -110,6 +110,25 @@ interface Drag {
 }
 
 let drag: Drag | null = null;
+/** Полупрозрачный полный рисунок под обрезаемым: видно, какая часть отрезается. */
+let ghost: HTMLImageElement | null = null;
+
+function showGhost(d: Drag, crop: number[], w: number, hh: number): void {
+  if (d.frame) return;
+  if (!ghost) {
+    ghost = document.createElement('img');
+    ghost.className = 'crop-ghost';
+    ghost.alt = '';
+    ghost.src = d.node.attrs.src as string;
+    host.sheet.append(ghost);
+  }
+  const k = host.scale();
+  const s = host.sheet.getBoundingClientRect();
+  const r = d.dom.getBoundingClientRect();
+  const fw = w / (1 - crop[0] - crop[2]), fh = hh / (1 - crop[1] - crop[3]);
+  Object.assign(ghost.style, { left: `${(r.left - s.left) / k - crop[0] * fw}px`, top: `${(r.top - s.top) / k - crop[1] * fh}px`, width: `${fw}px`, height: `${fh}px` });
+}
+const hideGhost = () => { ghost?.remove(); ghost = null; };
 
 function startDrag(e: MouseEvent, kind: Drag['kind'], handle?: Handle): void {
   const img = selectedImage();
@@ -126,6 +145,7 @@ function startDrag(e: MouseEvent, kind: Drag['kind'], handle?: Handle): void {
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp, { once: true });
+  if (kind === 'crop') showGhost(drag, drag.crop, drag.w, drag.h);
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -164,7 +184,10 @@ function onMove(e: MouseEvent): void {
   dom.style.width = `${w}px`;
   if (d.frame) dom.style.minHeight = `${hh}px`;
   else { dom.style.height = `${hh}px`; dom.style.aspectRatio = `${w} / ${hh}`; }
-  if (d.kind === 'crop') dom.style.setProperty('object-view-box', `inset(${crop[1] * 100}% ${crop[2] * 100}% ${crop[3] * 100}% ${crop[0] * 100}%)`);
+  if (d.kind === 'crop') {
+    dom.style.setProperty('object-view-box', `inset(${crop[1] * 100}% ${crop[2] * 100}% ${crop[3] * 100}% ${crop[0] * 100}%)`);
+    showGhost(d, crop, w, hh);
+  }
   updateOverlay();
 }
 
@@ -172,6 +195,7 @@ function onUp(): void {
   document.removeEventListener('mousemove', onMove);
   const d = drag;
   drag = null;
+  hideGhost();
   if (!d) return;
   if (!d.out) return;
   const next: Record<string, unknown> = { width: Math.round(d.out.w), height: Math.round(d.out.h) };
@@ -258,7 +282,20 @@ function build(): void {
         d.moved = { left: d.left + dx, top: d.top + dy };
         updateOverlay();
       };
-      const up = () => { document.removeEventListener('mousemove', mv); drag = null; finishMove(d); };
+      const up = (ev: MouseEvent) => {
+        document.removeEventListener('mousemove', mv);
+        drag = null;
+        // Щелчок без сдвига по букве над рисунком «за текстом» ставит курсор в текст, а не держит рисунок.
+        if (!d.moved && floatOf(d.node)?.mode === 'behind') {
+          overlay.hidden = true;
+          if (overText(ev.clientX, ev.clientY)) {
+            const v = host.view();
+            const at = v.posAtCoords({ left: ev.clientX, top: ev.clientY });
+            if (at) { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, at.pos))); v.focus(); }
+          }
+        }
+        finishMove(d);
+      };
       document.addEventListener('mousemove', mv);
       document.addEventListener('mouseup', up, { once: true });
     }
@@ -277,13 +314,20 @@ export function initImageTools(h: ImgHost): void {
   host = h;
   build();
   // Alt+щелчок: выбрать рисунок под курсором, в том числе «за текстом».
+  // Без Alt — рисунок или надпись «за текстом», если в точке щелчка нет букв: текст над ним по-прежнему
+  // ставит курсор, а пустое место (поле, пустая строка, хвост строки) выбирает рисунок.
   host.sheet.addEventListener('mousedown', (e) => {
-    if (!e.altKey || host.locked()) return;
+    if (e.button !== 0 || host.locked()) return;
     const v = host.view();
-    const imgs = [...v.dom.querySelectorAll<HTMLElement>('img[src], .frame-box')].filter((i) => {
+    const hit = (i: Element) => {
       const r = i.getBoundingClientRect();
       return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    });
+    };
+    const imgs = e.altKey
+      ? [...v.dom.querySelectorAll<HTMLElement>('img[src], .frame-box')].filter(hit)
+      : (e.target as HTMLElement | null)?.closest('.img-ov, img, .frame-box') || overText(e.clientX, e.clientY)
+        ? []
+        : [...v.dom.querySelectorAll<HTMLElement>('img.fl-behind, .frame-box.fr-behind')].filter(hit);
     if (!imgs.length) return;
     const area = (i: HTMLElement) => i.offsetWidth * i.offsetHeight;
     imgs.sort((a, b) => area(a) - area(b));
@@ -319,6 +363,23 @@ export function initImageTools(h: ImgHost): void {
   }, true);
   window.addEventListener('resize', updateOverlay);
   host.sheet.parentElement?.addEventListener('scroll', updateOverlay);
+}
+
+/** Есть ли буква под точкой (x, y): по прямоугольникам символов рядом с позицией каретки. */
+function overText(x: number, y: number): boolean {
+  const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+  const r = doc.caretRangeFromPoint?.(x, y);
+  const t = r?.startContainer;
+  if (!r || !t || t.nodeType !== Node.TEXT_NODE) return false;
+  const len = (t.textContent ?? '').length;
+  const probe = document.createRange();
+  for (const o of [r.startOffset - 1, r.startOffset]) {
+    if (o < 0 || o >= len) continue;
+    probe.setStart(t, o);
+    probe.setEnd(t, o + 1);
+    for (const c of probe.getClientRects()) if (x >= c.left - 1 && x <= c.right + 1 && y >= c.top && y <= c.bottom) return true;
+  }
+  return false;
 }
 
 export function setCropMode(on: boolean): void {
