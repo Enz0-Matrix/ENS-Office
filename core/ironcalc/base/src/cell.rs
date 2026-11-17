@@ -143,7 +143,7 @@ impl Cell {
                 }
             }
             CellValue::Number(v) => {
-                let value = to_excel_precision_str(v);
+                let value = plain_number_str(v);
 
                 if locale.numbers.symbols.decimal != "." {
                     value.replace(".", &locale.numbers.symbols.decimal)
@@ -214,5 +214,31 @@ fn spill_value_to_cell_value(v: &SpillValue, language: &Language) -> CellValue {
         SpillValue::Number(n) => CellValue::Number(*n),
         SpillValue::Text(s) => CellValue::String(s.clone()),
         SpillValue::Error(ei) => CellValue::String(ei.to_localized_error_string(language)),
+    }
+}
+
+
+/// ENS-Office: число для строки формул, как в Excel: 15 значащих цифр без экспоненты,
+/// пока число меньше 10^21 (654785313541516000, а не 6.54785313541516e17); совсем малые
+/// и огромные — с экспонентой, как и раньше.
+pub(crate) fn plain_number_str(v: f64) -> String {
+    let text = to_excel_precision_str(v);
+    let Some((mantissa, exp)) = text.split_once('e') else { return text };
+    let Ok(exp) = exp.parse::<i32>() else { return text };
+    if !(0..21).contains(&exp) {
+        return text;
+    }
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mantissa),
+    };
+    let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{int_part}{frac_part}");
+    let point = int_part.len() as i32 + exp;
+    if point >= digits.len() as i32 {
+        format!("{sign}{digits}{}", "0".repeat((point - digits.len() as i32) as usize))
+    } else {
+        let (a, b) = digits.split_at(point as usize);
+        format!("{sign}{a}.{b}")
     }
 }

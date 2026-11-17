@@ -1271,7 +1271,17 @@ export class Grid {
       const shownStyle = fc > 0 && style ? { ...style, font: { ...style.font, color: PALETTE[fc] } } : style;
       const runs = richAt.get(cell.r * 16_385 + cell.c);
       if (runs && !style?.alignment?.text_rotation) this.drawRich(runs, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
-      else this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR);
+      else {
+        // «Общий» формат: как в Excel, число с экспонентой в широком столбце видно целиком.
+        let wide: string | undefined;
+        if (/E[+-]\d+$/.test(text) && (style?.num_fmt ?? 'general').toLowerCase() === 'general') {
+          try {
+            const full = model.formatCellValueAs(this.sheet, cell.r, cell.c, '0.##############').replace(/[.,]$/, '');
+            if (/^-?\d+([.,]\d+)?$/.test(full) && full.replace(/\D/g, '').replace(/^0+/, '').length <= 15) wide = full;
+          } catch { /* оставляем как есть */ }
+        }
+        this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR, wide);
+      }
     }
 
     // Границы — поверх всего.
@@ -1462,7 +1472,7 @@ export class Grid {
 
   /** Текст ячейки: шрифт, выравнивание по горизонтали и вертикали, перенос по словам. */
   private drawText(text: string, style: CellStyle | null, align: string,
-    cell: { x: number; y: number; w: number; h: number }, spillL: number, spillR: number): void {
+    cell: { x: number; y: number; w: number; h: number }, spillL: number, spillR: number, wide?: string): void {
     const ctx = this.ctx, model = this.model();
     const f = style?.font;
     const px = Math.round((f?.sz ?? 11) * 1.33);
@@ -1471,6 +1481,7 @@ export class Grid {
     const drawPx = vert === 'superscript' || vert === 'subscript' ? Math.round(px * 0.7) : px;
     const shift = vert === 'superscript' ? -Math.round(px * 0.3) : vert === 'subscript' ? Math.round(px * 0.2) : 0;
     ctx.font = `${f?.i ? 'italic ' : ''}${f?.b ? 'bold ' : ''}${drawPx}px ${fontStack(f?.name)}`;
+    if (wide && ctx.measureText(wide).width <= cell.w - 6) text = wide;
     let textFill = f?.color ? model.resolveColor(f.color) || '#000' : this.theme.textColor ?? '#000';
     if (this.theme.textColor) {
       // Тёмная тема листа: «чёрный» из файла нечитаем — берём светлый; на светлой заливке ячейки — тёмный.

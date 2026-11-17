@@ -2546,6 +2546,9 @@ impl<'a> Model<'a> {
             return Ok(());
         }
 
+        // ENS-Office: лицевой счёт, номер карты и т. п. — больше 15 значащих цифр. Excel хранит
+        // только 15 и молча потерял бы остальные; такая запись остаётся текстом, как с «'».
+        let value = if is_long_digit_string(&value) { format!("'{value}") } else { value };
         // If value starts with "'" then we force the style to be quote_prefix
         let style_index = self.get_cell_style_index(sheet, row, column)?;
         if let Some(new_value) = value.strip_prefix('\'') {
@@ -4159,3 +4162,26 @@ fn parse_plain_decimal(value: &str) -> Option<f64> {
     trimmed.replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
+
+
+/// ENS-Office: только цифры (знак и пробелы-разделители разрядов допустимы), значащих больше 15.
+fn is_long_digit_string(value: &str) -> bool {
+    let t = value.trim();
+    let t = t.strip_prefix(['-', '+']).unwrap_or(t);
+    if !t.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let mut significant = 0;
+    let mut leading = true;
+    for c in t.chars() {
+        if c.is_ascii_digit() {
+            if c != '0' || !leading {
+                leading = false;
+                significant += 1;
+            }
+        } else if !matches!(c, ' ' | '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}' | '\u{2008}' | '\u{200a}') {
+            return false;
+        }
+    }
+    significant > 15
+}
