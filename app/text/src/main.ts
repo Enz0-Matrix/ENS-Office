@@ -316,6 +316,8 @@ function applyPage(): void {
     const first = effOf(secs[0].page), lastE = effOf(secs[secs.length - 1].page);
     view.dom.style.padding = `${first.top}pt 0 ${lastE.bottom}pt 0`;
   } else view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
+  // Расстояние от края листа до текста: им ограничен выступ первой строки (schema.ts, paraStyle).
+  view.dom.style.setProperty('--pl', `${secs.length > 1 ? 0 : e.left}pt`);
   drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;

@@ -297,7 +297,7 @@ function marginDecos(doc: PMNode, base: PageSetup): Decoration[] | null {
     while (si + 1 < secs.length && off >= secs[si + 1].from) si++;
     const p = secs[si].page;
     const side = (wmax - p.w) / 2;
-    out.push(Decoration.node(off, off + node.nodeSize, { style: `margin-left:${side + p.left}pt;margin-right:${side + p.right}pt` }));
+    out.push(Decoration.node(off, off + node.nodeSize, { style: `margin-left:${side + p.left}pt;margin-right:${side + p.right}pt;--pl:${side + p.left}pt` }));
   });
   return out;
 }

@@ -1913,6 +1913,33 @@ await test('слияние: ключи параметров, бинарные д
   eq(failures, [], 'ключи и основа слияния');
   await p.context().close();
 });
+await test('вёрстка: строка с выступом и табуляциями не выходит левее листа (DOCX туда и обратно)', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const mk = (indent, first, t) => s.nodes.paragraph.create({ indent, first }, s.text(t));
+    // Выступ больше отступа слева, первая строка шире выступа, табуляции — образец артефакта.
+    const doc = s.nodes.doc.create(null, [
+      mk(36, -36, 'а)\tКороткий выступ, всё по правилам'),
+      mk(18, -54, 'Пункт1234567890\tтекст шире выступа\tи ещё табуляция'),
+      mk(null, -200, 'Очень\tдлинный\tвыступ\tза поле и за край листа'),
+      mk(-150, null, 'Отрицательный отступ слева больше поля'),
+    ]);
+    const back = E.importDocx(E.exportDocx(doc, E.getMeta(), 'x'));
+    E.loadDoc(back.doc, back.meta, 'x');
+    const paper = document.querySelector('.paper').getBoundingClientRect().left;
+    const firsts = [...E.view.dom.querySelectorAll('p')].map((el) => {
+      const rg = document.createRange();
+      rg.selectNodeContents(el);
+      return Math.min(...[...rg.getClientRects()].map((x) => x.left)) - paper;
+    });
+    return { firsts, attrs: back.doc.content.content.map((n) => [n.attrs.indent, n.attrs.first]) };
+  });
+  eq(r.attrs, [[36, -36], [18, -54], [null, -200], [-150, null]], 'отступы пережили DOCX без изменений');
+  r.firsts.forEach((x, i) => ok(x >= -0.5, `абзац ${i + 1}: начало строки левее листа на ${(-x).toFixed(1)} px`));
+  ok(r.firsts[0] > 100, 'обычный выступ внутри поля не тронут');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
