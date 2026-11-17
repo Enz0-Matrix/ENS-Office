@@ -1940,6 +1940,46 @@ await test('вёрстка: строка с выступом и табуляци
   ok(r.firsts[0] > 100, 'обычный выступ внутри поля не тронут');
   await p.context().close();
 });
+await test('рисунок «за текстом»: обычный щелчок выделяет его там, где нет букв, буквы над ним остаются тексту', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    // Рисунок 300×200 px за первыми строками: над его верхом текст, ниже — пустые абзацы.
+    const float = { mode: 'behind', hRel: 'page', hOff: 100, hAlign: null, vRel: 'page', vOff: 50, vAlign: null, dist: [0, 0, 8, 8] };
+    const img = s.nodes.image.create({ src: png, width: 300, height: 200, float });
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    E.loadDoc(s.nodes.doc.create(null, [P([s.text('Текст над рисунком '), img, s.text('продолжается')]), P(), P(), P(), P(), P(), P()]), E.getMeta(), 'behind');
+  }, PNG);
+  await p.waitForTimeout(400);
+  const kind = () => p.evaluate(() => { const sel = window.ens.view.state.selection; return sel.node ? sel.node.type.name : 'text'; });
+  const img = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  // Нижняя часть рисунка: под ней пустые абзацы — щелчок выбирает рисунок, появляются ручки.
+  await p.mouse.click(img.x + img.width / 2, img.y + img.height - 15);
+  eq(await kind(), 'image', 'щелчок по пустому месту над рисунком');
+  await p.waitForSelector('.img-ov.abs:not([hidden]) .img-h-se');
+  // Ручкой можно менять размер: одна запись в истории.
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x - 56, se.y - 36, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const w = await p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') a = n.attrs; }); return a.width; });
+  ok(w < 280, `ширина уменьшилась: ${w}`);
+  // Щелчок по букве первой строки, которая лежит поверх рисунка, ставит курсор в текст.
+  const letter = await p.evaluate(() => {
+    const t = window.ens.view.dom.querySelector('p').firstChild;
+    const r = document.createRange(); r.setStart(t, 2); r.setEnd(t, 3);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  const im2 = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  ok(letter.y > im2.y && letter.x > im2.x, `буква лежит над рисунком: ${JSON.stringify([letter, im2])}`);
+  await p.mouse.click(letter.x, letter.y);
+  eq(await kind(), 'text', 'щелчок по букве — курсор в тексте');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
