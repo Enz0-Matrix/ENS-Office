@@ -82,6 +82,7 @@ function items(kinds: CtxKind[]): Entry[] {
     { ...cmd('clipboard.cut', 'Вырезать', 'Ctrl+X'), disabled: empty },
     { ...cmd('clipboard.copy', 'Копировать', 'Ctrl+C'), disabled: empty },
     cmd('clipboard.paste', 'Вставить', 'Ctrl+V'),
+    cmd('clipboard.pasteSpecial', 'Специальная вставка…', 'Ctrl+Alt+V'),
   ];
   if (kinds[0] === 'image') {
     const frame = (v.state.selection as NodeSelection).node.type === schema.nodes.frame;
@@ -110,7 +111,7 @@ function items(kinds: CtxKind[]): Entry[] {
       cmd('table.colBefore', 'Вставить столбец слева'), cmd('table.colAfter', 'Вставить столбец справа'), '-',
       cmd('table.delRow', 'Удалить строку'), cmd('table.delCol', 'Удалить столбец'), cmd('table.delete', 'Удалить таблицу'), '-',
       { ...cmd('table.merge', 'Объединить ячейки'), disabled: !(v.state.selection instanceof CellSelection) }, cmd('table.split', 'Разделить ячейку'), '-',
-      cmd('table.borderDialog', 'Границы и заливка…'), cmd('table.props', 'Свойства таблицы…'));
+      cmd('table.borderDialog', 'Границы и заливка…'), cmd('table.props', 'Свойства таблицы…'), cmd('table.formula', 'Формула…'));
     return out;
   }
   if (kinds.includes('selection')) {

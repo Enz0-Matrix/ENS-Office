@@ -433,3 +433,12 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 .font-picker .fp-tag.warn { background: #fdecea; color: #a12a1a; }
 .font-picker .fp-tag.sub { background: #fff4d6; color: #7a5b00; }
 .font-picker .fp-more { margin: 8px 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; font: inherit; cursor: pointer; }
+
+/* Формулы в ячейках (table-formulas.ts): значок fx в углу, формула — в подсказке. */
+.ProseMirror td.fx, .ProseMirror th.fx { position: relative; }
+.ProseMirror td.fx::before, .ProseMirror th.fx::before { content: "fx"; position: absolute; top: 1px; left: 2px; font: italic 9px/1 "Segoe UI", sans-serif; color: #7a8ca5; pointer-events: none; }
+@media print { .ProseMirror td.fx::before, .ProseMirror th.fx::before { display: none; } }
+/* Окно «Специальная вставка». */
+.paste-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.paste-opt { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.paste-opt small { color: var(--muted); }

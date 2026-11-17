@@ -177,6 +177,8 @@ interface Ctx {
   baseR: RFmt;
   /** Стек сложных полей (TOC, PAGE, HYPERLINK…): в какой фазе, и ссылка, если поле — HYPERLINK. */
   fields: { phase: 'instr' | 'result'; instr: string; href?: string; suppress?: boolean }[];
+  /** Формула поля { =… } в текущей ячейке таблицы (Word: «Формула»). */
+  cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
 }
@@ -465,6 +467,7 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
           const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
           if (m) field.href = m[1];
+          else if (/^\s*=/.test(field.instr)) ctx.cellFormula = field.instr.trim(); // формула таблицы: результат — обычный текст
           else if (pg) {
             // Номер страницы и число страниц остаются полями; сохранённое в файле число отбрасываем.
             acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marks));
@@ -559,7 +562,8 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
           acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
           break;
         }
-        if (!m) lose(ctx, 'поля (оглавление, дата и т. п. стали обычным текстом)');
+        if (/^\s*=/.test(instr)) ctx.cellFormula = instr.trim();
+        else if (!m) lose(ctx, 'поля (оглавление, дата и т. п. стали обычным текстом)');
         walkInline(ctx, c, acc, m ? m[1] : href);
         break;
       }
@@ -718,7 +722,7 @@ const isDefaultEdge = (e: Edge | null | undefined): boolean => !!e && e.s === 's
 
 function parseTable(ctx: Ctx, tbl: Element): PMNode {
   const grid = kids(kid(tbl, 'tblGrid'), 'gridCol').map((c) => (num(attr(c, 'w')) ?? 0) / 15);
-  interface CellB { col: number; span: number; rowspan: number; widths: number[] | null; bg: string | null; content: PMNode[]; tc: Element; valign: string | null }
+  interface CellB { formula: string | null; col: number; span: number; rowspan: number; widths: number[] | null; bg: string | null; content: PMNode[]; tc: Element; valign: string | null }
   const rows: CellB[][] = [];
   const rowH: (number | null)[] = [];
   const active: (CellB | null)[] = [];
@@ -739,12 +743,15 @@ function parseTable(ctx: Ctx, tbl: Element): PMNode {
         g += span;
         continue;
       }
+      ctx.cellFormula = null;
       let content = walkBlocks(ctx, tc);
+      const formula = ctx.cellFormula;
+      ctx.cellFormula = null;
       if (!content.length) content = [schema.nodes.paragraph.create()];
       const widths = grid.length >= g + span ? grid.slice(g, g + span).map((w) => Math.round(w)) : null;
       const fill = attr(kid(pr, 'shd'), 'fill');
       const va = attr(kid(pr, 'vAlign'), 'val');
-      const cb: CellB = { col: g, span, rowspan: 1, widths: widths && widths.every((w) => w > 0) ? widths : null, bg: fill && fill !== 'auto' && /^[0-9a-f]{6}$/i.test(fill) ? `#${fill}` : null, content, tc, valign: va === 'center' ? 'middle' : va === 'bottom' ? 'bottom' : null };
+      const cb: CellB = { formula, col: g, span, rowspan: 1, widths: widths && widths.every((w) => w > 0) ? widths : null, bg: fill && fill !== 'auto' && /^[0-9a-f]{6}$/i.test(fill) ? `#${fill}` : null, content, tc, valign: va === 'center' ? 'middle' : va === 'bottom' ? 'bottom' : null };
       cells.push(cb);
       for (let k = 0; k < span; k++) active[g + k] = restart ? cb : null;
       g += span;
@@ -786,7 +793,7 @@ function parseTable(ctx: Ctx, tbl: Element): PMNode {
     rows.map((cells, r) => schema.nodes.table_row.create({ height: rowH[r] }, cells.map((c, k) => {
       const b = computed[r][k];
       const explicit = !uniformDefault && !none ? { t: edgeOrNone(b.t), r: edgeOrNone(b.r), b: edgeOrNone(b.b), l: edgeOrNone(b.l) } : null;
-      return schema.nodes.table_cell.create({ colspan: c.span, rowspan: c.rowspan, colwidth: c.widths, background: c.bg, valign: c.valign, borders: explicit }, c.content);
+      return schema.nodes.table_cell.create({ colspan: c.span, rowspan: c.rowspan, colwidth: c.widths, background: c.bg, valign: c.valign, borders: explicit, formula: c.formula ?? null }, c.content);
     }))));
   const t = mk();
   t.check();
@@ -1318,6 +1325,13 @@ function tableXml(ctx: ExportCtx, table: PMNode, pos: Float | null = null): stri
       if (cell.attrs.valign) pr += `<w:vAlign w:val="${cell.attrs.valign === 'middle' ? 'center' : cell.attrs.valign}"/>`;
       let inner = '';
       if (!cont) inner = blocksXml(ctx, cell);
+      // Формула: первый абзац ячейки — поле { =формула } с результатом (оформление абзаца и текста сохраняется).
+      if (!cont && cell.attrs.formula) {
+        const pPr = /^<w:p>(<w:pPr>.*?<\/w:pPr>)?/.exec(inner)?.[1] ?? '';
+        const rPr = /<w:r>(<w:rPr>.*?<\/w:rPr>)/.exec(inner)?.[1] ?? '';
+        const rest = inner.replace(/^<w:p>.*?<\/w:p>/, '');
+        inner = `<w:p>${pPr}<w:fldSimple w:instr=" ${esc(cell.attrs.formula as string)} "><w:r>${rPr}<w:t xml:space="preserve">${esc(cell.firstChild?.textContent ?? '')}</w:t></w:r></w:fldSimple></w:p>${rest}`;
+      }
       if (!inner || !inner.endsWith('</w:p>')) inner += '<w:p/>';
       out += `<w:tc><w:tcPr>${pr}</w:tcPr>${inner}</w:tc>`;
     }

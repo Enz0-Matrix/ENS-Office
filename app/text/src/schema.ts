@@ -245,6 +245,12 @@ const nodes: Record<string, NodeSpec> = {
         getFromDOM: (d) => (d as HTMLElement).style.backgroundColor || null,
         setDOMAttr: (v, attrs) => { if (v) attrs.style = `${attrs.style ?? ''};background-color:${v}`; },
       },
+      /** Формула ячейки (=SUM(B2:B4), =A2*C2, =SUM(ABOVE)): в ячейке виден результат (table-formulas.ts). */
+      formula: {
+        default: null,
+        getFromDOM: (d) => (d as HTMLElement).getAttribute('data-formula') || null,
+        setDOMAttr: (v, attrs) => { if (v) { attrs['data-formula'] = v; attrs.title = `Формула: ${v}`; attrs.class = `${attrs.class ?? ''} fx`.trim(); } },
+      },
       /** Вертикальное выравнивание текста в ячейке: top, middle, bottom. */
       valign: {
         default: null,

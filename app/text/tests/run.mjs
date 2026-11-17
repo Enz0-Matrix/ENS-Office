@@ -2685,6 +2685,96 @@ await test('правки линейки: граница поля берётся 
   ok(/поле/.test(await p.$eval('#hr-inner .ri-left', (e) => e.title)), 'подсказка у маркера отступа');
   await p.context().close();
 });
+await test('вставка из Excel: таблица с живыми формулами (смещение адресов подбирается), пересчёт, DOCX, специальная вставка', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  // Кусок листа Excel B2:D5 — формулы с адресами листа (как кладёт Excel), рядом показанные значения.
+  const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table>
+    <tr><td>Товар</td><td>Кол-во</td><td>Сумма</td></tr>
+    <tr><td>Бумага</td><td x:num="3">3</td><td x:num="1500" x:fmla="=C3*500">1 500</td></tr>
+    <tr><td>Ручки</td><td x:num="10">10</td><td x:num="250" x:fmla="=C4*25">250</td></tr>
+    <tr><td>Итого</td><td x:num="13" x:fmla="=SUM(C3:C4)">13</td><td x:num="1750" x:fmla="=SUM(D3:D4)">1 750</td></tr>
+  </table></body></html>`;
+  const paste = (h, t) => p.evaluate(({ h, t }) => {
+    const dt = new DataTransfer();
+    if (h) dt.setData('text/html', h);
+    dt.setData('text/plain', t);
+    window.ens.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, { h, t });
+  await paste(html, 'Товар\tКол-во\tСумма');
+  const grid = () => p.evaluate(() => { const t = window.ens.view.dom.querySelector('table'); return [...t.querySelectorAll('tr')].map((r) => [...r.children].map((c) => c.textContent)); });
+  const formulas = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  eq(await formulas(), ['=B2*500', '=B3*25', '=SUM(B2:B3)', '=SUM(C2:C3)'], 'адреса листа пересчитаны на адреса таблицы');
+  eq((await grid())[3], ['Итого', '13', '1 750'], 'итоги на месте');
+  // Меняем количество бумаги 3 → 5: сумма и итоги пересчитываются, одна отмена возвращает всё.
+  await p.waitForTimeout(700); // отдельный шаг истории (правки ближе 0,6 с объединяются)
+  await p.evaluate(() => {
+    const E = window.ens; let pos = null;
+    E.view.state.doc.descendants((n, q) => { if (pos == null && n.isText && n.text === '3') pos = q; });
+    E.view.dispatch(E.view.state.tr.insertText('5', pos, pos + 1));
+  });
+  const g2 = await grid();
+  eq([g2[1][2], g2[3][1], g2[3][2]], ['2 500', '15', '2 750'], 'пересчёт после правки числа');
+  await p.keyboard.press('Control+KeyZ');
+  eq((await grid())[3][2], '1 750', 'одна отмена — и число, и итоги назад');
+  // DOCX: формулы пишутся полем { =… } с результатом и читаются обратно.
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'f');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const b = E.importDocx(bytes);
+    const f = []; b.doc.descendants((n) => { if (n.attrs.formula) f.push(n.attrs.formula); });
+    return { fld: (xml.match(/w:instr=" =/g) ?? []).length, f, lossy: b.meta.lossy };
+  });
+  eq(back.fld, 4, 'в DOCX четыре поля-формулы');
+  eq(back.f, ['=B2*500', '=B3*25', '=SUM(B2:B3)', '=SUM(C2:C3)'], 'формулы прочитаны из DOCX');
+  ok(!back.lossy.some((x) => /пол/.test(x)), `без предупреждения о потерях: ${back.lossy}`);
+  // Формула из окна, как в Word: =SUM(ABOVE) в новой строке.
+  await p.evaluate(() => { const E = window.ens; E.loadDoc(E.schema.nodes.doc.create(null, [E.schema.nodes.paragraph.create()]), E.getMeta(), 'n'); });
+  await p.click('.ProseMirror');
+  await paste('', '10\t20\n30\t40\n\t');
+  ok(!(await p.$('.ProseMirror table')), 'обычная вставка текста с табуляцией — текстом, как в Word');
+  // Специальная вставка: буфер прочитать нельзя → ждём Ctrl+V и вставляем таблицей.
+  await p.evaluate(() => { const E = window.ens; E.loadDoc(E.schema.nodes.doc.create(null, [E.schema.nodes.paragraph.create()]), E.getMeta(), 'n'); });
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Alt+KeyV');
+  await p.waitForSelector('#dialog:not([hidden]) .paste-opts');
+  await p.check('#dialog input[value="table"]');
+  await p.click('#dialog button.primary');
+  await p.waitForTimeout(200);
+  await paste('', '10\t20\n30\t40\n\t');
+  await p.waitForSelector('.ProseMirror table');
+  // Ставим формулу в последнюю ячейку первого столбца.
+  await p.evaluate(() => { const E = window.ens; let pos = null; E.view.state.doc.descendants((n, q) => { if (n.type.name === 'table_cell') pos = q; }); });
+  await p.evaluate(() => { const E = window.ens; const cells = []; E.view.state.doc.descendants((n, q) => { if (n.type.name === 'table_cell') cells.push(q); }); E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, cells[4] + 2))); });
+  await p.evaluate(() => window.ens.run('table.formula'));
+  await p.waitForSelector('#dialog:not([hidden]) input');
+  eq(await p.$eval('#dialog input', (i) => i.value), '=SUM(ABOVE)', 'по умолчанию — сумма выше, как в Word');
+  await p.keyboard.press('Enter');
+  await p.waitForSelector('#dialog', { state: 'hidden' });
+  eq((await grid())[2][0], '40', '=SUM(ABOVE) = 10 + 30');
+  await p.context().close();
+});
+
+await test('формулы таблиц: функции по-русски и по-английски, проценты, ABOVE/LEFT, ошибки и цикл', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const { computeGrid, parseNum } = await import('/src/table-formulas.ts');
+    const text = [['10', '20', ''], ['3 000,5', '15 %', ''], ['', '', '']];
+    const f = (r, c, x) => { const g = text.map((row) => row.map(() => null)); g[r][c] = x; return computeGrid(text, g).get(`${r},${c}`); };
+    return {
+      sum: f(2, 0, '=SUM(ABOVE)'), summ: f(2, 0, '=СУММ(A1:A2)'), avg: f(0, 2, '=СРЗНАЧ(LEFT)'), pct: f(2, 1, '=B2*200'),
+      round: f(2, 2, '=ОКРУГЛ(A2/7; 1)'), pow: f(2, 2, '=2^10'), div0: f(2, 2, '=A1/(B1-20)'), bad: f(2, 2, '=A1+'), name: f(2, 2, '=НЕТТАКОЙ(1)'),
+      ref: f(2, 2, '=Z99'), num: [parseNum('3 658 420'), parseNum('1 234,5'), parseNum('−7'), parseNum('12,5 %'), parseNum('абв')],
+      cycle: computeGrid([['', '']], [['=B1', '=A1']]).get('0,0'),
+    };
+  });
+  eq([r.sum, r.summ, r.avg, r.pct, r.round, r.pow], ['3 010,5', '3 010,5', '15', '30', '428,6', '1 024'], 'результаты');
+  eq([r.div0, r.bad, r.name, r.ref, r.cycle], ['#ДЕЛ/0!', '#ОШИБКА!', '#ИМЯ?', '#ССЫЛКА!', '#ЦИКЛ!'], 'ошибки');
+  eq(r.num.slice(0, 4), [3658420, 1234.5, -7, 0.125], 'числа по-русски');
+  ok(Number.isNaN(r.num[4]), 'текст — не число');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

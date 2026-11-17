@@ -11,7 +11,7 @@ import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import {
   addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, isInTable, mergeCells, splitCell,
 } from 'prosemirror-tables';
-import type { Node as PMNode } from 'prosemirror-model';
+import { DOMParser as PMDOMParser, type Node as PMNode } from 'prosemirror-model';
 import { register, run, handleKey } from '../../table/src/commands';
 import { FONT_SIZES, FONTS, lastColor, onRibbonDrawn, renderRibbon, type RibbonTab } from '../../table/src/ribbon';
 import { fontStack, loadFonts, OFFICE_FONTS } from '../../table/src/fonts';
@@ -58,6 +58,8 @@ import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
 import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
 import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
 import { attachFontPicker } from './font-picker';
+import { formulasPlugin } from './table-formulas';
+import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode } from './paste-special';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
@@ -442,7 +444,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -452,10 +454,20 @@ const view = new EditorView($('sheet'), {
     afterChange(tr.docChanged);
   },
   handlePaste(v, event) {
-    const files = [...(event.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return false;
-    void insertImageFile(files[0]);
-    return true;
+    const cd = event.clipboardData;
+    // «Специальная вставка» ждала Ctrl+V: вставляем выбранным способом.
+    if (pendingPaste && cd) {
+      const mode = pendingPaste;
+      pendingPaste = null;
+      pasteAs(mode, cd.getData('text/html'), cd.getData('text/plain'));
+      return true;
+    }
+    const files = [...(cd?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+    if (files.length) { void insertImageFile(files[0]); return true; }
+    // Таблица из Excel/Calc: вставляем таблицей, формулы — живыми (пересчитываются).
+    const html = cd?.getData('text/html') ?? '';
+    if (html && isSpreadsheetHtml(html)) return pasteAs('table', html, cd?.getData('text/plain') ?? '');
+    return false;
   },
   handleDrop(v, event) {
     const files = [...(event.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'));
@@ -494,6 +506,104 @@ document.addEventListener('keydown', ctrlHeld, true);
 document.addEventListener('keyup', ctrlHeld, true);
 document.addEventListener('mousemove', ctrlHeld, { passive: true });
 window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
+
+// ---------------------------------------------------------------- специальная вставка и формулы таблиц
+
+type PasteMode = 'keep' | 'text' | 'table' | 'values';
+/** Способ, выбранный в «Специальной вставке», пока ждём Ctrl+V (если буфер нельзя прочитать напрямую). */
+let pendingPaste: PasteMode | null = null;
+
+/** Вставить содержимое буфера выбранным способом. true — вставлено. */
+function pasteAs(mode: PasteMode, html: string, text: string): boolean {
+  const v = active();
+  if (mode === 'text' || mode === 'keep') {
+    if (mode === 'keep' && html) {
+      const dom = new DOMParser().parseFromString(html, 'text/html').body;
+      const slice = PMDOMParser.fromSchema(schema).parseSlice(dom);
+      v.dispatch(v.state.tr.replaceSelection(slice).scrollIntoView());
+    } else v.dispatch(v.state.tr.insertText(text).scrollIntoView());
+    v.focus();
+    return true;
+  }
+  const t = (html && isSpreadsheetHtml(html) ? parseSpreadsheetHtml(html) : null) ?? parseTsv(text) ?? (html ? parseSpreadsheetHtml(html) : null);
+  if (!t) { toast('В буфере нет таблицы: вставьте как текст.'); return false; }
+  if (mode === 'values') for (const c of t.rows.flat()) if (c) c.formula = null;
+  const node = tableNode(schema, t);
+  v.dispatch(v.state.tr.replaceSelectionWith(node).scrollIntoView());
+  v.focus();
+  toast(mode === 'table' && t.withFormulas
+    ? `Таблица вставлена с формулами (${t.withFormulas}): поменяйте число — итоги пересчитаются. Формула ячейки — правый щелчок → «Формула…».`
+    : 'Таблица вставлена значениями. Специальная вставка — Ctrl+Alt+V.');
+  return true;
+}
+
+function pasteSpecialDialog(): void {
+  dialog((box, close) => {
+    const opts: [PasteMode, string, string][] = [
+      ['keep', 'С исходным форматированием', 'Как есть: шрифты, жирный, таблицы, ссылки'],
+      ['text', 'Только текст', 'Без оформления, в стиле текущего абзаца'],
+      ['table', 'Таблица с формулами', 'Из Excel или ENS-Table: значения и формулы, итоги пересчитываются'],
+      ['values', 'Таблица значениями', 'Таблица без формул: только числа и текст'],
+    ];
+    const radios = opts.map(([v, label, hint], i) => {
+      const r = el('input', { type: 'radio', name: 'paste-mode', value: v, checked: i === 0 });
+      return el('label', { class: 'paste-opt' }, r, el('span', {}, el('b', { textContent: label }), el('br'), el('small', { textContent: hint })));
+    });
+    const go = async () => {
+      const mode = (box.querySelector<HTMLInputElement>('input[name=paste-mode]:checked')?.value ?? 'keep') as PasteMode;
+      close();
+      // Сначала пробуем прочитать буфер сами; если окно программы не даёт — ждём Ctrl+V.
+      try {
+        const items = await navigator.clipboard.read();
+        let html = '', text = '';
+        for (const it of items) {
+          if (it.types.includes('text/html')) html = await (await it.getType('text/html')).text();
+          if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+        }
+        if (!html && !text) throw new Error('пусто');
+        pasteAs(mode, html, text);
+      } catch {
+        pendingPaste = mode;
+        toast('Нажмите Ctrl+V — вставка выбранным способом.');
+        active().focus();
+      }
+    };
+    box.append(
+      el('h2', { textContent: 'Специальная вставка' }),
+      el('div', { class: 'paste-opts' }, ...radios),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Вставить', onclick: () => void go() })),
+    );
+  });
+}
+
+/** «Формула…» для ячейки таблицы, как в Word: =SUM(ABOVE), =A2*B2, =СУММ(B2:B5). Пусто — убрать формулу. */
+function formulaDialog(): void {
+  const v = active();
+  const $f = v.state.selection.$from;
+  let d = $f.depth;
+  while (d > 0 && $f.node(d).type !== schema.nodes.table_cell && $f.node(d).type !== schema.nodes.table_header) d--;
+  if (!d) { toast('Поставьте курсор в ячейку таблицы.'); return; }
+  const pos = $f.before(d);
+  const cell = $f.node(d);
+  dialog((box, close) => {
+    const input = el('input', { type: 'text', value: (cell.attrs.formula as string | null) ?? '=SUM(ABOVE)' });
+    const go = () => {
+      let f = input.value.trim();
+      if (f && !f.startsWith('=')) f = `=${f}`;
+      close();
+      v.dispatch(v.state.tr.setNodeMarkup(pos, undefined, { ...cell.attrs, formula: f || null }));
+      v.focus();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    box.append(
+      el('h2', { textContent: 'Формула' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Формула' }), input),
+      el('p', { textContent: 'Как в Word: =SUM(ABOVE) — сумма чисел выше, =SUM(LEFT) — левее, =A2*B2, =СУММ(B2:B5), СРЗНАЧ, МИН, МАКС, ОКРУГЛ. Столбцы — A, B, C…, строки — 1, 2, 3… Пустое поле убирает формулу.' }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), el('button', { class: 'primary', textContent: 'Применить', onclick: go })),
+    );
+    input.select();
+  });
+}
 
 /** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
 function openHref(href: string): void {
@@ -576,6 +686,11 @@ register({ id: 'format.subscript', label: 'Подстрочный', keys: ['Ctrl
 register(
   { id: 'edit.undo', label: 'Отменить', keys: ['Ctrl+KeyZ'], run: () => { undo(active().state, active().dispatch); active().focus(); } },
   { id: 'edit.redo', label: 'Повторить', keys: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'], run: () => { redo(active().state, active().dispatch); active().focus(); } },
+  {
+    id: 'clipboard.pasteSpecial', label: 'Специальная вставка…', keywords: ['вставить', 'вставка', 'без форматирования', 'только текст', 'excel', 'таблица', 'формулы'], keys: ['Ctrl+Alt+KeyV'],
+    run: () => pasteSpecialDialog(),
+  },
+  { id: 'table.formula', label: 'Формула в ячейке…', keywords: ['формула', 'сумма', 'итог', 'посчитать', 'sum'], run: () => formulaDialog() },
   {
     id: 'clipboard.paste', label: 'Вставить (Ctrl+V)',
     run: () => {
@@ -914,6 +1029,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'clipboard.paste', icon: 'clipboard_paste', label: 'Вставить' },
           { type: 'small', command: 'clipboard.cut', icon: 'cut' },
           { type: 'small', command: 'clipboard.copy', icon: 'copy' },
+          { type: 'small', command: 'clipboard.pasteSpecial', icon: 'clipboard_paste' },
         ],
       },
       {
@@ -1141,6 +1257,7 @@ const TABS: RibbonTab[] = [
         name: 'Размер',
         items: [
           { type: 'large', command: 'table.props', icon: 'grid', label: 'Свойства таблицы' },
+          { type: 'large', command: 'table.formula', icon: 'math_formula', label: 'Формула' },
           { type: 'large', command: 'table.equalCols', icon: 'col_add', label: 'Выровнять столбцы' },
           { type: 'large', command: 'table.equalRows', icon: 'row_add', label: 'Выровнять строки' },
           { type: 'large', command: 'table.fit', icon: 'arrow_autofit_width', label: 'По ширине текста' },
@@ -1684,7 +1801,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
