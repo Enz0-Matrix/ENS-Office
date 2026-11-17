@@ -2227,6 +2227,45 @@ await test('контекстные меню: текст, выделение, с�
   ok(prevented.length >= 8 && prevented.slice(0, -1).every(Boolean) && prevented[prevented.length - 1] === false, `меню WebView: ${JSON.stringify(prevented)}`);
   await p.context().close();
 });
+await test('вёрстка: в документе из нескольких разделов отступ и выступ абзаца сохраняются, строка не выходит за лист (образец пользователя)', async () => {
+  const p = await page();
+  // Как в присланном файле: книжный раздел, затем альбомный; абзац «отступ 3 см, выступ 3 см», по ширине,
+  // первое слово шире выступа, две табуляции; рядом — абзац с отступом первой строки 1,5 см.
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const m = E.getMeta();
+    const land = { ...m.page, w: m.page.h, h: m.page.w, left: 28.35, right: 35.45 };
+    const doc = s.nodes.doc.create(null, [
+      s.nodes.paragraph.create(null, s.text('Книжный раздел')),
+      s.nodes.section_break.create({ page: land }),
+      s.nodes.paragraph.create({ first: 42.5 }, s.text('объёмы топлива')),
+      s.nodes.paragraph.create({ indent: 85.05, first: -85.05, align: 'justify' }, s.text('шжроьроьбромьроьь\t\tПриложение: Согласованные объемы')),
+      s.nodes.paragraph.create({ indent: -200 }, s.text('Отрицательный отступ больше поля')),
+    ]);
+    const back = E.importDocx(E.exportDocx(doc, m, 'x'));
+    E.loadDoc(back.doc, back.meta, 'x');
+    await new Promise((res) => setTimeout(res, 400));
+    const ps = [...E.view.dom.querySelectorAll(':scope > p')];
+    const papers = [...document.querySelectorAll('.paper')].map((e) => e.getBoundingClientRect());
+    const info = (el) => {
+      const rg = document.createRange(); rg.selectNodeContents(el);
+      const rects = [...rg.getClientRects()];
+      const first = Math.min(...rects.map((x) => x.left));
+      // По строке, а не по блоку: у первого абзаца раздела сверху отступ до нового листа.
+      const y = rects[0].top;
+      const paper = papers.find((b) => y >= b.top && y < b.bottom);
+      return { first, paperLeft: paper.left, paperW: paper.width };
+    };
+    return { fuel: info(ps[1]), hang: info(ps[2]), neg: info(ps[3]), firstAttr: back.doc.child(2).attrs.first, k: 4 / 3 };
+  });
+  const k = r.k;
+  // Альбомный лист шире: текст считается от его края; поле 28,35 pt (1 см).
+  const marginX = (x) => (x.first - x.paperLeft) / k;
+  ok(Math.abs(marginX(r.hang) - 28.35) < 2, `выступ: первая строка у поля (1 см), а не левее: ${marginX(r.hang).toFixed(1)} pt`);
+  ok(Math.abs(marginX(r.fuel) - (28.35 + 42.5)) < 2, `отступ первой строки 1,5 см не теряется: ${marginX(r.fuel).toFixed(1)} pt`);
+  ok(marginX(r.neg) >= -0.5, `отрицательный отступ не за краем листа: ${marginX(r.neg).toFixed(1)} pt`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
