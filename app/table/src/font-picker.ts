@@ -4,12 +4,14 @@
 // списка ленты (select[data-command="format.fontName"]) и выбирает в нём значение — команда ленты та же.
 // Шрифты системы находятся замером по каталогу распространённых имён (font-catalog.ts) — без окна разрешения.
 // Полный список (Local Font Access, Chromium 103+) — только по явной кнопке: браузер спросит разрешение.
+// Общий код ENS-Table и ENS-Text: образец текста и ключ «недавних» шрифтов задаёт приложение.
 
-import { fontStack, OFFICE_FONTS } from '../../table/src/fonts';
+import { fontStack, OFFICE_FONTS } from './fonts';
 import { FONT_CATALOG } from './font-catalog';
+import './font-picker.css';
 
-const RECENT = 'ens-text.recentFonts';
-const SAMPLE = 'АаБбЖж Aa';
+let RECENT = 'ens-text.recentFonts';
+let SAMPLE = 'АаБбЖж Aa';
 
 interface Info { installed: boolean; cyr: boolean; via: string | null }
 
@@ -204,8 +206,11 @@ export async function openFontPicker(sel: HTMLSelectElement): Promise<void> {
   list.querySelector<HTMLElement>('.fp-row.on')?.scrollIntoView({ block: 'nearest' });
 }
 
-/** Подключить окно к списку шрифтов ленты (после каждой перерисовки ленты). */
-export function attachFontPicker(): void {
+/** Подключить окно к списку шрифтов ленты (после каждой перерисовки ленты).
+ *  sample — образец в строке шрифта; recentKey — где хранить недавние шрифты. */
+export function attachFontPicker(opts: { sample?: string; recentKey?: string } = {}): void {
+  if (opts.sample) SAMPLE = opts.sample;
+  if (opts.recentKey) RECENT = opts.recentKey;
   const sel = document.querySelector<HTMLSelectElement>('select[data-command="format.fontName"]');
   if (!sel || sel.dataset.picker) return;
   sel.dataset.picker = '1';
