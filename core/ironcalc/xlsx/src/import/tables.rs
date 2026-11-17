@@ -26,8 +26,9 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
     path: &str,
     sheet_name: &str,
 ) -> Result<Table, XlsxError> {
-    let file = archive.by_name(path)?;
-    let document = XmlNode::parse(BufReader::new(file))?;
+    let mut raw = String::new();
+    archive.by_name(path)?.read_to_string(&mut raw)?;
+    let document = XmlNode::parse(BufReader::new(raw.as_bytes()))?;
 
     // table
     let table = &document;
@@ -75,8 +76,8 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         None
     };
 
-    // style index of the header row of the table
-    let data_dxf_id = if let Some(index_str) = table.attribute("headerRowDxfId") {
+    // style index of the data rows of the table (ENS-Office: было headerRowDxfId)
+    let data_dxf_id = if let Some(index_str) = table.attribute("dataDxfId") {
         index_str.parse::<u32>().ok()
     } else {
         None
@@ -134,8 +135,8 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
             None
         };
 
-        // style index of the header row of the table column
-        let data_dxf_id = if let Some(index_str) = table_column.attribute("headerRowDxfId") {
+        // style index of the data cells of the table column (ENS-Office: было headerRowDxfId)
+        let data_dxf_id = if let Some(index_str) = table_column.attribute("dataDxfId") {
             index_str.parse::<u32>().ok()
         } else {
             None
@@ -155,10 +156,10 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         columns.push(TableColumn {
             id,
             name: column_name.to_string(),
-            totals_row_label: None,
+            totals_row_label: table_column.attribute("totalsRowLabel").map(|s| s.to_string()),
             header_row_dxf_id,
             data_dxf_id,
-            totals_row_function: None,
+            totals_row_function: table_column.attribute("totalsRowFunction").map(|s| s.to_string()),
             totals_row_dxf_id,
         });
     }
@@ -166,7 +167,7 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
     // tableInfo
     let table_info = table
         .descendants()
-        .filter(|n| n.has_tag_name("tableInfo"))
+        .filter(|n| n.has_tag_name("tableStyleInfo"))
         .collect::<Vec<&XmlNode>>();
     let style_info = match table_info.first() {
         Some(node) => {
@@ -200,5 +201,6 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         style_info,
         has_filters,
         sheet_name: sheet_name.to_string(),
+        ens_raw_xml: raw,
     })
 }

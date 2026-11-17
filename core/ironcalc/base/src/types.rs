@@ -668,6 +668,11 @@ pub struct Table {
     pub columns: Vec<TableColumn>,
     pub style_info: TableStyleInfo,
     pub has_filters: bool,
+    /// ENS-Office: исходный XML таблицы из xlsx. При сохранении пишется он (с новым
+    /// диапазоном и именами столбцов), чтобы не потерять то, чего модель не знает:
+    /// условия фильтра, вычисляемые столбцы, формулы итогов, расширения Excel.
+    /// Пусто — таблица создана у нас или её столбцы менялись: XML собирается из модели.
+    pub ens_raw_xml: String,
 }
 
 // totals_row_label vs totals_row_function might be mutually exclusive. Use an enum?
