@@ -291,6 +291,26 @@ impl UserModel<'_> {
         v
     }
 
+    /// ENS-Office: в книге есть макросы (VBA), которые сохраняются только в .xlsm.
+    pub fn has_macros(&self) -> bool {
+        !self.model.workbook.ens_vba_parts.is_empty()
+    }
+
+    /// ENS-Office: что было в открытом файле и не будет сохранено (по-русски).
+    pub fn lost_features(&self) -> Vec<String> {
+        self.model.workbook.ens_lost_features.clone()
+    }
+
+    /// ENS-Office: временно вынимает макросы (сохранение копии в .xlsx); вернуть — `restore_macros`.
+    pub fn take_macros(&mut self) -> Vec<crate::types::RawPart> {
+        std::mem::take(&mut self.model.workbook.ens_vba_parts)
+    }
+
+    /// ENS-Office: возвращает макросы, вынутые `take_macros`.
+    pub fn restore_macros(&mut self, parts: Vec<crate::types::RawPart>) {
+        self.model.workbook.ens_vba_parts = parts;
+    }
+
     pub(crate) fn cf_list_diff(&self, sheet: u32, old_value: Vec<crate::cf_types::ConditionalFormatting>) -> Result<Vec<Diff>, String> {
         let new_value = self.model.workbook.worksheet(sheet)?.conditional_formatting.clone();
         Ok(if new_value == old_value { vec![] } else { vec![Diff::SetConditionalFormattingList { sheet, old_value, new_value }] })

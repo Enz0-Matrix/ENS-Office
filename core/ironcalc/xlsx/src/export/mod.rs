@@ -39,8 +39,24 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#.to_string(),
         r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#.to_string(),
         r#"<Default Extension="xml" ContentType="application/xml"/>"#.to_string(),
-        r#"<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>"#.to_string(),
+        if workbook.ens_vba_parts.is_empty() {
+            r#"<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>"#.to_string()
+        } else {
+            // ENS-Office: книга с макросами (.xlsm)
+            r#"<Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/>"#.to_string()
+        },
     ];
+    for part in &workbook.ens_vba_parts {
+        let file = part.path.rsplit('/').next().unwrap_or_default().to_ascii_lowercase();
+        let ct = match file.as_str() {
+            "vbaproject.bin" => "application/vnd.ms-office.vbaProject",
+            "vbaprojectsignature.bin" => "application/vnd.ms-office.vbaProjectSignature",
+            "vbaprojectsignatureagile.bin" => "application/vnd.ms-office.vbaProjectSignatureAgile",
+            "vbaprojectsignaturev3.bin" => "application/vnd.ms-office.vbaProjectSignatureV3",
+            _ => continue, // связи (.rels) покрывает Default
+        };
+        content.push(format!(r#"<Override PartName="/{}" ContentType="{ct}"/>"#, part.path));
+    }
     for worksheet in 0..workbook.worksheets.len() {
         let sheet = format!(
             r#"<Override PartName="/xl/worksheets/sheet{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#,
@@ -274,6 +290,11 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             chart_count += charts.len();
         }
         media_count += images.len();
+    }
+    // ENS-Office: макросы — как были в исходном файле.
+    for part in &workbook.ens_vba_parts {
+        zip.start_file(part.path.as_str(), options)?;
+        zip.write_all(&part.data)?;
     }
     // ENS-Office: «умные» таблицы.
     let mut table_id = 1;

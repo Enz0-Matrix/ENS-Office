@@ -87,6 +87,7 @@ impl<'a> Model<'a> {
             ens_charts: vec![],
             ens_shapes: vec![],
             ens_validations: vec![],
+            ens_code_name: String::new(),
         }
     }
 
@@ -702,6 +703,9 @@ impl<'a> Model<'a> {
             ens_structure_locked: false,
             ens_structure_attrs: String::new(),
             ens_rich: HashMap::new(),
+            ens_vba_parts: Vec::new(),
+            ens_lost_features: Vec::new(),
+            ens_code_name: String::new(),
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;

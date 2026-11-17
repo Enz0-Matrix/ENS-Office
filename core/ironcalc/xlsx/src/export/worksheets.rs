@@ -892,18 +892,40 @@ pub(crate) fn get_worksheet_xml(
     let auto_filter_section = auto_filter;
     let (sheet_pr, page_setup) = page_setup_xml(&worksheet.ens_page_setup);
     // Excel's default is below / right; anything else is written to `<outlinePr>`.
-    let sheet_pr = if worksheet.ens_summary == (true, true) {
-        sheet_pr
+    let outline = if worksheet.ens_summary == (true, true) {
+        String::new()
     } else {
-        let outline = format!(
+        format!(
             r#"<outlinePr summaryBelow="{}" summaryRight="{}"/>"#,
             i32::from(worksheet.ens_summary.0),
             i32::from(worksheet.ens_summary.1)
-        );
-        match sheet_pr.strip_prefix("<sheetPr>") {
-            Some(rest) => format!("<sheetPr>{outline}{rest}"),
-            None => format!("<sheetPr>{outline}</sheetPr>"),
-        }
+        )
+    };
+    // ENS-Office: цвет ярлыка (раньше терялся при сохранении) и codeName для макросов.
+    // Порядок детей <sheetPr> по схеме: tabColor, outlinePr, pageSetUpPr.
+    let tab_color = match &worksheet.color {
+        ironcalc_base::types::Color::Rgb(hex) => format!(r#"<tabColor rgb="FF{}"/>"#, hex.trim_start_matches('#').to_ascii_uppercase()),
+        ironcalc_base::types::Color::Theme(index, tint) if *tint == 0.0 => format!(r#"<tabColor theme="{index}"/>"#),
+        ironcalc_base::types::Color::Theme(index, tint) => format!(r#"<tabColor theme="{index}" tint="{tint}"/>"#),
+        ironcalc_base::types::Color::None => String::new(),
+    };
+    let page_pr = sheet_pr
+        .strip_prefix("<sheetPr>")
+        .and_then(|r| r.strip_suffix("</sheetPr>"))
+        .unwrap_or_default()
+        .to_string();
+    let code_name = if worksheet.ens_code_name.is_empty() {
+        String::new()
+    } else {
+        format!(" codeName=\"{}\"", escape_xml(&worksheet.ens_code_name))
+    };
+    let inner = format!("{tab_color}{outline}{page_pr}");
+    let sheet_pr = if inner.is_empty() && code_name.is_empty() {
+        String::new()
+    } else if inner.is_empty() {
+        format!("<sheetPr{code_name}/>")
+    } else {
+        format!("<sheetPr{code_name}>{inner}</sheetPr>")
     };
 
     format!(

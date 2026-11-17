@@ -1572,6 +1572,29 @@ impl Model {
         Ok(writer.into_inner())
     }
 
+    /// ENS-Office: копия книги в xlsx без макросов («Сохранить как» .xlsx для книги из .xlsm).
+    /// Сама книга макросы сохраняет.
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "toXlsxWithoutMacros")]
+    pub fn to_xlsx_without_macros(&mut self) -> Result<Vec<u8>, JsError> {
+        let parts = self.model.take_macros();
+        let result = self.to_xlsx();
+        self.model.restore_macros(parts);
+        result
+    }
+
+    /// ENS-Office: в книге есть макросы (сохраняются только в .xlsm).
+    #[wasm_bindgen(js_name = "hasMacros")]
+    pub fn has_macros(&self) -> bool {
+        self.model.has_macros()
+    }
+
+    /// ENS-Office: что было в открытом файле и не будет сохранено (список по-русски).
+    #[wasm_bindgen(js_name = "lostFeatures")]
+    pub fn lost_features(&self) -> Vec<String> {
+        self.model.lost_features()
+    }
+
     #[wasm_bindgen(js_name = "getName")]
     pub fn get_name(&self) -> String {
         self.model.get_name()

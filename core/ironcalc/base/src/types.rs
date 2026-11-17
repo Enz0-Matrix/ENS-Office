@@ -142,6 +142,21 @@ pub struct Workbook {
     /// ENS-Office: formatted parts of the text of shared strings (Excel's `<r>` runs), by index in
     /// `shared_strings`. Such a string is used by one cell only and is not found by text.
     pub ens_rich: HashMap<i32, Vec<RichRun>>,
+    /// ENS-Office: части файла, которые переносятся как есть (макросы: `xl/vbaProject.bin`,
+    /// подпись проекта и их связи). Пишутся обратно только в .xlsm.
+    pub ens_vba_parts: Vec<RawPart>,
+    /// ENS-Office: что было в исходном файле и не будет сохранено (по-русски, для предупреждения).
+    pub ens_lost_features: Vec<String>,
+    /// ENS-Office: `<workbookPr codeName>` — имя книги для макросов («ЭтаКнига»).
+    pub ens_code_name: String,
+}
+
+/// ENS-Office: часть zip-пакета xlsx, перенесённая без разбора.
+#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct RawPart {
+    /// Путь в пакете, например `xl/vbaProject.bin`.
+    pub path: String,
+    pub data: Vec<u8>,
 }
 
 /// A run of a rich text (a part of a cell's text with its own font).
@@ -339,6 +354,8 @@ pub struct Worksheet {
     pub ens_shapes: Vec<Shape>,
     /// ENS-Office: data validation of cells (drop-down lists).
     pub ens_validations: Vec<Validation>,
+    /// ENS-Office: `<sheetPr codeName>` — имя листа для макросов (модуль листа в VBA).
+    pub ens_code_name: String,
 }
 
 /// A drop-down list for cells (Excel's `<dataValidation type="list">`).

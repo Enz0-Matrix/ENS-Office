@@ -24,7 +24,7 @@ use ironcalc_base::{
         parser::{new_parser_english, stringify::to_english_string},
         types::CellReferenceRC,
     },
-    types::{Metadata, Workbook, WorkbookSettings, WorkbookView},
+    types::{Metadata, RawPart, Workbook, WorkbookSettings, WorkbookView},
     Model,
 };
 
@@ -145,6 +145,10 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         }
     };
     let ens_change_log = load_change_log(&mut archive);
+    let ens_vba_parts = load_vba_parts(&mut archive);
+    let part_names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();
+    let ens_lost_features = lost_features_of(&part_names);
+    let ens_code_name = load_workbook_code_name(&mut archive);
     let (ens_structure_locked, ens_structure_attrs) = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
     views.insert(
@@ -173,7 +177,85 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         ens_structure_locked,
         ens_structure_attrs,
         ens_rich,
+        ens_vba_parts,
+        ens_lost_features,
+        ens_code_name,
     })
+}
+
+/// ENS-Office: `<workbookPr codeName>`.
+fn load_workbook_code_name<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> String {
+    let mut text = String::new();
+    let read = archive.by_name("xl/workbook.xml").map(|mut f| f.read_to_string(&mut text));
+    if !matches!(read, Ok(Ok(_))) {
+        return String::new();
+    }
+    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return String::new() };
+    let name = root
+        .children()
+        .find(|n| n.has_tag_name("workbookPr"))
+        .and_then(|n| n.attribute("codeName"))
+        .unwrap_or_default()
+        .to_string();
+    name
+}
+
+/// ENS-Office: макросы (VBA) и всё, что к ним относится, переносятся байт в байт.
+fn load_vba_parts<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> Vec<RawPart> {
+    let names: Vec<String> = archive
+        .file_names()
+        .filter(|n| {
+            let l = n.to_ascii_lowercase();
+            l.starts_with("xl/vbaproject") || l.starts_with("xl/_rels/vbaproject")
+        })
+        .map(|n| n.to_string())
+        .collect();
+    let mut parts = Vec::new();
+    for path in names {
+        let mut data = Vec::new();
+        if let Ok(mut f) = archive.by_name(&path) {
+            if f.read_to_end(&mut data).is_ok() {
+                parts.push(RawPart { path, data });
+            }
+        }
+    }
+    parts
+}
+
+/// ENS-Office: части пакета, которые ENS-Table пока не сохраняет, — по-русски, без повторов.
+/// Безвредное (calcChain, настройки принтера, оформление диаграмм) не перечисляется.
+pub fn lost_features_of(names: &[String]) -> Vec<String> {
+    const KNOWN: &[(&str, &str)] = &[
+        ("xl/pivottables/", "сводные таблицы"),
+        ("xl/pivotcache/", "сводные таблицы"),
+        ("xl/externallinks/", "связи с другими книгами (сохранённые значения из них)"),
+        ("xl/slicers/", "срезы"),
+        ("xl/slicercaches/", "срезы"),
+        ("xl/timelines/", "временные шкалы"),
+        ("xl/timelinecaches/", "временные шкалы"),
+        ("xl/connections.xml", "подключения к внешним данным"),
+        ("xl/querytables/", "запросы к внешним данным"),
+        ("xl/ctrlprops/", "элементы управления (флажки, списки, кнопки)"),
+        ("xl/activex/", "элементы ActiveX"),
+        ("xl/embeddings/", "внедрённые объекты (OLE)"),
+        ("xl/threadedcomments/", "цепочки комментариев (останутся как примечания)"),
+        ("xl/richdata/", "изображения в ячейках"),
+        ("xl/model/", "модель данных Power Pivot"),
+        ("xl/webextensions/", "надстройки Office"),
+        ("xl/dialogsheets/", "листы диалогов Excel 5"),
+        ("xl/macrosheets/", "листы макросов Excel 4"),
+        ("xl/chartsheets/", "листы диаграмм"),
+        ("docprops/custom.xml", "дополнительные свойства документа"),
+    ];
+    // Порядок — как в KNOWN (по важности), а не как части лежат в архиве.
+    let lower: Vec<String> = names.iter().map(|n| n.to_ascii_lowercase()).collect();
+    let mut out: Vec<String> = Vec::new();
+    for (prefix, what) in KNOWN {
+        if lower.iter().any(|l| l.starts_with(prefix)) && !out.iter().any(|x| x == what) {
+            out.push(what.to_string());
+        }
+    }
+    out
 }
 
 /// ENS-Office: `<workbookProtection lockStructure>` of `xl/workbook.xml`: locked or not, and the password
