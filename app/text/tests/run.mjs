@@ -2627,6 +2627,215 @@ await test('линейки тоньше и точнее: 22 px, деления �
   ok(r.mm > 100, `миллиметровые деления: ${r.mm}`);
   await p.context().close();
 });
+await test('правки: значок ¶ на ленте виден; ссылка через окно не съедает текст; подсказка и «рука» по Ctrl', async () => {
+  const p = await page();
+  ok(await p.$eval('[data-command="view.marks"]', (b) => !!b.querySelector('svg')), 'у кнопки «Отобразить все знаки» есть значок');
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Сайт компании здесь');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 6, 14))); });
+  await p.keyboard.press('Control+KeyK');
+  await p.waitForSelector('#dialog:not([hidden]) input');
+  await p.fill('#dialog input', 'https://example.org');
+  await p.keyboard.press('Enter');
+  await p.waitForSelector('#dialog', { state: 'hidden' });
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent), 'Сайт компании здесь', 'текст на месте, Enter не дошёл до документа');
+  eq(await p.evaluate(() => window.ens.view.state.doc.childCount), 1, 'абзац не разорван');
+  const a = await p.$('.ProseMirror a');
+  ok(/Ctrl\+щелчок/.test(await a.getAttribute('title')), 'подсказка «Ctrl+щелчок — открыть ссылку»');
+  await p.keyboard.down('Control');
+  await p.mouse.move(10, 10);
+  eq(await a.evaluate((x) => getComputedStyle(x).cursor), 'pointer', 'с Ctrl над ссылкой — «рука»');
+  await p.keyboard.up('Control');
+  await p.mouse.move(12, 12);
+  eq(await a.evaluate((x) => getComputedStyle(x).cursor), 'text', 'без Ctrl — обычный курсор');
+  await p.context().close();
+});
+await test('правки линейки: граница поля берётся по всей высоте, отступы уходят в поле до края листа, подсказки', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Абзац для отступа');
+  await p.waitForSelector('#hr-inner .ri-left:not([hidden])');
+  // Граница левого поля: хватаем ниже метки первой строки и выше выступа — раньше там было «мимо».
+  const m = await (await p.$('#hr-inner .rm[aria-label="Левое поле"]')).boundingBox();
+  ok(m.height >= 20, `граница поля по всей высоте линейки: ${m.height}`);
+  const left0 = await p.evaluate(() => window.ens.getMeta().page.left);
+  await p.mouse.move(m.x + m.width / 2, m.y + 9);
+  await p.mouse.down();
+  await p.mouse.move(m.x + m.width / 2 + 30, m.y + 9, { steps: 4 });
+  await p.mouse.up();
+  ok((await p.evaluate(() => window.ens.getMeta().page.left)) - left0 > 15, 'левое поле сдвинулось');
+  // Отступ слева уводим в серую часть (в поле).
+  const li = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(li.x + li.width / 2, li.y + li.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(li.x + li.width / 2 - 40, li.y + li.height / 2, { steps: 4 });
+  await p.mouse.up();
+  const ind = await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.indent);
+  ok(ind < -20, `отступ слева отрицательный (в поле): ${ind}`);
+  // Не дальше края листа.
+  const li2 = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(li2.x + li2.width / 2, li2.y + li2.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(li2.x - 600, li2.y + li2.height / 2, { steps: 4 });
+  await p.mouse.up();
+  const r = await p.evaluate(() => ({ ind: window.ens.view.state.doc.firstChild.attrs.indent, left: window.ens.getMeta().page.left }));
+  ok(Math.abs(r.ind + r.left) < 1, `отступ упёрся в край листа: ${r.ind} при поле ${r.left}`);
+  const hint = await p.$eval('#hr-inner .rm[aria-label="Левое поле"]', (e) => e.title);
+  ok(/тяните/.test(hint), `подсказка у границы поля: ${hint}`);
+  ok(/поле/.test(await p.$eval('#hr-inner .ri-left', (e) => e.title)), 'подсказка у маркера отступа');
+  await p.context().close();
+});
+await test('вставка из Excel: таблица с живыми формулами (смещение адресов подбирается), пересчёт, DOCX, специальная вставка', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  // Кусок листа Excel B2:D5 — формулы с адресами листа (как кладёт Excel), рядом показанные значения.
+  const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table>
+    <tr><td>Товар</td><td>Кол-во</td><td>Сумма</td></tr>
+    <tr><td>Бумага</td><td x:num="3">3</td><td x:num="1500" x:fmla="=C3*500">1 500</td></tr>
+    <tr><td>Ручки</td><td x:num="10">10</td><td x:num="250" x:fmla="=C4*25">250</td></tr>
+    <tr><td>Итого</td><td x:num="13" x:fmla="=SUM(C3:C4)">13</td><td x:num="1750" x:fmla="=SUM(D3:D4)">1 750</td></tr>
+  </table></body></html>`;
+  const paste = (h, t) => p.evaluate(({ h, t }) => {
+    const dt = new DataTransfer();
+    if (h) dt.setData('text/html', h);
+    dt.setData('text/plain', t);
+    window.ens.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, { h, t });
+  await paste(html, 'Товар\tКол-во\tСумма');
+  const grid = () => p.evaluate(() => { const t = window.ens.view.dom.querySelector('table'); return [...t.querySelectorAll('tr')].map((r) => [...r.children].map((c) => c.textContent)); });
+  const formulas = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  eq(await formulas(), ['=B2*500', '=B3*25', '=SUM(B2:B3)', '=SUM(C2:C3)'], 'адреса листа пересчитаны на адреса таблицы');
+  eq((await grid())[3], ['Итого', '13', '1 750'], 'итоги на месте');
+  // Меняем количество бумаги 3 → 5: сумма и итоги пересчитываются, одна отмена возвращает всё.
+  await p.waitForTimeout(700); // отдельный шаг истории (правки ближе 0,6 с объединяются)
+  await p.evaluate(() => {
+    const E = window.ens; let pos = null;
+    E.view.state.doc.descendants((n, q) => { if (pos == null && n.isText && n.text === '3') pos = q; });
+    E.view.dispatch(E.view.state.tr.insertText('5', pos, pos + 1));
+  });
+  const g2 = await grid();
+  eq([g2[1][2], g2[3][1], g2[3][2]], ['2 500', '15', '2 750'], 'пересчёт после правки числа');
+  await p.keyboard.press('Control+KeyZ');
+  eq((await grid())[3][2], '1 750', 'одна отмена — и число, и итоги назад');
+  // DOCX: формулы пишутся полем { =… } с результатом и читаются обратно.
+  const back = await p.evaluate(() => {
+    const E = window.ens;
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'f');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const b = E.importDocx(bytes);
+    const f = []; b.doc.descendants((n) => { if (n.attrs.formula) f.push(n.attrs.formula); });
+    return { fld: (xml.match(/w:instr=" =/g) ?? []).length, f, lossy: b.meta.lossy };
+  });
+  eq(back.fld, 4, 'в DOCX четыре поля-формулы');
+  eq(back.f, ['=B2*500', '=B3*25', '=SUM(B2:B3)', '=SUM(C2:C3)'], 'формулы прочитаны из DOCX');
+  ok(!back.lossy.some((x) => /пол/.test(x)), `без предупреждения о потерях: ${back.lossy}`);
+  // Формула из окна, как в Word: =SUM(ABOVE) в новой строке.
+  await p.evaluate(() => { const E = window.ens; E.loadDoc(E.schema.nodes.doc.create(null, [E.schema.nodes.paragraph.create()]), E.getMeta(), 'n'); });
+  await p.click('.ProseMirror');
+  await paste('', '10\t20\n30\t40\n\t');
+  ok(!(await p.$('.ProseMirror table')), 'обычная вставка текста с табуляцией — текстом, как в Word');
+  // Специальная вставка: буфер прочитать нельзя → ждём Ctrl+V и вставляем таблицей.
+  await p.evaluate(() => { const E = window.ens; E.loadDoc(E.schema.nodes.doc.create(null, [E.schema.nodes.paragraph.create()]), E.getMeta(), 'n'); });
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Alt+KeyV');
+  await p.waitForSelector('#dialog:not([hidden]) .paste-opts');
+  await p.check('#dialog input[value="table"]');
+  await p.click('#dialog button.primary');
+  await p.waitForTimeout(200);
+  await paste('', '10\t20\n30\t40\n\t');
+  await p.waitForSelector('.ProseMirror table');
+  // Ставим формулу в последнюю ячейку первого столбца.
+  await p.evaluate(() => { const E = window.ens; let pos = null; E.view.state.doc.descendants((n, q) => { if (n.type.name === 'table_cell') pos = q; }); });
+  await p.evaluate(() => { const E = window.ens; const cells = []; E.view.state.doc.descendants((n, q) => { if (n.type.name === 'table_cell') cells.push(q); }); E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, cells[4] + 2))); });
+  await p.evaluate(() => window.ens.run('table.formula'));
+  await p.waitForSelector('#dialog:not([hidden]) input');
+  eq(await p.$eval('#dialog input', (i) => i.value), '=SUM(ABOVE)', 'по умолчанию — сумма выше, как в Word');
+  await p.keyboard.press('Enter');
+  await p.waitForSelector('#dialog', { state: 'hidden' });
+  eq((await grid())[2][0], '40', '=SUM(ABOVE) = 10 + 30');
+  await p.context().close();
+});
+
+await test('формулы таблиц: функции по-русски и по-английски, проценты, ABOVE/LEFT, ошибки и цикл', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const { computeGrid, parseNum } = await import('/src/table-formulas.ts');
+    const text = [['10', '20', ''], ['3 000,5', '15 %', ''], ['', '', '']];
+    const f = (r, c, x) => { const g = text.map((row) => row.map(() => null)); g[r][c] = x; return computeGrid(text, g).get(`${r},${c}`); };
+    return {
+      sum: f(2, 0, '=SUM(ABOVE)'), summ: f(2, 0, '=СУММ(A1:A2)'), avg: f(0, 2, '=СРЗНАЧ(LEFT)'), pct: f(2, 1, '=B2*200'),
+      round: f(2, 2, '=ОКРУГЛ(A2/7; 1)'), pow: f(2, 2, '=2^10'), div0: f(2, 2, '=A1/(B1-20)'), bad: f(2, 2, '=A1+'), name: f(2, 2, '=НЕТТАКОЙ(1)'),
+      ref: f(2, 2, '=Z99'), num: [parseNum('3 658 420'), parseNum('1 234,5'), parseNum('−7'), parseNum('12,5 %'), parseNum('абв')],
+      cycle: computeGrid([['', '']], [['=B1', '=A1']]).get('0,0'),
+    };
+  });
+  eq([r.sum, r.summ, r.avg, r.pct, r.round, r.pow], ['3 010,5', '3 010,5', '15', '30', '428,6', '1 024'], 'результаты');
+  eq([r.div0, r.bad, r.name, r.ref, r.cycle], ['#ДЕЛ/0!', '#ОШИБКА!', '#ИМЯ?', '#ССЫЛКА!', '#ЦИКЛ!'], 'ошибки');
+  eq(r.num.slice(0, 4), [3658420, 1234.5, -7, 0.125], 'числа по-русски');
+  ok(Number.isNaN(r.num[4]), 'текст — не число');
+  await p.context().close();
+});
+await test('пункт 10: перенос слов, подложка на каждой странице, колонки сохраняются в DOCX без потерь', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const long = 'Электрификация достопримечательностей одновременно с переоборудованием предприятий. '.repeat(30);
+    E.loadDoc(s.nodes.doc.create(null, Array.from({ length: 6 }, () => s.nodes.paragraph.create({ align: 'justify' }, s.text(long)))), E.getMeta(), 'p10');
+  });
+  await p.waitForTimeout(400);
+  // Перенос слов.
+  const lines = () => p.evaluate(() => { const r = document.createRange(); r.selectNodeContents(window.ens.view.dom.querySelector('p')); return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size; });
+  const before = await lines();
+  await p.evaluate(() => window.ens.run('layout.hyphenation'));
+  await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.ens.view.dom.classList.contains('hyphenate')), 'перенос включён');
+  await p.click('#tabs .tab:text-is("Макет")');
+  ok(await p.$eval('[data-command="layout.hyphenation"]', (b) => b.classList.contains('on')), 'кнопка на ленте нажата');
+  const after = await lines();
+  ok(after <= before, `строк не больше: ${before} → ${after}`);
+  ok(await p.evaluate(() => window.ens.isDirty()), 'документ помечен изменённым');
+  // Подложка из окна: готовая надпись.
+  await p.evaluate(() => window.ens.run('layout.watermark'));
+  await p.waitForSelector('#dialog:not([hidden]) .wm-preset');
+  await p.click('#dialog .wm-preset:has-text("ЧЕРНОВИК")');
+  await p.waitForTimeout(300);
+  const wm = await p.evaluate(() => ({ papers: document.querySelectorAll('.paper').length, marks: [...document.querySelectorAll('.paper .watermark')].map((w) => w.textContent), angle: getComputedStyle(document.querySelector('.paper .watermark')).transform }));
+  ok(wm.papers >= 2 && wm.marks.length === wm.papers && wm.marks.every((t) => t === 'ЧЕРНОВИК'), `подложка на каждом листе: ${JSON.stringify(wm)}`);
+  ok(wm.angle !== 'none', 'надпись повёрнута');
+  // DOCX: подложка как у Word, перенос — w:autoHyphenation; колонки (2) раздела сохраняются.
+  const r = await p.evaluate(() => {
+    const E = window.ens;
+    const m = { ...E.getMeta(), page: { ...E.getMeta().page, cols: 2, colSpace: 35.4 } };
+    const bytes = E.exportDocx(E.view.state.doc, m, 'p10');
+    const files = E.unzip(bytes);
+    const txt = (n) => (files[n] ? new TextDecoder().decode(files[n]) : '');
+    const back = E.importDocx(bytes);
+    return {
+      hdr: txt('word/header1.xml'), settings: txt('word/settings.xml'), doc: txt('word/document.xml'),
+      wm: back.meta.watermark, hy: back.meta.hyphenate, cols: back.meta.page.cols, header: back.meta.hf.header, lossy: back.meta.lossy,
+      again: (() => { const b2 = E.exportDocx(back.doc, back.meta, 'x'); return new TextDecoder().decode(E.unzip(b2)['word/document.xml']).includes('w:cols w:num="2"'); })(),
+    };
+  });
+  ok(r.hdr.includes('PowerPlusWaterMarkObject') && r.hdr.includes('string="ЧЕРНОВИК"'), 'подложка в колонтитуле, как у Word');
+  ok(r.settings.includes('<w:autoHyphenation/>'), 'перенос слов в настройках документа');
+  ok(r.doc.includes('<w:cols w:num="2"'), 'колонки в свойствах раздела');
+  eq([r.wm, r.hy, r.cols], ['ЧЕРНОВИК', true, 2], 'всё прочитано обратно');
+  eq(r.header, null, 'колонтитул, созданный только ради подложки, пустой');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.again, 'колонки переживают второе сохранение');
+  // Убрать подложку.
+  await p.evaluate(() => window.ens.run('layout.watermark'));
+  await p.waitForSelector('#dialog:not([hidden]) .wm-preset');
+  await p.click('#dialog button:has-text("Убрать подложку")');
+  await p.waitForTimeout(200);
+  eq(await p.$$eval('.paper .watermark', (w) => w.length), 0, 'подложка убрана');
+  await p.context().close();
+});
+await test('новый документ не считается изменённым (нет вопроса «Сохранить изменения?»)', async () => {
+  const p = await page();
+  eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

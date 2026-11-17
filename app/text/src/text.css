@@ -66,6 +66,7 @@
 .ProseMirror li.numbered > .num { grid-column: 1; padding-right: 6pt; white-space: nowrap; user-select: none; }
 .ProseMirror li.numbered > :not(.num) { grid-column: 2; min-width: 0; }
 .ProseMirror a { color: #0563c1; text-decoration: underline; cursor: text; }
+body.ctrl-held .ProseMirror a { cursor: pointer; }
 .ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; }
 .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
 
@@ -311,8 +312,10 @@
 .vr-inner { position: absolute; left: 0; width: 100%; }
 .hr-inner svg, .vr-inner svg { position: absolute; left: 0; top: 0; display: block; }
 .rm { position: absolute; z-index: 2; }
-.hr-inner .rm { top: 6px; height: 8px; width: 10px; margin-left: -5px; cursor: col-resize; z-index: 4; }
-.vr-inner .rm { left: 5px; width: 12px; height: 10px; margin-top: -5px; cursor: row-resize; z-index: 4; }
+/* Граница поля берётся по всей высоте линейки (как в Word); маркеры отступов лежат поверх и не мешают. */
+.hr-inner .rm { top: 0; height: 100%; width: 8px; margin-left: -4px; cursor: col-resize; z-index: 2; }
+.hr-inner .rm:hover, .vr-inner .rm:hover { background: rgba(43, 87, 154, .18); }
+.vr-inner .rm { left: 0; width: 100%; height: 8px; margin-top: -4px; cursor: row-resize; z-index: 2; }
 .ri { position: absolute; z-index: 3; width: 10px; height: 10px; margin-left: -5px; cursor: ew-resize; }
 .ri::before { content: ''; position: absolute; inset: 0; background: #444; }
 .ri-first { top: 0; height: 7px; } .ri-first::before { clip-path: polygon(0 0, 100% 0, 50% 100%); }
@@ -430,3 +433,23 @@
 .font-picker .fp-tag.warn { background: #fdecea; color: #a12a1a; }
 .font-picker .fp-tag.sub { background: #fff4d6; color: #7a5b00; }
 .font-picker .fp-more { margin: 8px 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; font: inherit; cursor: pointer; }
+
+/* Формулы в ячейках (table-formulas.ts): значок fx в углу, формула — в подсказке. */
+.ProseMirror td.fx, .ProseMirror th.fx { position: relative; }
+.ProseMirror td.fx::before, .ProseMirror th.fx::before { content: "fx"; position: absolute; top: 1px; left: 2px; font: italic 9px/1 "Segoe UI", sans-serif; color: #7a8ca5; pointer-events: none; }
+@media print { .ProseMirror td.fx::before, .ProseMirror th.fx::before { display: none; } }
+/* Окно «Специальная вставка». */
+.paste-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.paste-opt { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.paste-opt small { color: var(--muted); }
+
+/* Перенос слов (Макет → Перенос слов): по словарю языка текста. */
+.ProseMirror.hyphenate p, .ProseMirror.hyphenate li, .ProseMirror.hyphenate td { hyphens: auto; -webkit-hyphens: auto; }
+/* Подложка: надпись на каждом листе, за текстом; печатается. */
+.paper .watermark { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-45deg); white-space: nowrap; pointer-events: none; user-select: none;
+  font-family: "Times New Roman", Tinos, serif; font-weight: bold; color: rgba(150, 150, 150, .35); letter-spacing: .04em; }
+:root[data-night-sheet] .paper .watermark { color: rgba(200, 200, 200, .18); }
+.wm-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.wm-preset { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 10px; cursor: pointer; font: 600 13px "Times New Roman", serif; }
+.wm-preset:hover { border-color: var(--accent); }
+@media print { .paper .watermark { color: rgba(150, 150, 150, .35) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
