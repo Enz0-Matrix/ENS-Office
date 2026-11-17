@@ -403,7 +403,8 @@ impl<'a> Model<'a> {
                 message: "Sheets function with an argument is not implemented".to_string(),
             };
         }
-        let sheet_count = self.workbook.worksheets.len() as f64;
+        // ENS-Office: служебные листы других книг не считаются (как в Excel).
+        let sheet_count = self.first_external_sheet() as f64;
         CalcResult::Number(sheet_count)
     }
 
@@ -536,7 +537,7 @@ impl<'a> Model<'a> {
             },
 
             // For now we just show the count of sheets in the current workbook
-            "NUMFILE" => CalcResult::Number(self.workbook.worksheets.len() as f64),
+            "NUMFILE" => CalcResult::Number(self.first_external_sheet() as f64),
 
             // At the moment we always do automatic recalc
             "RECALC" => CalcResult::String("Automatic".to_string()),

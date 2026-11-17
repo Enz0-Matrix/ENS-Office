@@ -42,7 +42,7 @@ fn is_valid_sheet_name(name: &str) -> bool {
 
 impl<'a> Model<'a> {
     /// Creates a new worksheet. Note that it does not check if the name or the sheet_id exists
-    fn new_empty_worksheet(name: &str, sheet_id: u32, view_ids: &[&u32]) -> Worksheet {
+    pub(crate) fn new_empty_worksheet(name: &str, sheet_id: u32, view_ids: &[&u32]) -> Worksheet {
         let mut views = HashMap::new();
         for id in view_ids {
             views.insert(
@@ -210,6 +210,9 @@ impl<'a> Model<'a> {
         self.parser
             .set_worksheets_and_names(self.workbook.get_worksheet_names(), defined_names);
         self.parser.set_tables(self.workbook.tables.clone());
+        self.parser.set_external_books(
+            self.workbook.ens_external_books.iter().map(|b| b.file.clone()).collect(),
+        );
         self.parsed_formulas = vec![];
         self.parse_formulas();
         self.parsed_defined_names = HashMap::new();
@@ -250,9 +253,11 @@ impl<'a> Model<'a> {
         let sheet_id = self.get_new_sheet_id();
         let view_ids: Vec<&u32> = self.workbook.views.keys().collect();
         let worksheet = Model::new_empty_worksheet(&sheet_name, sheet_id, &view_ids);
-        self.workbook.worksheets.push(worksheet);
+        // ENS-Office: служебные листы других книг всегда в конце.
+        let at = self.first_external_sheet() as usize;
+        self.workbook.worksheets.insert(at, worksheet);
         self.reset_parsed_structures();
-        (sheet_name, self.workbook.worksheets.len() as u32 - 1)
+        (sheet_name, at as u32)
     }
 
     /// Inserts a sheet with a particular index
@@ -285,6 +290,8 @@ impl<'a> Model<'a> {
         if sheet_index as usize > self.workbook.worksheets.len() {
             return Err("Sheet index out of range".to_string());
         }
+        // ENS-Office: служебные листы других книг всегда в конце.
+        let sheet_index = sheet_index.min(self.first_external_sheet());
         self.workbook
             .worksheets
             .insert(sheet_index as usize, worksheet);
@@ -589,6 +596,12 @@ impl<'a> Model<'a> {
         if new_index >= sheet_count {
             return Err("Target sheet index too large".to_string());
         }
+        // ENS-Office: служебные листы других книг не двигаются и стоят в конце.
+        let first_external = self.first_external_sheet();
+        if sheet_index >= first_external {
+            return Err("Sheet index too large".to_string());
+        }
+        let new_index = new_index.min(first_external.saturating_sub(1));
         if sheet_index == new_index {
             return Ok(());
         }
@@ -706,6 +719,7 @@ impl<'a> Model<'a> {
             ens_vba_parts: Vec::new(),
             ens_lost_features: Vec::new(),
             ens_code_name: String::new(),
+            ens_external_books: Vec::new(),
         };
         let parsed_formulas = Vec::new();
         let worksheets = &workbook.worksheets;

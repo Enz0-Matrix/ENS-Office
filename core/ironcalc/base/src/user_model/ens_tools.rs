@@ -291,6 +291,25 @@ impl UserModel<'_> {
         v
     }
 
+    /// ENS-Office: обновляет значения ссылок на книгу `file` из модели книги-источника
+    /// (прочитанной с диска; запускать её не нужно) и пересчитывает. Как в Excel,
+    /// обновление связей не отменяется. Возвращает листы, которых в источнике нет.
+    pub fn update_external_book(&mut self, file: &str, source: &crate::Model) -> Result<Vec<String>, String> {
+        let missing = self.model.update_external_book_from(file, source);
+        self.model.evaluate();
+        Ok(missing)
+    }
+
+    /// ENS-Office: книги-источники внешних ссылок: (имя файла, путь как записан).
+    pub fn external_books(&self) -> Vec<(String, String)> {
+        self.model
+            .workbook
+            .ens_external_books
+            .iter()
+            .map(|b| (b.file.clone(), b.target.clone()))
+            .collect()
+    }
+
     /// ENS-Office: в книге есть макросы (VBA), которые сохраняются только в .xlsm.
     pub fn has_macros(&self) -> bool {
         !self.model.workbook.ens_vba_parts.is_empty()
@@ -601,6 +620,10 @@ impl UserModel<'_> {
         for (index, ws) in self.model.workbook.worksheets.iter().enumerate() {
             let sheet = index as u32;
             if options.sheet.is_some_and(|s| s != sheet) {
+                continue;
+            }
+            // ENS-Office: служебные листы других книг — не для поиска и тем более замены.
+            if crate::external::is_external_sheet_name(&ws.name) {
                 continue;
             }
             let mut cells: Vec<(i32, i32)> = ws.sheet_data.cells().map(|(r, c, _)| (r, c)).collect();

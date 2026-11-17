@@ -4,3 +4,4 @@ mod test_export;
 mod test_ens_ru_export;
 mod test_ens_tables;
 mod test_ens_preserve;
+mod test_ens_external;

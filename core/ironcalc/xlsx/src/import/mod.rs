@@ -2,6 +2,7 @@ mod conditional_formatting;
 mod metadata;
 pub(crate) mod shared_strings;
 mod drawings;
+mod external_links;
 mod sheet_data;
 mod styles;
 mod tables;
@@ -10,6 +11,9 @@ mod util;
 mod workbook;
 mod worksheets;
 mod xml;
+
+use ironcalc_base::expressions::token::get_error_by_english_name;
+use ironcalc_base::external::ExternalValue;
 
 use std::{
     collections::HashMap,
@@ -24,7 +28,7 @@ use ironcalc_base::{
         parser::{new_parser_english, stringify::to_english_string},
         types::CellReferenceRC,
     },
-    types::{Metadata, RawPart, Workbook, WorkbookSettings, WorkbookView},
+    types::{ExternalBook, Metadata, RawPart, Workbook, WorkbookSettings, WorkbookView},
     Model,
 };
 
@@ -109,7 +113,15 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
     // stored in x14 `extLst` extensions carry inline `<x14:dxf>` formats that we
     // append to `styles.dxfs`, referencing them back by index from the rule.
     let mut styles = load_styles(&mut archive, &theme)?;
-    let (worksheets, selected_sheet) = load_sheets(
+    // ENS-Office: книги-источники внешних ссылок и их листы (служебные, после настоящих).
+    let external = external_links::load_external_links(&mut archive, &rels);
+    let book_files: Vec<String> = external.iter().map(|b| b.file.clone()).collect();
+    let external_sheet_names: Vec<String> = external
+        .iter()
+        .filter(|b| !b.file.is_empty())
+        .flat_map(|b| b.sheets.iter().map(|(name, _)| ironcalc_base::external::external_sheet_name(&b.file, name)))
+        .collect();
+    let (mut worksheets, selected_sheet) = load_sheets(
         &mut archive,
         &rels,
         &workbook,
@@ -117,7 +129,30 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         &mut shared_strings,
         &theme,
         &mut styles.dxfs,
+        &book_files,
+        &external_sheet_names,
     )?;
+    let mut next_sheet_id = worksheets.iter().map(|w| w.sheet_id).max().unwrap_or(0) + 1;
+    for book in external.iter().filter(|b| !b.file.is_empty()) {
+        for (name, values) in &book.sheets {
+            let mut ws = ironcalc_base::external::new_external_worksheet(&book.file, name, next_sheet_id);
+            next_sheet_id += 1;
+            for (row, column, value) in values {
+                let _ = match value {
+                    ExternalValue::Number(n) => ws.set_cell_with_number(*row, *column, *n, 0),
+                    ExternalValue::Bool(b) => ws.set_cell_with_boolean(*row, *column, *b, 0),
+                    ExternalValue::Text(t) => ws.set_cell_with_string(*row, *column, shared_strings.index_of(t), 0),
+                    ExternalValue::Error(e) => ws.set_cell_with_error(
+                        *row,
+                        *column,
+                        get_error_by_english_name(e).unwrap_or(ironcalc_base::expressions::token::Error::NA),
+                        0,
+                    ),
+                };
+            }
+            worksheets.push(ws);
+        }
+    }
     // reparse formulas in defined names, since they may refer to sheets and tables that have been loaded
     let worksheet_names = worksheets
         .iter()
@@ -128,7 +163,8 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         if dn.name.starts_with("_xlnm.") {
             continue;
         }
-        dn.formula = reparse_formula_hack(&dn.formula, &worksheet_names)?;
+        let formula = ironcalc_base::external::to_internal_refs(&dn.formula, &book_files);
+        dn.formula = reparse_formula_hack(&formula, &worksheet_names)?;
     }
     let metadata = match load_metadata(&mut archive) {
         Ok(metadata) => metadata,
@@ -147,7 +183,15 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
     let ens_change_log = load_change_log(&mut archive);
     let ens_vba_parts = load_vba_parts(&mut archive);
     let part_names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();
-    let ens_lost_features = lost_features_of(&part_names);
+    let mut ens_lost_features = lost_features_of(&part_names);
+    // ENS-Office: связи с другими книгами теперь переносятся, если все они прочитаны.
+    if !external.is_empty() && external.iter().all(|b| !b.file.is_empty()) {
+        ens_lost_features.retain(|f| !f.starts_with("связи с другими книгами"));
+    }
+    let ens_external_books: Vec<ExternalBook> = external
+        .iter()
+        .map(|b| ExternalBook { target: b.target.clone(), file: b.file.clone() })
+        .collect();
     let ens_code_name = load_workbook_code_name(&mut archive);
     let (ens_structure_locked, ens_structure_attrs) = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
@@ -180,6 +224,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         ens_vba_parts,
         ens_lost_features,
         ens_code_name,
+        ens_external_books,
     })
 }
 

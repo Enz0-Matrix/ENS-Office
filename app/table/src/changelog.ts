@@ -33,7 +33,7 @@ export function readLog(m: Model): LogEntry[] {
 
 function hashes(m: Model): Record<string, string> {
   const out: Record<string, string> = {};
-  m.getWorksheetsProperties().forEach((p, i) => { try { out[p.name] = m.sheetContentHash(i); } catch { /* пропустить */ } });
+  m.getWorksheetsProperties().forEach((p, i) => { if (p.name.startsWith('[')) return; try { out[p.name] = m.sheetContentHash(i); } catch { /* пропустить */ } });
   return out;
 }
 
@@ -110,6 +110,7 @@ export function diffBooks(a: Model, b: Model): BookDiff {
   const out: BookDiff = { sheets: [], notes: [], cells: 0 };
   const nb = new Map(pb.map((p, i) => [p.name, i]));
   pa.forEach((p, i) => {
+    if (p.name.startsWith('[')) return; // служебные листы других книг
     const j = nb.get(p.name);
     if (j === undefined) { out.notes.push(`Лист «${p.name}» есть только в открытой книге`); return; }
     const da = a.getSheetDimension(i), db = b.getSheetDimension(j);

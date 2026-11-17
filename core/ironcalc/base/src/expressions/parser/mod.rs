@@ -276,6 +276,8 @@ pub struct Parser<'a> {
     /// function/name completion even when the surrounding parse succeeds (`SU`,
     /// `A1+F`) or fails for an unrelated reason (`IF(VLOOK`). See that method.
     trailing_name: Option<(String, usize)>,
+    /// ENS-Office: имена файлов книг-источников по порядку связей Excel (`[1]` — первая).
+    external_books: Vec<String>,
 }
 
 pub fn new_parser_english<'a>(
@@ -312,7 +314,13 @@ impl<'a> Parser<'a> {
             language,
             expecting_here: vec![ExpectedTokens::Other],
             trailing_name: None,
+            external_books: Vec::new(),
         }
+    }
+
+    /// ENS-Office: книги-источники внешних ссылок (`[1]Лист!A1` → первая из них).
+    pub fn set_external_books(&mut self, books: Vec<String>) {
+        self.external_books = books;
     }
     pub fn set_lexer_mode(&mut self, mode: lexer::LexerMode) {
         self.lexer.set_lexer_mode(mode)
@@ -343,6 +351,14 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self, formula: &str, context: &CellReferenceRC) -> Node {
+        // ENS-Office: ссылки на другие книги → служебные листы `'[Книга.xlsx]Лист'`.
+        let internal;
+        let formula = if formula.contains('[') {
+            internal = crate::external::to_internal_refs(formula, &self.external_books);
+            internal.as_str()
+        } else {
+            formula
+        };
         self.lexer.set_formula(formula);
         self.context = context.clone();
         // At the top level a formula may start with an expression or a range.

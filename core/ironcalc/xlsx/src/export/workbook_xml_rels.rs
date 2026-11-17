@@ -4,7 +4,7 @@ use super::xml_constants::{XML_DECLARATION, XML_WORKSHEET};
 
 pub(crate) fn get_workbook_xml_rels(workbook: &Workbook) -> String {
     let mut relationships_str: Vec<String> = vec![];
-    let worksheet_count = workbook.worksheets.len() + 1;
+    let worksheet_count = super::real_sheets(workbook).len() + 1;
     for id in 1..worksheet_count {
         relationships_str.push(format!(
             "<Relationship Id=\"rId{id}\" Type=\"{XML_WORKSHEET}\" Target=\"worksheets/sheet{id}.xml\"/>"
@@ -36,6 +36,11 @@ pub(crate) fn get_workbook_xml_rels(workbook: &Workbook) -> String {
         id += 1;
         relationships_str.push(format!(
             "<Relationship Id=\"rId{id}\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"vbaProject.bin\"/>"
+        ));
+    }
+    for n in 1..=super::written_books(workbook).len() {
+        relationships_str.push(format!(
+            "<Relationship Id=\"rIdExt{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink\" Target=\"externalLinks/externalLink{n}.xml\"/>"
         ));
     }
     format!(

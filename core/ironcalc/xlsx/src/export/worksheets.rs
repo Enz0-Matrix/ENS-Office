@@ -264,7 +264,7 @@ fn get_formula_attribute(
         row,
         column,
     };
-    let formula = &to_excel_string(parsed_formula, &cell_ref);
+    let formula = &super::excel_external_refs(to_excel_string(parsed_formula, &cell_ref));
     escape_xml(formula).to_string()
 }
 
@@ -281,7 +281,7 @@ fn get_array_formula_attribute(
         row,
         column,
     };
-    let formula = &to_excel_array_formula_string(parsed_formula, &cell_ref);
+    let formula = &super::excel_external_refs(to_excel_array_formula_string(parsed_formula, &cell_ref));
     escape_xml(formula).to_string()
 }
 

@@ -33,6 +33,7 @@ pub mod cell;
 pub mod cf_types;
 pub mod colors;
 pub mod expressions;
+pub mod external;
 pub mod formatter;
 pub mod language;
 pub mod locale;
