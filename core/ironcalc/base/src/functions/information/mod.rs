@@ -431,6 +431,23 @@ impl<'a> Model<'a> {
             Ok(s) => s.to_uppercase(),
             Err(e) => return e,
         };
+        // ENS-Office: русский Excel и Р7 принимают типы сведений по-русски ("имяфайла").
+        let info_type = match info_type.as_str() {
+            "АДРЕС" => "ADDRESS",
+            "СТОЛБЕЦ" => "COL",
+            "ЦВЕТ" => "COLOR",
+            "СОДЕРЖИМОЕ" => "CONTENTS",
+            "ИМЯФАЙЛА" => "FILENAME",
+            "ФОРМАТ" => "FORMAT",
+            "СКОБКИ" => "PARENTHESES",
+            "ПРЕФИКС" => "PREFIX",
+            "ЗАЩИТА" => "PROTECT",
+            "СТРОКА" => "ROW",
+            "ТИП" => "TYPE",
+            "ШИРИНА" => "WIDTH",
+            other => other,
+        }
+        .to_string();
         match info_type.as_str() {
             "ADDRESS" => {
                 if reference.sheet != cell.sheet {

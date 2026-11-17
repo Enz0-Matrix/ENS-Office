@@ -124,6 +124,7 @@ pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
     let mut i = 0;
     let mut in_quotes = false;
     let is_digit = |c: Option<&char>| matches!(c, Some('0' | '#' | '?'));
+    let prev = |i: usize| if i > 0 { chars.get(i - 1) } else { None };
     while i < chars.len() {
         let c = chars[i];
         if c == '"' {
@@ -135,19 +136,87 @@ pub fn delocalize_format_code(code: &str, locale: &Locale) -> String {
             out.push(c);
             out.push(chars[i + 1]);
             i += 1;
+        } else if c == '[' {
+            // ENS-Office: [Красный], [Цвет10] → [Red], [Color10]; прочее в скобках как есть.
+            let close = chars[i..].iter().position(|&x| x == ']').map(|p| i + p);
+            let Some(close) = close else {
+                out.push(c);
+                i += 1;
+                continue;
+            };
+            let inner: String = chars[i + 1..close].iter().collect();
+            out.push('[');
+            out.push_str(&delocalize_bracket(&inner));
+            out.push(']');
+            i = close;
         } else if c == ',' {
             out.push('.');
         } else if c == '.' {
-            out.push(',');
-        } else if (c == ' ' || c == '\u{a0}') && is_digit(chars.get(i.wrapping_sub(1)).filter(|_| i > 0)) && is_digit(chars.get(i + 1)) {
+            // ENS-Office: точка в «ДД.ММ.ГГГГ» — просто символ, а не разделитель дробной части.
+            if is_digit(prev(i)) || is_digit(chars.get(i + 1)) {
+                out.push(',');
+            } else {
+                out.push('.');
+            }
+        } else if (c == ' ' || c == '\u{a0}') && is_digit(prev(i)) && is_digit(chars.get(i + 1)) {
             // a space between digit placeholders is the thousands separator
             out.push(',');
         } else {
-            out.push(c);
+            // ENS-Office: русские коды дат и времени, как в русском Excel и Р7.
+            match c {
+                'Д' | 'д' => out.push('d'),
+                'М' | 'м' => out.push('m'),
+                'Г' | 'г' => out.push('y'),
+                'Ч' | 'ч' => out.push('h'),
+                'С' | 'с' => out.push('s'),
+                _ => out.push(c),
+            }
         }
         i += 1;
     }
+    let lower = out.to_lowercase();
+    if lower == "основной" {
+        return "General".to_string();
+    }
     out
+}
+
+/// ENS-Office: содержимое квадратных скобок кода формата по-русски → по-английски.
+fn delocalize_bracket(inner: &str) -> String {
+    let lower = inner.to_lowercase().replace('ё', "е");
+    let color = match lower.as_str() {
+        "черный" => Some("Black"),
+        "белый" => Some("White"),
+        "красный" => Some("Red"),
+        "зеленый" => Some("Green"),
+        "синий" => Some("Blue"),
+        "желтый" => Some("Yellow"),
+        "фиолетовый" => Some("Magenta"),
+        "голубой" => Some("Cyan"),
+        _ => None,
+    };
+    if let Some(c) = color {
+        return c.to_string();
+    }
+    if inner.starts_with(['<', '>', '=']) {
+        // условие [<0,5] → [<0.5]
+        return inner.replace(',', ".");
+    }
+    if let Some(n) = lower.strip_prefix("цвет") {
+        return format!("Color{}", n.trim());
+    }
+    // [ч], [мм], [сс] — прошедшее время
+    if !lower.is_empty() && lower.chars().all(|c| matches!(c, 'ч' | 'м' | 'с')) {
+        return lower
+            .chars()
+            .map(|c| match c {
+                'ч' => 'h',
+                'м' => 'm',
+                _ => 's',
+            })
+            .collect();
+    }
+    inner.to_string()
 }
 
 /// ENS-Office: the sections of a format code (split at `;` outside quotes).
