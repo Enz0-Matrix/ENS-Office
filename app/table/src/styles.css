@@ -481,4 +481,5 @@ footer { display: flex; flex-direction: column; }
 .credits-box { background: var(--panel, #fff); color: var(--text, #222); border-radius: 12px; padding: 24px 32px; text-align: center; max-width: 440px; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
 .credits-box h2 { margin: 0 0 8px; }
 .credits-box p { margin: 6px 0; }
+.credits-box h3 { margin: 14px 0 4px; font-size: 14px; }
 .credits-small { color: var(--muted); font-size: 12px; }

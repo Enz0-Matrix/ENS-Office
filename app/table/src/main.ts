@@ -8,7 +8,7 @@ import { newShape, SHAPE_NAMES } from './shapes';
 import { type BorderType, type CellStyle, type RichRun, columnName, isExternalSheet, openCsv, openOtherFormat, realSheetCount, tableKind, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { boltApply, boltCell } from './bolt';
+import { boltApply, boltCell, setOnBoltLay } from './bolt';
 import { ensMessage, isEnsEgg } from './eggs';
 import { diffBooks, showDiff, showLog, type ChangesHost } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
@@ -3923,6 +3923,26 @@ function boltOnSelect(): void {
 }
 
 boltApply();
+// По настройке: уложенный «У. Болт» защищает лист (без пароля), поднятый — снимает защиту,
+// которую поставил сам. Защиту, поставленную человеком, он не трогает.
+let boltLocked: number | null = null;
+setOnBoltLay((down) => {
+  if (!settings.helperLock) return;
+  const sheet = grid.sheet;
+  try {
+    if (down && !model.isSheetProtected(sheet)) {
+      model.setSheetProtected(sheet, true);
+      boltLocked = sheet;
+      showToast('«У. Болт» лёг на лист: лист защищён от правок. Поднимите его двойным щелчком, чтобы снять защиту.');
+    } else if (!down && boltLocked !== null) {
+      if (model.isSheetProtected(boltLocked)) model.setSheetProtected(boltLocked, false);
+      showToast('«У. Болт» встал: защита листа снята.');
+      boltLocked = null;
+    }
+  } catch (e) { showToast(String(e)); }
+  refreshRibbon();
+  grid.render();
+});
 grid.onSelect = () => { boltOnSelect(); showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });

@@ -283,6 +283,7 @@ function render(section: Section): void {
         <select data-set="undoScope"><option value="book">вся книга</option><option value="sheet">только действия на этом листе</option><option value="others">все листы, кроме этого</option></select></label>
       <p class="bs-muted">Быстро переключить можно и стрелкой ▾ рядом с кнопками отмены вверху окна.</p>
       <label class="bs-row"><input type="checkbox" data-set="helper"> Помощник «У. Болт»: подсказывает по ошибкам в формулах (скептик, но добрый)</label>
+      <label class="bs-row"><input type="checkbox" data-set="helperLock"> Уложенный «У. Болт» (двойной щелчок) защищает текущий лист от правок, поднятый — снимает защиту</label>
       <label class="bs-row"><input type="checkbox" data-set="recognizeDates"> Распознавать даты при вводе в ячейки «Общий»</label>
       <label class="bs-row">Шрифт по умолчанию для новых книг
         <select data-set="defaultFont">${FONTS.map((f) => `<option>${f.label}</option>`).join('')}</select>
@@ -325,6 +326,9 @@ function render(section: Section): void {
     const helper = body.querySelector<HTMLInputElement>('[data-set="helper"]')!;
     helper.checked = settings.helper;
     helper.addEventListener('change', () => { settings.helper = helper.checked; saveSettings(); host.applySettings(); });
+    const helperLock = body.querySelector<HTMLInputElement>('[data-set="helperLock"]')!;
+    helperLock.checked = settings.helperLock;
+    helperLock.addEventListener('change', () => { settings.helperLock = helperLock.checked; saveSettings(); });
     const dates = body.querySelector<HTMLInputElement>('[data-set="recognizeDates"]')!;
     dates.checked = settings.recognizeDates;
     dates.addEventListener('change', () => { settings.recognizeDates = dates.checked; saveSettings(); host.applySettings(); });

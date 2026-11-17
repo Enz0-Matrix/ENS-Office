@@ -63,8 +63,13 @@ function say(text: string, ms = 9000): void {
   bubbleTimer = window.setTimeout(() => (bubble.hidden = true), ms);
 }
 
-function lay(down: boolean): void {
+/** Помощник лёг или встал (двойной щелчок): main.ts по настройке защищает лист. */
+export let onBoltLay: (down: boolean) => void = () => {};
+export function setOnBoltLay(fn: (down: boolean) => void): void { onBoltLay = fn; }
+
+function lay(down: boolean, byUser = false): void {
   lying = down;
+  if (byUser) onBoltLay(down);
   root!.classList.toggle('lying', down);
   say(pick(down ? LAID : STOOD), 5000);
 }
@@ -80,12 +85,12 @@ function scheduleIdle(): void {
 function build(): void {
   root = document.createElement('div');
   root.className = 'bolt';
-  root.innerHTML = `<div class="bolt-bubble" hidden></div><div class="bolt-body" title="У. Болт. Перетащите — положите; двойной щелчок — уложить или поставить">${SVG}</div><button class="bolt-x" title="Убрать помощника (вернуть: Файл → Параметры)">✕</button>`;
+  root.innerHTML = `<div class="bolt-bubble" hidden></div><div class="bolt-body" title="У. Болт. Перетащите — перенести; двойной щелчок — уложить или поставить">${SVG}</div><button class="bolt-x" title="Убрать помощника (вернуть: Файл → Параметры)">✕</button>`;
   bubble = root.querySelector('.bolt-bubble')!;
   document.body.append(root);
   const body = root.querySelector<HTMLElement>('.bolt-body')!;
   root.querySelector('.bolt-x')!.addEventListener('click', () => { settings.helper = false; boltApply(); saveSettings(); });
-  body.addEventListener('dblclick', () => lay(!lying));
+  body.addEventListener('dblclick', () => lay(!lying, true));
   body.addEventListener('click', () => { if (!bubble.hidden) bubble.hidden = true; else say(pick(IDLE), 6000); });
   let drag: { dx: number; dy: number; moved: boolean } | null = null;
   body.addEventListener('pointerdown', (e) => {
@@ -104,7 +109,7 @@ function build(): void {
     root!.style.right = root!.style.bottom = 'auto';
   });
   body.addEventListener('pointerup', () => {
-    if (drag?.moved) { drag = null; lay(true); } // перетащили и бросили — «положили»
+    // ложится и встаёт только по двойному щелчку; перетаскивание лишь переносит
     drag = null;
   });
   scheduleIdle();
