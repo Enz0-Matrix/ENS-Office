@@ -1198,14 +1198,14 @@ export class Grid {
       if (x.r2 < ra || x.r1 > rb || x.c2 < ca || x.c1 > cb) continue;
       const a = this.lrect(Math.max(x.r1, ra), Math.max(x.c1, ca));
       const b = this.lrect(Math.min(x.r2, rb), Math.min(x.c2, cb));
-      ctx.fillStyle = this.theme.selectionFill;
+      ctx.fillStyle = visibleSelectionFill(this.theme);
       ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
     // Выделенный диапазон (кроме активной ячейки).
     if ((s.r1 !== s.r2 || s.c1 !== s.c2) && s.r2 >= ra && s.r1 <= rb && s.c2 >= ca && s.c1 <= cb) {
       const a = this.lrect(Math.max(s.r1, ra), Math.max(s.c1, ca));
       const b = this.lrect(Math.min(s.r2, rb), Math.min(s.c2, cb));
-      ctx.fillStyle = this.theme.selectionFill;
+      ctx.fillStyle = visibleSelectionFill(this.theme);
       ctx.fillRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
 
@@ -1372,6 +1372,10 @@ export class Grid {
     if (shown(s.row, s.column)) {
       const { x, y, w, h } = this.lActiveRect();
       const lw = this.theme.activeWidth;
+      // Ореол контрастного цвета: рамку видно на любой теме и на любой заливке ячейки.
+      ctx.strokeStyle = haloFor(border);
+      ctx.lineWidth = lw + 2;
+      ctx.strokeRect(x + lw / 2 - 1, y + lw / 2 - 1, w - lw + 2, h - lw + 2);
       ctx.strokeStyle = border;
       ctx.lineWidth = lw;
       ctx.strokeRect(x + lw / 2 - 1, y + lw / 2 - 1, w - lw + 2, h - lw + 2);
@@ -1381,8 +1385,11 @@ export class Grid {
     const onlyMerge = am && s.r1 === am.row && s.c1 === am.column && s.r2 === am.row + am.height - 1 && s.c2 === am.column + am.width - 1;
     if ((s.r1 !== s.r2 || s.c1 !== s.c2) && !onlyMerge) {
       const a = this.lrect(s.r1, s.c1), b = this.lrect(Math.min(s.r2, LAST_ROW), Math.min(s.c2, LAST_COLUMN));
+      ctx.strokeStyle = haloFor(border);
+      ctx.lineWidth = 4;
+      ctx.strokeRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
       ctx.strokeStyle = border;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2;
       ctx.strokeRect(a.x, a.y, b.x + b.w - a.x, b.y + b.h - a.y);
     }
     // Маркер заполнения — в правом нижнем углу выделения, как в Excel.
@@ -2029,5 +2036,54 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, width: number): 
     }
     out.push(line);
   }
+  return out;
+}
+
+
+// --- Заметность выделения (контрастные темы, ячейки с заливкой) ---
+
+/** Цвет → [r, g, b, a] (0–255, a 0–1): #rgb, #rrggbb, rgb(), rgba(). */
+function parseColor(c: string): [number, number, number, number] | null {
+  const hex = c.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].split('').map((x) => x + x).join('') : hex[1];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), 1];
+  }
+  const m = c.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/i);
+  return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null;
+}
+
+/** Относительная яркость (WCAG). */
+function wcagLuminance([r, g, b]: [number, number, number, number]): number {
+  const f = (v: number) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+/** Ореол рамки: тёмный вокруг светлой рамки, светлый вокруг тёмной. */
+export function haloFor(border: string): string {
+  const c = parseColor(border);
+  if (!c) return 'rgba(255,255,255,0.85)';
+  return wcagLuminance(c) > 0.45 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.85)';
+}
+
+const fillCache = new WeakMap<GridTheme, string>();
+
+/** Заливка выделения, заметная на фоне листа: слишком бледную (белое на синем 14 % в «Инженерной»)
+ *  делаем плотнее — до заметной разницы яркости, не плотнее 40 %. */
+export function visibleSelectionFill(theme: GridTheme): string {
+  const cached = fillCache.get(theme);
+  if (cached) return cached;
+  let out = theme.selectionFill;
+  const fill = parseColor(theme.selectionFill), bg = parseColor(theme.sheetBg);
+  if (fill && bg) {
+    const lb = wcagLuminance(bg);
+    const blend = (a: number) => wcagLuminance([0, 1, 2].map((i) => fill[i] * a + bg[i] * (1 - a)).concat(1) as [number, number, number, number]);
+    const contrast = (a: number) => { const l = blend(a); return (Math.max(l, lb) + 0.05) / (Math.min(l, lb) + 0.05); };
+    let a = fill[3];
+    // только тёмный лист: на светлом бледная заливка видна, а плотная мешает читать
+    while (lb < 0.25 && contrast(a) < 1.25 && a < 0.4) a += 0.02;
+    out = `rgba(${fill[0]},${fill[1]},${fill[2]},${a.toFixed(2)})`;
+  }
+  fillCache.set(theme, out);
   return out;
 }
