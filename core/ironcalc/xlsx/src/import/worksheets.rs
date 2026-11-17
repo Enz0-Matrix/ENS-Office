@@ -976,6 +976,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     defined_names: Vec<DefinedNameS>,
     theme: &Theme,
     dxfs: &mut Vec<Dxf>,
+    external_books: &[String],
 ) -> Result<(Worksheet, bool), XlsxError> {
     let sheet_name = &settings.name;
     let sheet_id = settings.id;
@@ -985,6 +986,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     // One parser for the whole sheet: building one clones the defined names
     // and tables, which is far too much to do once per formula cell.
     let mut parser = new_parser_english(worksheets.to_owned(), defined_names, tables.clone());
+    parser.set_external_books(external_books.to_vec());
     // The cells are streamed; what is left of the worksheet is small and is
     // read as a tree.
     let SheetDataXml {
@@ -1267,6 +1269,8 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     shared_strings: &mut SharedStringTable,
     theme: &Theme,
     dxfs: &mut Vec<Dxf>,
+    external_books: &[String],
+    external_sheet_names: &[String],
 ) -> Result<(Vec<Worksheet>, u32), XlsxError> {
     // load comments, tables and hyperlink relationships
     let mut sheet_rels = HashMap::new();
@@ -1287,7 +1291,13 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     }
 
     // load all sheets
-    let worksheets: &Vec<String> = &workbook.worksheets.iter().map(|s| s.name.clone()).collect();
+    // ENS-Office: служебные листы других книг идут после настоящих.
+    let worksheets: &Vec<String> = &workbook
+        .worksheets
+        .iter()
+        .map(|s| s.name.clone())
+        .chain(external_sheet_names.iter().cloned())
+        .collect();
     let mut sheets = Vec::new();
     let mut selected_sheet = 0;
     let mut sheet_index = 0;
@@ -1326,6 +1336,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
                 defined_names.clone(),
                 theme,
                 dxfs,
+                external_books,
             )?;
             let mut s = s;
             (s.ens_images, s.ens_charts, s.ens_shapes) = super::drawings::load_images(archive, &path, sheet_name);

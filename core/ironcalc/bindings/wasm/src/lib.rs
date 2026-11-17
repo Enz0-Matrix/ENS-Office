@@ -1583,6 +1583,32 @@ impl Model {
         result
     }
 
+    /// ENS-Office: книги-источники внешних ссылок: `[{ file, target }]`.
+    #[wasm_bindgen(js_name = "externalBooks", unchecked_return_type = "{ file: string; target: string }[]")]
+    #[allow(clippy::unwrap_used)]
+    pub fn external_books(&self) -> JsValue {
+        #[derive(serde::Serialize)]
+        struct Book {
+            file: String,
+            target: String,
+        }
+        let list: Vec<Book> =
+            self.model.external_books().into_iter().map(|(file, target)| Book { file, target }).collect();
+        serde_wasm_bindgen::to_value(&list).unwrap()
+    }
+
+    /// ENS-Office: обновляет ссылки на книгу `file` из байтов её xlsx (файл читается с диска,
+    /// запускать его не нужно). Возвращает листы, которых в ней нет.
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "updateExternalBook")]
+    pub fn update_external_book(&mut self, file: &str, bytes: &[u8]) -> Result<Vec<String>, JsError> {
+        let workbook = ironcalc::import::load_from_xlsx_bytes(bytes, file, "en", "UTC")
+            .map_err(|e| to_js_error(e.to_string()))?;
+        let mut source = ironcalc_base::Model::from_workbook(workbook, "en").map_err(to_js_error)?;
+        source.evaluate();
+        self.model.update_external_book(file, &source).map_err(to_js_error)
+    }
+
     /// ENS-Office: в книге есть макросы (сохраняются только в .xlsm).
     #[wasm_bindgen(js_name = "hasMacros")]
     pub fn has_macros(&self) -> bool {

@@ -43,7 +43,7 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
     // <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
     let mut sheets_str: Vec<String> = vec![];
     let mut sheet_id_to_sheet_index: HashMap<u32, u32> = HashMap::new();
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in super::real_sheets(workbook).iter().enumerate() {
         let name = &worksheet.name;
         let name = escape_xml(name);
         let sheet_id = worksheet.sheet_id;
@@ -102,7 +102,7 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
             formula_body.to_string()
         } else {
             let node = parser.parse(formula_body, &parse_context);
-            to_excel_string(&node, &parse_context)
+            super::excel_external_refs(to_excel_string(&node, &parse_context))
         };
         let formula = escape_xml(&formula);
         defined_names_str.push(format!(
@@ -124,6 +124,14 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
     } else {
         String::new()
     };
+    // ENS-Office: внешние связи — ссылки на части externalLinks (rIdExtN, см. workbook_xml_rels).
+    let n_books = super::written_books(workbook).len();
+    let external_refs = if n_books == 0 {
+        String::new()
+    } else {
+        let items: String = (1..=n_books).map(|n| format!("<externalReference r:id=\"rIdExt{n}\"/>")).collect();
+        format!("<externalReferences>{items}</externalReferences>")
+    };
     // ENS-Office: codeName книги нужен макросам (модуль «ЭтаКнига»).
     let workbook_pr = if workbook.ens_code_name.is_empty() {
         String::new()
@@ -139,6 +147,7 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
       <sheets>\
         {sheets}\
       </sheets>\
+      {external_refs}\
       <definedNames>\
         {defined_names}\
       </definedNames>\

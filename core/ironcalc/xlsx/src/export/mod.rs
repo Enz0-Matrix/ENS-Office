@@ -6,6 +6,7 @@ mod doc_props;
 mod drawings;
 mod dxfs_styles;
 mod escape;
+mod external_links;
 mod shared_strings;
 mod styles;
 mod styles_util;
@@ -27,6 +28,34 @@ use ironcalc_base::types::Workbook;
 use ironcalc_base::{get_milliseconds_since_epoch, Model};
 
 use self::xml_constants::XML_DECLARATION;
+
+/// ENS-Office: настоящие листы книги, без служебных листов других книг (они в конце).
+pub(crate) fn real_sheets(workbook: &Workbook) -> &[ironcalc_base::types::Worksheet] {
+    let n = workbook
+        .worksheets
+        .iter()
+        .position(|w| ironcalc_base::external::is_external_sheet_name(&w.name))
+        .unwrap_or(workbook.worksheets.len());
+    &workbook.worksheets[..n]
+}
+
+/// ENS-Office: книги-источники, которые пишутся в xlsx, по порядку (`[1]` — первая).
+pub(crate) fn written_books(workbook: &Workbook) -> Vec<&ironcalc_base::types::ExternalBook> {
+    workbook.ens_external_books.iter().filter(|b| !b.file.is_empty()).collect()
+}
+
+std::thread_local! {
+    /// Имена файлов книг-источников на время сохранения: формулы пишутся с `[n]Лист!`.
+    static EXPORT_BOOKS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// ENS-Office: формула для xlsx — ссылки на служебные листы → `[n]Лист!`.
+pub(crate) fn excel_external_refs(formula: String) -> String {
+    if !formula.contains('[') {
+        return formula;
+    }
+    EXPORT_BOOKS.with(|b| ironcalc_base::external::to_excel_refs(&formula, &b.borrow()))
+}
 
 use crate::error::XlsxError;
 
@@ -57,18 +86,18 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         };
         content.push(format!(r#"<Override PartName="/{}" ContentType="{ct}"/>"#, part.path));
     }
-    for worksheet in 0..workbook.worksheets.len() {
+    for worksheet in 0..real_sheets(workbook).len() {
         let sheet = format!(
             r#"<Override PartName="/xl/worksheets/sheet{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#,
             worksheet + 1
         );
         content.push(sheet);
     }
-    if workbook.worksheets.iter().any(|w| !w.comments.is_empty()) {
+    if real_sheets(workbook).iter().any(|w| !w.comments.is_empty()) {
         content.push(r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#.to_string());
     }
     let mut chart_no = 1;
-    for w in &workbook.worksheets {
+    for w in real_sheets(workbook) {
         for _ in &w.ens_charts {
             content.push(format!(
                 r#"<Override PartName="/xl/charts/chart{chart_no}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>"#
@@ -77,11 +106,11 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
         }
     }
     for ext in ["png", "jpeg", "gif"] {
-        if workbook.worksheets.iter().any(|w| w.ens_images.iter().any(|i| i.ext == ext)) {
+        if real_sheets(workbook).iter().any(|w| w.ens_images.iter().any(|i| i.ext == ext)) {
             content.push(format!(r#"<Default Extension="{ext}" ContentType="image/{ext}"/>"#));
         }
     }
-    for (i, w) in workbook.worksheets.iter().enumerate() {
+    for (i, w) in real_sheets(workbook).iter().enumerate() {
         if !w.ens_images.is_empty() || !w.ens_charts.is_empty() || !w.ens_shapes.is_empty() {
             content.push(format!(
                 r#"<Override PartName="/xl/drawings/drawing{}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#,
@@ -97,13 +126,18 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
     }
     // ENS-Office: «умные» таблицы — нумерация та же, что при записи частей.
     let mut table_no = 1;
-    for w in &workbook.worksheets {
+    for w in real_sheets(workbook) {
         for _ in tables::sheet_tables(workbook, &w.name) {
             content.push(format!(
                 r#"<Override PartName="/xl/tables/table{table_no}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>"#
             ));
             table_no += 1;
         }
+    }
+    for n in 1..=written_books(workbook).len() {
+        content.push(format!(
+            r#"<Override PartName="/xl/externalLinks/externalLink{n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>"#
+        ));
     }
     content.push(
         r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#.to_string(),
@@ -143,6 +177,17 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         Some(view) => view.sheet,
         _ => 0,
     };
+    // ENS-Office: выбранный лист — всегда настоящий.
+    let selected_sheet = selected_sheet.min(real_sheets(workbook).len().saturating_sub(1) as u32);
+    // ENS-Office: на время записи формулы знают книги-источники (`[n]Лист!`).
+    struct BooksGuard;
+    impl Drop for BooksGuard {
+        fn drop(&mut self) {
+            EXPORT_BOOKS.with(|b| b.borrow_mut().clear());
+        }
+    }
+    EXPORT_BOOKS.with(|b| *b.borrow_mut() = written_books(workbook).iter().map(|x| x.file.clone()).collect());
+    let _guard = BooksGuard;
     let mut zip = zip::ZipWriter::new(writer);
 
     let options = zip::write::FileOptions::default();
@@ -214,7 +259,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     // sheet rels parts (one per sheet with external hyperlinks)
     let mut has_worksheet_rels = false;
     let mut table_counter = 1;
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in real_sheets(workbook).iter().enumerate() {
         let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
         let drawing_id = (!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty() || !worksheet.ens_shapes.is_empty()).then_some(sheet_index + 1);
         let table_count = tables::sheet_tables(workbook, &worksheet.name).len();
@@ -234,7 +279,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     }
     // ENS-Office: comments (notes) and the VML boxes Excel shows them in.
     let mut has_drawings_dir = false;
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in real_sheets(workbook).iter().enumerate() {
         if worksheet.comments.is_empty() {
             continue;
         }
@@ -253,7 +298,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     let mut chart_count = 1;
     let mut has_charts_dir = false;
     let mut has_media_dir = false;
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in real_sheets(workbook).iter().enumerate() {
         let images = &worksheet.ens_images;
         let charts = &worksheet.ens_charts;
         let shapes = &worksheet.ens_shapes;
@@ -291,6 +336,19 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         }
         media_count += images.len();
     }
+    // ENS-Office: внешние связи (книги-источники с кэшем значений).
+    let books = written_books(workbook);
+    if !books.is_empty() {
+        zip.add_directory("xl/externalLinks", options)?;
+        zip.add_directory("xl/externalLinks/_rels", options)?;
+    }
+    for (i, book) in books.iter().enumerate() {
+        let n = i + 1;
+        zip.start_file(format!("xl/externalLinks/externalLink{n}.xml"), options)?;
+        zip.write_all(external_links::get_external_link_xml(model, book).as_bytes())?;
+        zip.start_file(format!("xl/externalLinks/_rels/externalLink{n}.xml.rels"), options)?;
+        zip.write_all(external_links::get_external_link_rels(book).as_bytes())?;
+    }
     // ENS-Office: макросы — как были в исходном файле.
     for part in &workbook.ens_vba_parts {
         zip.start_file(part.path.as_str(), options)?;
@@ -298,9 +356,9 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     }
     // ENS-Office: «умные» таблицы.
     let mut table_id = 1;
-    let mut sheet_table_parts: Vec<String> = Vec::with_capacity(workbook.worksheets.len());
+    let mut sheet_table_parts: Vec<String> = Vec::with_capacity(real_sheets(workbook).len());
     let mut has_tables_dir = false;
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in real_sheets(workbook).iter().enumerate() {
         let list = tables::sheet_tables(workbook, &worksheet.name);
         let first_rel = worksheets::rels_before_tables(worksheet) + 1;
         sheet_table_parts.push(tables::table_parts_xml(list.len(), first_rel));
@@ -316,7 +374,7 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
             table_id += 1;
         }
     }
-    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+    for (sheet_index, worksheet) in real_sheets(workbook).iter().enumerate() {
         let id = sheet_index + 1;
         zip.start_file(format!("xl/worksheets/sheet{id}.xml"), options)?;
         let dimension = model
