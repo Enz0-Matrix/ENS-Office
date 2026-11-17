@@ -290,6 +290,8 @@
 .img-ov { position: absolute; z-index: 6; pointer-events: none; outline: 1px solid var(--accent, #2b579a); }
 .img-ov[hidden] { display: none; }
 .img-ov.crop { outline: 2px dashed #e69500; }
+.crop-ghost { position: absolute; z-index: 0; opacity: .35; pointer-events: none; outline: 1px dashed #e69500; max-width: none; }
+@media print { .crop-ghost { display: none; } }
 .img-ov-body { position: absolute; inset: 0; pointer-events: none; }
 .img-ov.abs .img-ov-body { pointer-events: auto; cursor: move; }
 .img-h { position: absolute; width: 9px; height: 9px; background: #fff; border: 1px solid var(--accent, #2b579a); box-sizing: border-box; pointer-events: auto; }

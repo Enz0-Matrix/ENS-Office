@@ -110,6 +110,25 @@ interface Drag {
 }
 
 let drag: Drag | null = null;
+/** Полупрозрачный полный рисунок под обрезаемым: видно, какая часть отрезается. */
+let ghost: HTMLImageElement | null = null;
+
+function showGhost(d: Drag, crop: number[], w: number, hh: number): void {
+  if (d.frame) return;
+  if (!ghost) {
+    ghost = document.createElement('img');
+    ghost.className = 'crop-ghost';
+    ghost.alt = '';
+    ghost.src = d.node.attrs.src as string;
+    host.sheet.append(ghost);
+  }
+  const k = host.scale();
+  const s = host.sheet.getBoundingClientRect();
+  const r = d.dom.getBoundingClientRect();
+  const fw = w / (1 - crop[0] - crop[2]), fh = hh / (1 - crop[1] - crop[3]);
+  Object.assign(ghost.style, { left: `${(r.left - s.left) / k - crop[0] * fw}px`, top: `${(r.top - s.top) / k - crop[1] * fh}px`, width: `${fw}px`, height: `${fh}px` });
+}
+const hideGhost = () => { ghost?.remove(); ghost = null; };
 
 function startDrag(e: MouseEvent, kind: Drag['kind'], handle?: Handle): void {
   const img = selectedImage();
@@ -126,6 +145,7 @@ function startDrag(e: MouseEvent, kind: Drag['kind'], handle?: Handle): void {
   };
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp, { once: true });
+  if (kind === 'crop') showGhost(drag, drag.crop, drag.w, drag.h);
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -164,7 +184,10 @@ function onMove(e: MouseEvent): void {
   dom.style.width = `${w}px`;
   if (d.frame) dom.style.minHeight = `${hh}px`;
   else { dom.style.height = `${hh}px`; dom.style.aspectRatio = `${w} / ${hh}`; }
-  if (d.kind === 'crop') dom.style.setProperty('object-view-box', `inset(${crop[1] * 100}% ${crop[2] * 100}% ${crop[3] * 100}% ${crop[0] * 100}%)`);
+  if (d.kind === 'crop') {
+    dom.style.setProperty('object-view-box', `inset(${crop[1] * 100}% ${crop[2] * 100}% ${crop[3] * 100}% ${crop[0] * 100}%)`);
+    showGhost(d, crop, w, hh);
+  }
   updateOverlay();
 }
 
@@ -172,6 +195,7 @@ function onUp(): void {
   document.removeEventListener('mousemove', onMove);
   const d = drag;
   drag = null;
+  hideGhost();
   if (!d) return;
   if (!d.out) return;
   const next: Record<string, unknown> = { width: Math.round(d.out.w), height: Math.round(d.out.h) };
