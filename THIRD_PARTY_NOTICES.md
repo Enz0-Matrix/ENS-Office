@@ -69,3 +69,14 @@ MPL-2.0 у lightningcss относится к инструменту сборк�
 | WebKitGTK (Linux) | LGPL-2.1+ | системная библиотека, динамическое связывание; в установщик не входит (кроме AppImage) |
 | WebView2 (Windows) | условия Microsoft | системный компонент; для организаций собирается offline-вариант |
 | Chromium (РЕД ОС 7) | BSD-3-Clause и др. | установлен в системе, используется в режиме приложения; в пакет не входит |
+
+## Компоненты ENS-Table для .xls, .ods и .csv (добавлено 17.11.2026)
+
+| Компонент | Версия | Для чего | Лицензия | Авторы |
+|---|---|---|---|---|
+| calamine | 0.37.0 | чтение .xls (Excel 97–2003) и .ods | MIT | Johann Tuffe и участники |
+| encoding_rs | 0.8.44 | CSV в кодировке Windows-1251 | (Apache-2.0 или MIT) и BSD-3-Clause | Henri Sivonen и участники |
+| zip | 9.6.1 | архивы .ods (зависимость calamine) | MIT | участники проекта zip |
+| zlib-rs | 0.6.8 | распаковка (зависимость zip) | Zlib | Trifecta Tech Foundation и участники |
+| zopfli | 0.8.3 | сжатие (зависимость zip) | Apache-2.0 | Google и участники |
+| codepage, atoi_simd, fast-float2, simdutf8, typed-path, indexmap, hashbrown, bumpalo, log, zeroize и др. (см. `core/ironcalc/Cargo.lock`) | — | служебные зависимости calamine и zip | MIT и/или Apache-2.0 (constant_time_eq: CC0-1.0, MIT-0 или Apache-2.0) | их авторы |

@@ -1609,6 +1609,45 @@ impl Model {
         self.model.update_external_book(file, &source).map_err(to_js_error)
     }
 
+    /// ENS-Office: открывает `.xls` (Excel 97–2003) или `.ods` (OpenDocument): листы, значения,
+    /// формулы, даты. Оформление не переносится (см. `lostFeatures`).
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "fromOtherFormat")]
+    pub fn from_other_format(
+        bytes: &[u8],
+        name: &str,
+        locale: &str,
+        timezone: &str,
+        language_id: &str,
+    ) -> Result<Model, JsError> {
+        let language_id = leak_str(language_id);
+        let model = ironcalc::import::load_from_other_bytes(bytes, name, locale, timezone, language_id)
+            .map_err(|e| to_js_error(e.to_string()))?;
+        Ok(Model { model: BaseModel::from_model(model) })
+    }
+
+    /// ENS-Office: открывает `.csv` (UTF-8 или Windows-1251; разделитель `;`, `,` или табуляция).
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "fromCsv")]
+    pub fn from_csv(
+        bytes: &[u8],
+        name: &str,
+        locale: &str,
+        timezone: &str,
+        language_id: &str,
+    ) -> Result<Model, JsError> {
+        let language_id = leak_str(language_id);
+        let model = ironcalc::import::load_from_csv_bytes(bytes, name, locale, timezone, language_id)
+            .map_err(|e| to_js_error(e.to_string()))?;
+        Ok(Model { model: BaseModel::from_model(model) })
+    }
+
+    /// ENS-Office: лист в CSV (значения, как видны; UTF-8 с BOM).
+    #[wasm_bindgen(js_name = "sheetToCsv")]
+    pub fn sheet_to_csv(&self, sheet: u32) -> Result<Vec<u8>, JsError> {
+        self.model.sheet_to_csv(sheet).map_err(to_js_error)
+    }
+
     /// ENS-Office: в книге есть макросы (сохраняются только в .xlsm).
     #[wasm_bindgen(js_name = "hasMacros")]
     pub fn has_macros(&self) -> bool {

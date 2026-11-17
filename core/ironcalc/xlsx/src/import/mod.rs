@@ -3,6 +3,8 @@ mod metadata;
 pub(crate) mod shared_strings;
 mod drawings;
 mod external_links;
+mod other_formats;
+pub use other_formats::{load_from_csv_bytes, load_from_other_bytes};
 mod sheet_data;
 mod styles;
 mod tables;
