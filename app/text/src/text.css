@@ -357,3 +357,8 @@
 .tbl-drop { position: absolute; z-index: 6; height: 0; border-top: 2px solid var(--accent, #2b579a); pointer-events: none; }
 .sheet.tbl-moving, .sheet.tbl-moving * { cursor: move !important; }
 @media print { .tbl-move, .tbl-drop { display: none !important; } }
+
+/* Контекстное меню документа (contextmenu.ts); основа — .context-menu из общих стилей ENS-Table. */
+.context-menu.ctx-text .ctx-sep { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
+.context-menu.ctx-text > button { display: flex; gap: 24px; align-items: baseline; }
+.context-menu.ctx-text > button.ctx-hint { font-size: 12px; }

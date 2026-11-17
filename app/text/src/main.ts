@@ -29,7 +29,7 @@ import * as V from './versions';
 import { askNamedVersion, fmtWhen, openHistory, type HistoryHost } from './history-ui';
 import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
-import { readText } from '../../table/src/platform';
+import { copyText, readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
@@ -52,6 +52,7 @@ import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
 import { initTableMove, updateTableMove } from './table-move';
+import { hideContextMenu, initContextMenu } from './contextmenu';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -460,15 +461,7 @@ const view = new EditorView($('sheet'), {
     const $pos = v.state.doc.resolve(pos);
     const link = schema.marks.link.isInSet($pos.marks());
     if (!link) return false;
-    if (desktop.isDesktop) {
-      desktop.openTarget(link.attrs.href).catch((e) => toast(String((e as Error)?.message ?? e)));
-      return true;
-    }
-    const a = document.createElement('a');
-    a.href = link.attrs.href;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.click();
+    openHref(link.attrs.href as string);
     return true;
   },
 });
@@ -488,7 +481,21 @@ function syncImageTab(): void {
   else if (!on && active === 'Рисунок') click('Главная');
 }
 
+/** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
+function openHref(href: string): void {
+  if (desktop.isDesktop) {
+    desktop.openTarget(href).catch((e) => toast(String((e as Error)?.message ?? e)));
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.click();
+}
+
 function afterChange(docChanged: boolean): void {
+  hideContextMenu();
   updateUi();
   updateOverlay();
   updateTableMove();
@@ -1873,6 +1880,7 @@ initImageTools({
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
 });
 initTableMove({ view: () => view, sheet: $('sheet'), scale: () => zoom, locked: () => !!hfSession });
+initContextMenu({ view: () => view, sheet: $('sheet'), openLink: openHref, copyText: (t) => { void copyText(t).then(() => toast('Адрес ссылки скопирован')); } });
 initCommandSearch();
 applyPage();
 setZoom(1);

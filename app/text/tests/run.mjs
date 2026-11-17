@@ -2134,6 +2134,95 @@ await test('таблица: перемещение за ручку в углу, 
   ok(back.startsWith('T,Первый,Второй,Третий,Четвёртый'), `DOCX: ${back}`);
   await p.context().close();
 });
+await test('контекстные меню: текст, выделение, ссылка, рисунок, таблица; меню браузера не показывается', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    const cell = (t) => s.nodes.table_cell.create(null, P(s.text(t)));
+    const link = s.marks.link.create({ href: 'https://example.org/' });
+    E.loadDoc(s.nodes.doc.create(null, [
+      P([s.text('Обычный текст абзаца. '), s.text('ссылка', [link]), s.text(' и хвост')]),
+      P([s.nodes.image.create({ src: png, width: 120, height: 80 })]),
+      s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('А1'), cell('Б1')]), s.nodes.table_row.create(null, [cell('А2'), cell('Б2')])]),
+      P(s.text('Последний')),
+    ]), E.getMeta(), 'ctx');
+  }, PNG);
+  // Меню WebView отменено (defaultPrevented) везде, кроме полей ввода.
+  await p.evaluate(() => { window.__ctxPrevented = []; document.addEventListener('contextmenu', (e) => setTimeout(() => window.__ctxPrevented.push(e.defaultPrevented)), false); });
+  const kind = () => p.$eval('.context-menu.ctx-text', (m) => (m.hidden ? 'hidden' : m.dataset.kind));
+  const labels = () => p.$$eval('.context-menu.ctx-text button', (b) => b.map((x) => (x.disabled ? '-' : '') + x.querySelector('span').textContent));
+  const at = (sel, off = 2) => p.evaluate(({ sel, off }) => {
+    const el = window.ens.view.dom.querySelector(sel);
+    const t = [...el.childNodes].find((n) => n.nodeType === 3) ?? el.firstChild.firstChild ?? el.firstChild;
+    const r = document.createRange(); r.setStart(t, off); r.setEnd(t, off + 1);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, { sel, off });
+  // Текст: курсор встаёт в точку щелчка, «Вырезать» и «Копировать» недоступны.
+  let pt = await at('p', 3);
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  eq(await kind(), 'text', 'меню текста');
+  let l = await labels();
+  ok(l.includes('-Вырезать') && l.includes('-Копировать') && l.includes('Вставить') && l.includes('Ссылка…'), `пункты текста: ${l}`);
+  ok(await p.evaluate(() => window.ens.view.state.selection.from === 4), 'курсор встал в точку щелчка');
+  await p.keyboard.press('Escape');
+  eq(await kind(), 'hidden', 'Esc закрывает меню');
+  // Выделение: щелчок внутри выделения его сохраняет; пункты форматирования.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1, 8))); });
+  pt = await at('p', 2);
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  eq(await kind(), 'selection', 'меню выделения');
+  l = await labels();
+  ok(l.includes('Вырезать') && l.includes('Полужирный') && l.includes('Очистить форматирование'), `пункты выделения: ${l}`);
+  ok(await p.evaluate(() => { const s = window.ens.view.state.selection; return s.from === 1 && s.to === 8; }), 'выделение сохранено');
+  // «Полужирный» из меню применяется к выделению.
+  await p.click('.context-menu.ctx-text button:has-text("Полужирный")');
+  ok(await p.evaluate(() => window.ens.view.state.doc.firstChild.firstChild.marks.some((m) => m.type.name === 'strong')), 'полужирный применён');
+  eq(await kind(), 'hidden', 'меню закрылось после команды');
+  // Ссылка: открыть, изменить, копировать адрес, удалить.
+  const a = await (await p.$('.ProseMirror a')).boundingBox();
+  await p.mouse.click(a.x + a.width / 2, a.y + a.height / 2, { button: 'right' });
+  ok((await kind()).startsWith('link'), 'меню ссылки');
+  l = await labels();
+  ok(l.includes('Открыть ссылку') && l.includes('Изменить ссылку…') && l.includes('Удалить ссылку'), `пункты ссылки: ${l}`);
+  await p.click('.context-menu.ctx-text button:has-text("Удалить ссылку")');
+  ok(await p.evaluate(() => !window.ens.view.dom.querySelector('a') && window.ens.view.state.doc.firstChild.textContent.includes('ссылка')), 'ссылка снята, текст остался');
+  // Рисунок: правый щелчок выделяет его; пункты рисунка.
+  const im = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.click(im.x + im.width / 2, im.y + im.height / 2, { button: 'right' });
+  eq(await kind(), 'image', 'меню рисунка');
+  l = await labels();
+  ok(l.includes('Формат рисунка…') && l.includes('За текстом') && l.includes('Удалить рисунок'), `пункты рисунка: ${l}`);
+  ok(await p.evaluate(() => window.ens.view.state.selection.node?.type.name === 'image'), 'рисунок выделен');
+  await p.click('.context-menu.ctx-text button:has-text("За текстом")');
+  ok(await p.evaluate(() => { let f = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') f = n.attrs.float; }); return f?.mode === 'behind'; }), 'обтекание «за текстом» из меню');
+  // Таблица: строки и столбцы.
+  const td = await (await p.$('.ProseMirror td')).boundingBox();
+  await p.mouse.click(td.x + 10, td.y + td.height / 2, { button: 'right' });
+  ok((await kind()).startsWith('table'), 'меню таблицы');
+  l = await labels();
+  ok(l.includes('Вставить строку ниже') && l.includes('Удалить столбец') && l.includes('Свойства таблицы…'), `пункты таблицы: ${l}`);
+  await p.click('.context-menu.ctx-text button:has-text("Вставить строку ниже")');
+  eq(await p.$$eval('.ProseMirror tr', (r) => r.length), 3, 'строка добавлена из меню');
+  // Клавиатура: Shift+F10, стрелки, Enter.
+  await p.keyboard.press('Shift+F10');
+  ok((await kind()) !== 'hidden', 'Shift+F10 открывает меню');
+  await p.keyboard.press('Escape');
+  // Вне листа (лента) меню WebView тоже не показывается; Shift+правый щелчок по тексту — системное (орфография).
+  await p.click('#tabs', { button: 'right' });
+  await p.click('#status-page', { button: 'right' });
+  pt = await at('p', 3);
+  await p.keyboard.down('Shift');
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  await p.keyboard.up('Shift');
+  eq(await kind(), 'hidden', 'Shift+правый щелчок: наше меню не открывается');
+  await p.waitForTimeout(50);
+  const prevented = await p.evaluate(() => window.__ctxPrevented);
+  ok(prevented.length >= 8 && prevented.slice(0, -1).every(Boolean) && prevented[prevented.length - 1] === false, `меню WebView: ${JSON.stringify(prevented)}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
