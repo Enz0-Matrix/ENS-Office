@@ -2632,6 +2632,46 @@ await test('чёткие значки ленты: большие — рисун�
   await p.context().close();
 });
 
+await test('регистр (Aa, Shift+F3) и межстрочный интервал кнопкой с меню', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('пРИВЕТ, КАК ДЕЛА? всё хорошо.');
+  const text = () => p.evaluate(() => window.ens.view.state.doc.textContent);
+  // Часть текста жирная: оформление при смене регистра сохраняется.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.addMark(1, 7, E.schema.marks.strong.create())); });
+  await p.keyboard.press('Control+KeyA');
+  const pick = async (label) => { await p.click('[data-command="format.caseMenu"]'); await p.click(`.case-menu button:has-text("${label}")`); return text(); };
+  eq(await pick('иЗМЕНИТЬ'), 'Привет, как дела? ВСЁ ХОРОШО.', 'инверсия (случайный Caps Lock)');
+  eq(await pick('Как в предложениях'), 'Привет, как дела? Всё хорошо.', 'как в предложениях');
+  eq(await pick('ВСЕ ПРОПИСНЫЕ'), 'ПРИВЕТ, КАК ДЕЛА? ВСЁ ХОРОШО.', 'все прописные');
+  eq(await pick('все строчные'), 'привет, как дела? всё хорошо.', 'все строчные');
+  eq(await pick('Начинать С Прописных'), 'Привет, Как Дела? Всё Хорошо.', 'каждое слово с прописной');
+  const bold = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.isText && n.marks.length) out.push(n.text); }); return out; });
+  eq(bold, ['Привет'], 'жирный остался на том же слове');
+  // Shift+F3 по кругу: смешанный → ПРОПИСНЫЕ → строчные → Как в предложениях.
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'ПРИВЕТ, КАК ДЕЛА? ВСЁ ХОРОШО.', 'Shift+F3: прописные');
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'привет, как дела? всё хорошо.', 'Shift+F3: строчные');
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'Привет, как дела? Всё хорошо.', 'Shift+F3: как в предложениях');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await text(), 'привет, как дела? всё хорошо.', 'отмена — на шаг');
+  // Без выделения — слово под курсором.
+  await p.evaluate(() => { const E = window.ens; const at = E.view.state.doc.content.size - 4; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, at))); });
+  await p.keyboard.press('Shift+F3');
+  eq(await text(), 'привет, как дела? всё Хорошо.', 'слово под курсором (строчное → с прописной)');
+  await p.keyboard.press('Shift+F3');
+  eq(await text(), 'привет, как дела? всё ХОРОШО.', 'и дальше по кругу — прописные');
+  // Межстрочный интервал: значок с меню вместо широкого списка.
+  ok(!(await p.$('select[data-command="para.line"]')), 'широкого списка больше нет');
+  await p.click('[data-command="para.lineMenu"]');
+  eq(await p.$eval('.line-menu button[aria-checked="true"]', (b) => b.textContent), '✓1,0', 'отмечен текущий 1,0');
+  await p.click('.line-menu button:has-text("1,5")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.line), 1.5, 'интервал 1,5');
+  await p.click('[data-command="para.lineMenu"]');
+  await p.click('.line-menu button:has-text("Добавить интервал перед абзацем")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.before), 12, 'интервал перед абзацем');
+  await p.context().close();
+});
+
 await test('линейки тоньше и точнее: 22 px, деления на целых пикселях, миллиметры видны', async () => {
   const p = await page();
   await p.click('.ProseMirror');

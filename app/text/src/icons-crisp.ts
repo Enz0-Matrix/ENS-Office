@@ -211,29 +211,30 @@ import c206 from '@fluentui/svg-icons/icons/text_bold_20_regular.svg?raw';
 import c207 from '@fluentui/svg-icons/icons/textbox_32_regular.svg?raw';
 import c208 from '@fluentui/svg-icons/icons/textbox_20_regular.svg?raw';
 import c209 from '@fluentui/svg-icons/icons/text_bullet_list_ltr_20_regular.svg?raw';
-import c210 from '@fluentui/svg-icons/icons/text_color_20_regular.svg?raw';
-import c211 from '@fluentui/svg-icons/icons/text_direction_rotate_90_left_20_regular.svg?raw';
-import c212 from '@fluentui/svg-icons/icons/text_font_20_regular.svg?raw';
-import c213 from '@fluentui/svg-icons/icons/text_indent_decrease_20_regular.svg?raw';
-import c214 from '@fluentui/svg-icons/icons/text_indent_increase_20_regular.svg?raw';
-import c215 from '@fluentui/svg-icons/icons/text_italic_28_regular.svg?raw';
-import c216 from '@fluentui/svg-icons/icons/text_italic_20_regular.svg?raw';
-import c217 from '@fluentui/svg-icons/icons/text_number_list_ltr_28_regular.svg?raw';
-import c218 from '@fluentui/svg-icons/icons/text_number_list_ltr_20_regular.svg?raw';
-import c219 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_28_regular.svg?raw';
-import c220 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_20_regular.svg?raw';
-import c221 from '@fluentui/svg-icons/icons/text_strikethrough_20_regular.svg?raw';
-import c222 from '@fluentui/svg-icons/icons/text_subscript_20_regular.svg?raw';
-import c223 from '@fluentui/svg-icons/icons/text_superscript_20_regular.svg?raw';
-import c224 from '@fluentui/svg-icons/icons/text_underline_28_regular.svg?raw';
-import c225 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
-import c226 from '@fluentui/svg-icons/icons/text_wrap_20_regular.svg?raw';
+import c210 from '@fluentui/svg-icons/icons/text_change_case_20_regular.svg?raw';
+import c211 from '@fluentui/svg-icons/icons/text_color_20_regular.svg?raw';
+import c212 from '@fluentui/svg-icons/icons/text_direction_rotate_90_left_20_regular.svg?raw';
+import c213 from '@fluentui/svg-icons/icons/text_font_20_regular.svg?raw';
+import c214 from '@fluentui/svg-icons/icons/text_indent_decrease_20_regular.svg?raw';
+import c215 from '@fluentui/svg-icons/icons/text_indent_increase_20_regular.svg?raw';
+import c216 from '@fluentui/svg-icons/icons/text_italic_28_regular.svg?raw';
+import c217 from '@fluentui/svg-icons/icons/text_italic_20_regular.svg?raw';
+import c218 from '@fluentui/svg-icons/icons/text_number_list_ltr_28_regular.svg?raw';
+import c219 from '@fluentui/svg-icons/icons/text_number_list_ltr_20_regular.svg?raw';
+import c220 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_28_regular.svg?raw';
+import c221 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_20_regular.svg?raw';
+import c222 from '@fluentui/svg-icons/icons/text_strikethrough_20_regular.svg?raw';
+import c223 from '@fluentui/svg-icons/icons/text_subscript_20_regular.svg?raw';
+import c224 from '@fluentui/svg-icons/icons/text_superscript_20_regular.svg?raw';
+import c225 from '@fluentui/svg-icons/icons/text_underline_28_regular.svg?raw';
+import c226 from '@fluentui/svg-icons/icons/text_underline_20_regular.svg?raw';
 import c227 from '@fluentui/svg-icons/icons/text_wrap_20_regular.svg?raw';
-import c228 from '@fluentui/svg-icons/icons/wand_28_regular.svg?raw';
-import c229 from '@fluentui/svg-icons/icons/wand_20_regular.svg?raw';
-import c230 from '@fluentui/svg-icons/icons/text_direction_rotate_315_right_20_regular.svg?raw';
-import c231 from '@fluentui/svg-icons/icons/zoom_in_32_regular.svg?raw';
-import c232 from '@fluentui/svg-icons/icons/zoom_in_20_regular.svg?raw';
+import c228 from '@fluentui/svg-icons/icons/text_wrap_20_regular.svg?raw';
+import c229 from '@fluentui/svg-icons/icons/wand_28_regular.svg?raw';
+import c230 from '@fluentui/svg-icons/icons/wand_20_regular.svg?raw';
+import c231 from '@fluentui/svg-icons/icons/text_direction_rotate_315_right_20_regular.svg?raw';
+import c232 from '@fluentui/svg-icons/icons/zoom_in_32_regular.svg?raw';
+import c233 from '@fluentui/svg-icons/icons/zoom_in_20_regular.svg?raw';
 
 export const CRISP: Record<string, { l?: string; m?: string }> = {
   'align_bottom_20': { l: c1, m: c2 },
@@ -362,21 +363,22 @@ export const CRISP: Record<string, { l?: string; m?: string }> = {
   'text_bold_20': { l: c205, m: c206 },
   'text_box_24': { l: c207, m: c208 },
   'text_bullet_list_20': { m: c209 },
-  'text_color_20': { m: c210 },
-  'text_direction_rotate_90_left_24': { m: c211 },
-  'text_font_24': { m: c212 },
-  'text_indent_less_20': { m: c213 },
-  'text_indent_more_20': { m: c214 },
-  'text_italic_20': { l: c215, m: c216 },
-  'text_number_list_20': { l: c217, m: c218 },
-  'text_number_list_ltr_rotate_270_24': { l: c219, m: c220 },
-  'text_strike_20': { m: c221 },
-  'text_sub_20': { m: c222 },
-  'text_sup_20': { m: c223 },
-  'text_underline_20': { l: c224, m: c225 },
-  'text_wrap_20': { m: c226 },
-  'text_wrap_24': { m: c227 },
-  'wand_24': { l: c228, m: c229 },
-  'watermark_24': { m: c230 },
-  'zoom_in_24': { l: c231, m: c232 },
+  'text_change_case_20': { m: c210 },
+  'text_color_20': { m: c211 },
+  'text_direction_rotate_90_left_24': { m: c212 },
+  'text_font_24': { m: c213 },
+  'text_indent_less_20': { m: c214 },
+  'text_indent_more_20': { m: c215 },
+  'text_italic_20': { l: c216, m: c217 },
+  'text_number_list_20': { l: c218, m: c219 },
+  'text_number_list_ltr_rotate_270_24': { l: c220, m: c221 },
+  'text_strike_20': { m: c222 },
+  'text_sub_20': { m: c223 },
+  'text_sup_20': { m: c224 },
+  'text_underline_20': { l: c225, m: c226 },
+  'text_wrap_20': { m: c227 },
+  'text_wrap_24': { m: c228 },
+  'wand_24': { l: c229, m: c230 },
+  'watermark_24': { m: c231 },
+  'zoom_in_24': { l: c232, m: c233 },
 };

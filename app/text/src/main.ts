@@ -61,6 +61,8 @@ import { attachFontPicker } from './font-picker';
 import { formulasPlugin } from './table-formulas';
 import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode, type PastedTable } from './paste-special';
 import { guessTotals, readXlsx } from './xlsx-import';
+import { changeCase, type CaseMode } from './textcase';
+import { popMenu } from './popmenu';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
@@ -523,6 +525,43 @@ document.addEventListener('keyup', ctrlHeld, true);
 document.addEventListener('mousemove', ctrlHeld, { passive: true });
 window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
 
+// ---------------------------------------------------------------- регистр и межстрочный интервал
+
+const ribbonButton = (id: string): HTMLElement | null => document.querySelector(`#ribbon [data-command="${id}"]`);
+
+function applyCase(mode: CaseMode): void {
+  const v = active();
+  const tr = changeCase(v.state, mode);
+  if (tr) v.dispatch(tr.scrollIntoView());
+  v.focus();
+}
+
+function caseMenu(): void {
+  const at = ribbonButton('format.caseMenu') ?? { x: 200, y: 120 };
+  popMenu(at, [
+    { label: 'Как в предложениях.', run: () => applyCase('sentence') },
+    { label: 'все строчные', run: () => applyCase('lower') },
+    { label: 'ВСЕ ПРОПИСНЫЕ', run: () => applyCase('upper') },
+    { label: 'Начинать С Прописных', run: () => applyCase('title') },
+    { label: 'иЗМЕНИТЬ рЕГИСТР', run: () => applyCase('toggle') },
+    '-',
+    { label: 'По кругу', keys: 'Shift+F3', run: () => applyCase('cycle') },
+  ], 'case-menu');
+}
+
+function lineSpacingMenu(): void {
+  const st = active().state;
+  const line = paraAttr<number>(st, 'line') ?? meta.defaults.line ?? 1;
+  const before = paraAttr<number>(st, 'before') ?? 0, after = paraAttr<number>(st, 'after') ?? meta.defaults.after ?? 0;
+  const at = ribbonButton('para.lineMenu') ?? { x: 400, y: 120 };
+  popMenu(at, [
+    ...[1, 1.15, 1.5, 2, 2.5, 3].map((x) => ({ label: x.toLocaleString('ru-RU', { minimumFractionDigits: 1 }), checked: Math.abs(line - x) < 0.01, run: () => run('para.line', String(x)) })),
+    '-',
+    before ? { label: 'Удалить интервал перед абзацем', run: () => dispatchCmd(setParaAttrs({ before: 0 })) } : { label: 'Добавить интервал перед абзацем', run: () => dispatchCmd(setParaAttrs({ before: 12 })) },
+    after ? { label: 'Удалить интервал после абзаца', run: () => dispatchCmd(setParaAttrs({ after: 0 })) } : { label: 'Добавить интервал после абзаца', run: () => dispatchCmd(setParaAttrs({ after: 8 })) },
+  ], 'line-menu');
+}
+
 // ---------------------------------------------------------------- специальная вставка и формулы таблиц
 
 type PasteMode = 'keep' | 'text' | 'table' | 'values';
@@ -776,6 +815,14 @@ register(
   { id: 'indent.inc', label: 'Увеличить отступ', keys: ['Ctrl+KeyM'], run: () => dispatchCmd(indent(1)) },
   { id: 'indent.dec', label: 'Уменьшить отступ', keys: ['Ctrl+Shift+KeyM'], run: () => dispatchCmd(indent(-1)) },
   { id: 'para.line', label: 'Межстрочный интервал', run: (v) => dispatchCmd(setParaAttrs({ line: v && v !== '1' ? parseFloat(v) : null })) },
+  { id: 'para.lineMenu', label: 'Интервал между строками и абзацами', keywords: ['межстрочный', 'интервал', 'полуторный', 'двойной', 'перед абзацем', 'после абзаца'], run: () => lineSpacingMenu() },
+  { id: 'format.case', label: 'Регистр: следующий вариант', keywords: ['регистр', 'прописные', 'строчные', 'caps', 'капс'], keys: ['Shift+F3'], run: () => applyCase('cycle') },
+  { id: 'format.caseMenu', label: 'Регистр', keywords: ['регистр', 'прописные', 'заглавные', 'строчные', 'caps lock', 'капс', 'как в предложении'], run: () => caseMenu() },
+  { id: 'format.caseUpper', label: 'Регистр: ВСЕ ПРОПИСНЫЕ', keywords: ['заглавные', 'капс'], run: () => applyCase('upper') },
+  { id: 'format.caseLower', label: 'Регистр: все строчные', run: () => applyCase('lower') },
+  { id: 'format.caseSentence', label: 'Регистр: Как в предложениях', run: () => applyCase('sentence') },
+  { id: 'format.caseTitle', label: 'Регистр: Начинать С Прописных', run: () => applyCase('title') },
+  { id: 'format.caseToggle', label: 'Регистр: иЗМЕНИТЬ рЕГИСТР (после Caps Lock)', keywords: ['caps lock', 'инверсия'], run: () => applyCase('toggle') },
   { id: 'para.after', label: 'Интервал после абзаца', run: (v) => dispatchCmd(setParaAttrs({ after: v === '' || v === undefined ? null : parseFloat(v) })) },
   { id: 'para.style', label: 'Стиль абзаца', run: (v) => dispatchCmd(setStyle(+(v ?? 0))) },
   { id: 'edit.find', label: 'Найти', keys: ['Ctrl+KeyF'], run: () => openFind(false) },
@@ -1057,9 +1104,6 @@ const MARGINS = [
   { value: 'normal', label: 'Поля: обычные' }, { value: 'narrow', label: 'Поля: узкие' },
   { value: 'moderate', label: 'Поля: средние' }, { value: 'wide', label: 'Поля: широкие' },
 ];
-const LINES = [
-  { value: '1', label: 'Интервал 1,0' }, { value: '1.15', label: 'Интервал 1,15' }, { value: '1.5', label: 'Интервал 1,5' }, { value: '2', label: 'Интервал 2,0' },
-];
 const STYLES = [
   { value: '0', label: 'Обычный' }, { value: '1', label: 'Заголовок 1' }, { value: '2', label: 'Заголовок 2' }, { value: '3', label: 'Заголовок 3' },
   { value: '4', label: 'Заголовок 4' }, { value: '5', label: 'Заголовок 5' }, { value: '6', label: 'Заголовок 6' },
@@ -1090,6 +1134,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'select', command: 'format.fontName', options: FONTS, width: 150 },
           { type: 'select', command: 'format.fontSize', options: FONT_SIZES, width: 56 },
+          { type: 'small', command: 'format.caseMenu', icon: 'text_change_case' },
           { type: 'small', command: 'format.bold', icon: 'text_bold' },
           { type: 'small', command: 'format.italic', icon: 'text_italic' },
           { type: 'small', command: 'format.underline', icon: 'text_underline' },
@@ -1108,12 +1153,12 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'list.ordered', icon: 'text_number_list' },
           { type: 'small', command: 'indent.dec', icon: 'text_indent_less' },
           { type: 'small', command: 'indent.inc', icon: 'text_indent_more' },
-          { type: 'select', command: 'para.line', options: LINES, width: 120 },
+          { type: 'small', command: 'view.marks', icon: 'paragraph' },
           { type: 'small', command: 'align.left', icon: 'text_align_left' },
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
-          { type: 'small', command: 'view.marks', icon: 'paragraph' },
+          { type: 'small', command: 'para.lineMenu', icon: 'line_spacing' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
@@ -2227,6 +2272,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

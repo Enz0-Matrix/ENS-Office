@@ -407,6 +407,12 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 /* Группы только из списков и мелких кнопок («Шрифт», «Абзац»): строками, как в Word — списки сверху, кнопки ниже. */
 #ribbon .group .items:has(> .ribbon-select):not(:has(> .btn.large)) { display: flex; flex-direction: row; flex-wrap: wrap; align-content: flex-start;
   align-items: center; max-width: 236px; }
+/* «Шрифт» и «Абзац» — две строки, как в Word: шрифт, размер, Aa / Ж К Ч…; списки, отступы, ¶ / выравнивание, интервал. */
+#ribbon .group .items.items.items:has(> [data-command="format.fontName"]) { max-width: none; width: 336px; }
+/* Перенос после Aa: шрифт 150 + размер 56 + Aa 28 + отступ 80 — Ж уже не помещается и уходит во вторую строку. */
+#ribbon .items > [data-command="format.caseMenu"] { margin-right: 80px; }
+#ribbon .group .items:has(> [data-command="list.bullet"]) { display: flex; flex-direction: row; flex-wrap: wrap; align-content: flex-start;
+  align-items: center; max-width: 152px; gap: 2px 3px; }
 #ribbon .btn.large { height: auto; min-width: 60px; max-width: 96px; gap: 6px; justify-content: flex-start; padding-top: 8px; }
 #ribbon .btn.large svg { width: 32px; height: 32px; flex: none; }
 #ribbon .btn.small svg { width: 20px; height: 20px; }
@@ -462,3 +468,9 @@ svg.ic-l, svg.ic-m { display: none; }
 .wm-preset { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 10px; cursor: pointer; font: 600 13px "Times New Roman", serif; }
 .wm-preset:hover { border-color: var(--accent); }
 @media print { .paper .watermark { color: rgba(150, 150, 150, .35) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+/* Выпадающие меню у кнопок ленты (popmenu.ts). */
+.pop-menu { position: fixed; z-index: 60; }
+.pop-menu > button { gap: 8px !important; }
+.pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
+.pop-menu > button small { margin-left: auto; color: var(--muted); }
