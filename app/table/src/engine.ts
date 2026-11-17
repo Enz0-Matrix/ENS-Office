@@ -280,6 +280,12 @@ export interface Model {
   setShowGridLines(sheet: number, show: boolean): void;
   resolveColor(color: Color): string;
   toXlsx(): Uint8Array;
+  /** Копия в xlsx без макросов (сама книга их сохраняет). Нет в старом движке. */
+  toXlsxWithoutMacros?(): Uint8Array;
+  /** В книге есть макросы VBA (сохраняются только в .xlsm). */
+  hasMacros?(): boolean;
+  /** Что было в открытом файле и не будет сохранено (по-русски). */
+  lostFeatures?(): string[];
   toBytes(): Uint8Array;
   flushSendQueue(): Uint8Array;
   applyExternalDiffs(diffs: Uint8Array): void;
