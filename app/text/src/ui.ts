@@ -19,7 +19,8 @@ export function toast(text: string): void {
 /** Открыто ли окно (оверлей #dialog). Нужно, чтобы не пустить перезапуск за спиной окна. */
 function isDialogOpen(): boolean {
   const ov = document.getElementById('dialog');
-  return !!ov && !ov.hidden;
+  // Меню «Файл» (backstage-ui.ts) — тоже окно поверх документа: перезапуск за его спиной не пускаем.
+  return (!!ov && !ov.hidden) || !!document.querySelector('.text-backstage:not([hidden])');
 }
 
 /** Перезапуск страницы: F5, Ctrl+R и Ctrl+Shift+R. */

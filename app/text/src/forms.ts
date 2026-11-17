@@ -133,8 +133,9 @@ export function twoCols(left: string, right: string, rightBold = false): PMNode 
   return n.table.create({ borders: false }, [n.table_row.create(null, [cell(left, 'left'), cell(right, 'right', rightBold)])]);
 }
 
-export const dmy = (iso: string): string => {
-  const [y, mo, d] = iso.split('-');
+// Дата может быть не задана (шаблон-бланк без даты): тогда — строка для заполнения от руки.
+export const dmy = (iso: string | undefined): string => {
+  const [y, mo, d] = (iso ?? '').split('-');
   return y && mo && d ? `${d}.${mo}.${y}` : '___.___.______';
 };
 

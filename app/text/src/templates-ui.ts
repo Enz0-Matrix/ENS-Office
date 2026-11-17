@@ -6,7 +6,8 @@ import { builtInTemplates, getMine, listMine, removeMine, saveMine } from './tem
 import { dialog, el, toast } from './ui';
 
 export interface TemplateHost {
-  create: (doc: PMNode, meta: DocMeta, name: string) => void;
+  /** fillBeforeLast — прижать последние блоки к низу первой страницы (см. Built). */
+  create: (doc: PMNode, meta: DocMeta, name: string, fillBeforeLast?: number) => void;
   /** Текущий документ в виде docx (без истории версий) — для сохранения своего шаблона. */
   current: () => { bytes: Uint8Array; name: string };
 }
@@ -24,7 +25,7 @@ export function templatesDialog(host: TemplateHost, startMine = false): void {
       list.replaceChildren();
       for (const b of tabs.children) b.classList.toggle('on', (b as HTMLElement).dataset.tab === (mine ? 'mine' : 'std'));
       if (!mine) {
-        for (const t of builtInTemplates()) list.append(row(t.title, t.hint, el('button', { class: 'primary', textContent: 'Создать', onclick: () => { const b = t.build(); close(); host.create(b.doc, b.meta, b.name); } })));
+        for (const t of builtInTemplates()) list.append(row(t.title, t.hint, el('button', { class: 'primary', textContent: 'Создать', onclick: () => { const b = t.build(); close(); host.create(b.doc, b.meta, b.name, b.fillBeforeLast); } })));
         return;
       }
       const mineList = await listMine();
