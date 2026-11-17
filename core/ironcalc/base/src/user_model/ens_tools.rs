@@ -310,6 +310,33 @@ impl UserModel<'_> {
             .collect()
     }
 
+    /// ENS-Office: лист в CSV — значения, как они видны в ячейках; разделитель `;`, если
+    /// в локали дробная часть отделяется запятой (как сохраняют Excel и Р7 по-русски), иначе `,`.
+    /// UTF-8 с BOM: так файл правильно открывают и Excel, и LibreOffice.
+    pub fn sheet_to_csv(&self, sheet: u32) -> Result<Vec<u8>, String> {
+        let sep = if self.model.locale.numbers.symbols.decimal == "," { ';' } else { ',' };
+        let ws = self.model.workbook.worksheet(sheet)?;
+        let dim = ws.dimension();
+        let mut out = String::from("\u{feff}");
+        if ws.sheet_data.rows().is_empty() {
+            return Ok(out.into_bytes());
+        }
+        for row in dim.min_row..=dim.max_row {
+            let mut fields = Vec::new();
+            for column in 1..=dim.max_column {
+                let v = self.model.get_formatted_cell_value(sheet, row, column)?;
+                let needs = v.contains(sep) || v.contains('"') || v.contains('\n') || v.contains('\r');
+                fields.push(if needs { format!("\"{}\"", v.replace('"', "\"\"")) } else { v });
+            }
+            while fields.last().is_some_and(|f| f.is_empty()) {
+                fields.pop();
+            }
+            out.push_str(&fields.join(&sep.to_string()));
+            out.push_str("\r\n");
+        }
+        Ok(out.into_bytes())
+    }
+
     /// ENS-Office: в книге есть макросы (VBA), которые сохраняются только в .xlsm.
     pub fn has_macros(&self) -> bool {
         !self.model.workbook.ens_vba_parts.is_empty()

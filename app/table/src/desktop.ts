@@ -2,11 +2,11 @@
 // восстановления после сбоя (§7), вопрос «Сохранить?» при закрытии.
 // В браузере те же функции работают без файлов: сохранение — скачиванием.
 
-import { fromBytes, openXlsx, type Model } from './engine';
+import { fromBytes, openCsv, openOtherFormat, openXlsx, type Model } from './engine';
 import { APP_VERSION } from './version';
 import { maybeConfetti } from './eggs';
 import { afterSave, beforeSave, onOpened, userName } from './changelog';
-import { ask, beaconClose, inspectFile, isDesktop, osUserName, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
+import { ask, beaconClose, setDialogProfile, inspectFile, isDesktop, osUserName, isTauri, startupFile, openWindow, pickFolder, pickOpen, pickSave, readFile, recovery, saveFile, type RecoverableDoc } from './platform';
 import { localeId, saveSettings, settings, updateShared } from './settings';
 
 export interface Doc {
@@ -42,6 +42,8 @@ export interface Host {
   goTo(sheet: string, area: string): void;
   /** Перерисовать лист, строку формул и строку состояния (значения изменились). */
   refresh?(): void;
+  /** Номер листа, который сейчас открыт. */
+  currentSheet?(): number;
 }
 
 const newId = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -146,6 +148,16 @@ export async function chooseRecoveryFolder(): Promise<void> {
 
 export async function start(h: Host): Promise<void> {
   host = h;
+  // «Всеядность»: в окне «Открыть» — все таблицы, которые ENS-Table понимает.
+  setDialogProfile({
+    app: 'ENS-Table',
+    open: 'Открыть книгу',
+    filters: [
+      { name: 'Таблицы (xlsx, xlsm, xls, ods, csv)', extensions: ['xlsx', 'xlsm', 'xls', 'ods', 'csv'] },
+      { name: 'Книги Excel', extensions: ['xlsx', 'xlsm'] },
+      { name: 'Все файлы', extensions: ['*'] },
+    ],
+  });
   if (isDesktop && settings.recoveryRoot) {
     // Своя (например, сетевая) папка; если недоступна — остаёмся в профиле.
     await recovery.setRoot(settings.recoveryRoot).catch(() =>
@@ -204,6 +216,10 @@ export async function openPath(path: string): Promise<void> {
   }
   try {
     const info = await inspectFile(path);
+    if (info.kind === 'ods' || info.kind === 'xls-or-doc' || info.kind === 'csv') {
+      await openConverted(path, info.name, info.kind);
+      return;
+    }
     if (info.kind !== 'xlsx' && info.kind !== 'xlsm') {
       const what = KIND_NAMES[info.kind] ?? 'файл неизвестного формата';
       host.toast(`«${info.name}» — это ${what}, а не книга Excel. ENS-Table открывает .xlsx и .xlsm` +
@@ -227,6 +243,66 @@ export async function openPath(path: string): Promise<void> {
   } catch (e) {
     host.toast(String(e));
   }
+}
+
+/** `.xls`, `.ods`, `.csv` открываются как новая книга: исходный файл не перезаписывается,
+ *  при сохранении будет создан .xlsx (оформление старых форматов не переносится — см. предупреждение). */
+async function openConverted(path: string, name: string, kind: string): Promise<void> {
+  const bytes = await readFile(path);
+  const title = name.replace(/\.[^.]+$/, '');
+  let model: Model;
+  try {
+    model = kind === 'csv' ? openCsv(bytes, title, localeId()) : openOtherFormat(bytes, title, localeId());
+  } catch (e) {
+    host.toast(kind === 'xls-or-doc'
+      ? `«${name}» не похож на книгу Excel 97–2003: возможно, это документ Word (.doc).`
+      : `Не удалось открыть «${name}»: ${String(e)}`);
+    return;
+  }
+  const doc = host.doc();
+  if (isDesktop) await recovery.forget(doc.id).catch(() => {});
+  host.setModel(model, { id: newId(), path: '', title, modifiedMs: 0, dirty: false });
+  await track();
+  const lost = lostOf(model);
+  host.toast(`«${name}» открыта как новая книга: при сохранении будет создан файл .xlsx, исходный файл не изменится.` +
+    (lost.length ? ` Не переносится: ${lost.join('; ')}.` : ''));
+}
+
+/** Текущий лист в CSV: только значения, как их видно (Excel и Р7 сохраняют так же). */
+async function exportCsv(path: string): Promise<boolean> {
+  const m = host.model();
+  const act = await choose('Сохранить лист в CSV?',
+    'В CSV сохраняются только значения текущего листа, без формул, оформления и других листов. ' +
+    'Книга останется открытой как есть — сохраните её и в .xlsx, чтобы ничего не потерять.',
+    [['csv', 'Сохранить CSV'], ['cancel', 'Отмена']]);
+  if (act !== 'csv' || !m.sheetToCsv) return false;
+  try {
+    await saveFile(path, m.sheetToCsv(host.currentSheet?.() ?? 0), 0, true);
+    host.toast(`Лист сохранён в «${baseName(path)}».`);
+    return true;
+  } catch (e) {
+    host.toast(String(e));
+    return false;
+  }
+}
+
+/** «Файл → Сохранить лист в CSV». */
+export async function saveSheetCsv(): Promise<void> {
+  const m = host.model(), doc = host.doc();
+  if (!m.sheetToCsv) return;
+  if (isDesktop) {
+    const picked = await pickSave(`${doc.title}.csv`);
+    if (picked) await exportCsv(/\.csv$/i.test(picked) ? picked : `${picked}.csv`);
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([new Uint8Array(m.sheetToCsv(host.currentSheet?.() ?? 0))], { type: 'text/csv' }));
+  a.download = `${doc.title}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000); // имя файла теряется, если освободить сразу
+  host.toast('В CSV сохранены только значения текущего листа.');
 }
 
 // --- Связи с другими книгами ---
@@ -329,7 +405,9 @@ export async function saveAs(): Promise<boolean> {
   const ext = macros ? '.xlsm' : '.xlsx';
   const picked = await pickSave(`${doc.title.replace(/ \(восстановлено\)$/, '')}${ext}`);
   if (!picked) return false;
-  let path = /\.xls[xm]$/i.test(picked) ? picked : `${picked}${ext}`;
+  if (/\.csv$/i.test(picked)) return exportCsv(picked);
+  // в старые форматы ENS-Table не пишет: .xls и .ods → .xlsx
+  let path = /\.xls[xm]$/i.test(picked) ? picked : `${picked.replace(/\.(xls|ods)$/i, '')}${ext}`;
   if (macros && /\.xlsx$/i.test(path)) {
     const act = await choose('В книге есть макросы',
       'В формате .xlsx макросы не сохраняются. Сохранить книгу как .xlsm, чтобы они остались?',

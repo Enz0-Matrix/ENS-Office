@@ -286,6 +286,8 @@ export interface Model {
   hasMacros?(): boolean;
   /** Что было в открытом файле и не будет сохранено (по-русски). */
   lostFeatures?(): string[];
+  /** Лист в CSV (значения, как видны; UTF-8 с BOM). */
+  sheetToCsv?(sheet: number): Uint8Array;
   /** Книги-источники внешних ссылок: [{ file: «Цены.xlsx», target: путь как записан }]. */
   externalBooks?(): { file: string; target: string }[];
   /** Обновить значения ссылок на книгу `file` из байтов её xlsx; вернуть листы, которых в ней нет. */
@@ -308,6 +310,8 @@ import init, { Model as EngineModel } from './engine-pkg/engine.js';
 interface EngineStatic {
   new (name: string, locale: string, timezone: string, language: string): Model;
   fromXlsx(bytes: Uint8Array, name: string, locale: string, timezone: string, language: string): Model;
+  fromOtherFormat?(bytes: Uint8Array, name: string, locale: string, timezone: string, language: string): Model;
+  fromCsv?(bytes: Uint8Array, name: string, locale: string, timezone: string, language: string): Model;
   fromBytes(bytes: Uint8Array, language: string): Model;
 }
 
@@ -361,6 +365,25 @@ export function fromBytes(bytes: Uint8Array): Model {
 
 export function openXlsx(bytes: Uint8Array, name: string, locale: string): Model {
   return Engine.fromXlsx(bytes, name, locale, TZ, LANGUAGE);
+}
+
+/** `.xls` (Excel 97–2003) или `.ods`: листы, значения, формулы, даты; оформление не переносится. */
+export function openOtherFormat(bytes: Uint8Array, name: string, locale: string): Model {
+  if (!Engine.fromOtherFormat) throw new Error('Движок не умеет открывать этот формат: обновите программу.');
+  return Engine.fromOtherFormat(bytes, name, locale, TZ, LANGUAGE);
+}
+
+/** `.csv`: UTF-8 или Windows-1251, разделитель `;`, `,` или табуляция; значения — как при вводе. */
+export function openCsv(bytes: Uint8Array, name: string, locale: string): Model {
+  if (!Engine.fromCsv) throw new Error('Движок не умеет открывать CSV: обновите программу.');
+  return Engine.fromCsv(bytes, name, locale, TZ, LANGUAGE);
+}
+
+/** Какой файл (по расширению): книга xlsx, другой формат таблицы или CSV. */
+export function tableKind(fileName: string): 'xlsx' | 'other' | 'csv' {
+  if (/\.csv$/i.test(fileName) || /\.txt$/i.test(fileName)) return 'csv';
+  if (/\.(xls|ods)$/i.test(fileName)) return 'other';
+  return 'xlsx';
 }
 
 /** Номер столбца → буквы (1 → A, 27 → AA). */

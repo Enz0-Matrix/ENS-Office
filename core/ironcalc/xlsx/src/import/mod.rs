@@ -3,6 +3,8 @@ mod metadata;
 pub(crate) mod shared_strings;
 mod drawings;
 mod external_links;
+mod other_formats;
+pub use other_formats::{load_from_csv_bytes, load_from_other_bytes};
 mod sheet_data;
 mod styles;
 mod tables;
@@ -193,6 +195,15 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         .map(|b| ExternalBook { target: b.target.clone(), file: b.file.clone() })
         .collect();
     let ens_code_name = load_workbook_code_name(&mut archive);
+    // ENS-Office: система дат 1904 (Excel для Mac) → обычная система 1900.
+    if load_date1904(&mut archive) {
+        convert_date1904(&mut worksheets, &styles);
+        ens_lost_features.push(
+            "система дат 1904 (Excel для Mac): даты пересчитаны в обычную систему, \
+             проверьте числа без формата даты, которые формулы используют как даты"
+                .to_string(),
+        );
+    }
     let (ens_structure_locked, ens_structure_attrs) = load_structure_locked(&mut archive);
     let mut views = HashMap::new();
     views.insert(
@@ -395,4 +406,52 @@ pub fn load_from_icalc<'a>(file_name: &str, language_id: &'a str) -> Result<Mode
     let workbook: Workbook = bitcode::decode(&contents)
         .map_err(|e| XlsxError::IO(format!("Failed to decode file: {e}")))?;
     Model::from_workbook(workbook, language_id).map_err(XlsxError::Workbook)
+}
+
+/// ENS-Office: `<workbookPr date1904>` — книга в системе дат 1904 (Excel для Mac).
+fn load_date1904<R: Read + std::io::Seek>(archive: &mut zip::read::ZipArchive<R>) -> bool {
+    let mut text = String::new();
+    let read = archive.by_name("xl/workbook.xml").map(|mut f| f.read_to_string(&mut text));
+    if !matches!(read, Ok(Ok(_))) {
+        return false;
+    }
+    let Ok(root) = XmlNode::parse(text.as_bytes()) else { return false };
+    let on = root
+        .children()
+        .find(|n| n.has_tag_name("workbookPr"))
+        .and_then(|n| n.attribute("date1904"))
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    on
+}
+
+/// ENS-Office: книга в системе дат 1904 переводится в систему 1900: числа с форматом даты
+/// сдвигаются на 1462 дня, в ячейках остаются те же даты, функции дат работают как обычно.
+/// Числа без формата даты не трогаются. Возвращает, сколько ячеек сдвинуто.
+fn convert_date1904(worksheets: &mut [ironcalc_base::types::Worksheet], styles: &ironcalc_base::types::Styles) -> usize {
+    use ironcalc_base::types::Cell;
+    use ironcalc_base::formatter::dates::{shows_calendar_date, DATE1904_OFFSET};
+    let is_date: Vec<bool> = styles
+        .cell_xfs
+        .iter()
+        .map(|xf| shows_calendar_date(&ironcalc_base::number_format::get_num_fmt(xf.num_fmt_id, &styles.num_fmts)))
+        .collect();
+    let mut count = 0;
+    for ws in worksheets.iter_mut() {
+        if ironcalc_base::external::is_external_sheet_name(&ws.name) {
+            continue;
+        }
+        let cells: Vec<(i32, i32)> = ws
+            .sheet_data
+            .cells()
+            .filter(|(_, _, c)| matches!(c.as_ref(), Cell::NumberCell { s, .. } if is_date.get(*s as usize).copied().unwrap_or(false)))
+            .map(|(r, c, _)| (r, c))
+            .collect();
+        for (r, c) in cells {
+            if let Some(Cell::NumberCell { v, .. }) = ws.sheet_data.cell_mut(r, c) {
+                *v += DATE1904_OFFSET;
+                count += 1;
+            }
+        }
+    }
+    count
 }
