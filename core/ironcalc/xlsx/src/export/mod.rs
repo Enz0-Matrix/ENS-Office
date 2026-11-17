@@ -9,6 +9,7 @@ mod escape;
 mod shared_strings;
 mod styles;
 mod styles_util;
+mod tables;
 mod theme;
 mod workbook;
 mod workbook_xml_rels;
@@ -76,6 +77,16 @@ fn get_content_types_xml(workbook: &Workbook) -> String {
                 r#"<Override PartName="/xl/comments{}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>"#,
                 i + 1
             ));
+        }
+    }
+    // ENS-Office: «умные» таблицы — нумерация та же, что при записи частей.
+    let mut table_no = 1;
+    for w in &workbook.worksheets {
+        for _ in tables::sheet_tables(workbook, &w.name) {
+            content.push(format!(
+                r#"<Override PartName="/xl/tables/table{table_no}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>"#
+            ));
+            table_no += 1;
         }
     }
     content.push(
@@ -186,10 +197,14 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
     zip.add_directory("xl/worksheets", options)?;
     // sheet rels parts (one per sheet with external hyperlinks)
     let mut has_worksheet_rels = false;
+    let mut table_counter = 1;
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let comments_id = (!worksheet.comments.is_empty()).then_some(sheet_index + 1);
         let drawing_id = (!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty() || !worksheet.ens_shapes.is_empty()).then_some(sheet_index + 1);
-        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id, drawing_id) {
+        let table_count = tables::sheet_tables(workbook, &worksheet.name).len();
+        let table_ids: Vec<usize> = (table_counter..table_counter + table_count).collect();
+        table_counter += table_count;
+        if let Some(rels_xml) = worksheets::get_worksheet_xml_rels(worksheet, comments_id, drawing_id, &table_ids) {
             if !has_worksheet_rels {
                 zip.add_directory("xl/worksheets/_rels", options)?;
                 has_worksheet_rels = true;
@@ -260,6 +275,26 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
         }
         media_count += images.len();
     }
+    // ENS-Office: «умные» таблицы.
+    let mut table_id = 1;
+    let mut sheet_table_parts: Vec<String> = Vec::with_capacity(workbook.worksheets.len());
+    let mut has_tables_dir = false;
+    for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
+        let list = tables::sheet_tables(workbook, &worksheet.name);
+        let first_rel = worksheets::rels_before_tables(worksheet) + 1;
+        sheet_table_parts.push(tables::table_parts_xml(list.len(), first_rel));
+        for table in list {
+            if !has_tables_dir {
+                zip.add_directory("xl/tables", options)?;
+                has_tables_dir = true;
+            }
+            // sheet_tables оставляет только целые таблицы, так что XML есть всегда
+            let xml = tables::get_table_xml(model, sheet_index as u32, table, table_id).unwrap_or_default();
+            zip.start_file(format!("xl/tables/table{table_id}.xml"), options)?;
+            zip.write_all(xml.as_bytes())?;
+            table_id += 1;
+        }
+    }
     for (sheet_index, worksheet) in workbook.worksheets.iter().enumerate() {
         let id = sheet_index + 1;
         zip.start_file(format!("xl/worksheets/sheet{id}.xml"), options)?;
@@ -294,16 +329,15 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
                 }
             })
             .unwrap_or_default();
-        zip.write_all(
-            worksheets::get_worksheet_xml(
-                &auto_filter,
-                worksheet,
-                &model.parsed_formulas[sheet_index],
-                sheet_dimension_str,
-                is_sheet_selected,
-            )
-            .as_bytes(),
-        )?;
+        let sheet_xml = worksheets::get_worksheet_xml(
+            &auto_filter,
+            worksheet,
+            &model.parsed_formulas[sheet_index],
+            sheet_dimension_str,
+            is_sheet_selected,
+        );
+        let sheet_xml = tables::insert_table_parts(sheet_xml, &sheet_table_parts[sheet_index]);
+        zip.write_all(sheet_xml.as_bytes())?;
     }
 
     let writer = zip.finish()?;

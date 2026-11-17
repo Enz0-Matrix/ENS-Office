@@ -204,7 +204,14 @@ pub(crate) fn get_comments_vml(worksheet: &Worksheet) -> String {
 
 /// The rels part of the worksheet (`xl/worksheets/_rels/sheetN.xml.rels`) holding one
 /// relationship per external link, or `None` if the worksheet has no external links.
-pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>, drawing_id: Option<usize>) -> Option<String> {
+/// ENS-Office: сколько связей листа идёт до таблиц (ссылки, примечания, рисунки).
+pub(crate) fn rels_before_tables(worksheet: &Worksheet) -> usize {
+    external_link_count(worksheet)
+        + if worksheet.comments.is_empty() { 0 } else { 2 }
+        + usize::from(!worksheet.ens_images.is_empty() || !worksheet.ens_charts.is_empty() || !worksheet.ens_shapes.is_empty())
+}
+
+pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<usize>, drawing_id: Option<usize>, table_ids: &[usize]) -> Option<String> {
     let mut relationships_str: Vec<String> = vec![];
     let mut rel_id = 0;
     for (_, link) in get_sorted_links(worksheet) {
@@ -228,6 +235,13 @@ pub(crate) fn get_worksheet_xml_rels(worksheet: &Worksheet, comments_id: Option<
         let n = rel_id + if comments_id.is_some() { 2 } else { 0 } + 1;
         relationships_str.push(format!(
             "<Relationship Id=\"rId{n}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing{id}.xml\"/>"
+        ));
+    }
+    let first = rels_before_tables(worksheet) + 1;
+    for (i, id) in table_ids.iter().enumerate() {
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/table\" Target=\"../tables/table{id}.xml\"/>",
+            first + i
         ));
     }
     if relationships_str.is_empty() {
