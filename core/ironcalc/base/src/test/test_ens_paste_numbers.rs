@@ -62,3 +62,22 @@ fn ens_paste_text_away_from_selected_cell() {
     assert_eq!(m.get_formatted_cell_value(0, 1, 2).unwrap(), "42"); // и пересчёт прошёл
     assert_eq!(m.get_selected_cell(), (0, 5, 2));
 }
+
+/// Скрыть несколько листов одним шагом и отменить его.
+#[test]
+fn ens_hide_many_sheets_undo() {
+    let mut m = UserModel::new_empty("Книга", "ru", "UTC", "ru").unwrap();
+    for _ in 0..3 {
+        m.new_sheet().unwrap();
+    }
+    let mark = m.undo_mark();
+    m.hide_sheet(1).unwrap();
+    m.hide_sheet(2).unwrap();
+    m.merge_undo_since(mark);
+    let states = |m: &UserModel| m.get_worksheets_properties().iter().map(|p| p.state.clone()).collect::<Vec<_>>();
+    assert_eq!(states(&m), ["visible", "hidden", "hidden", "visible"]);
+    m.undo().unwrap();
+    assert_eq!(states(&m), ["visible", "visible", "visible", "visible"]);
+    m.redo().unwrap();
+    assert_eq!(states(&m), ["visible", "hidden", "hidden", "visible"]);
+}
