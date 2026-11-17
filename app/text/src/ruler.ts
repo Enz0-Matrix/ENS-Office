@@ -58,7 +58,7 @@ let liveIndent: ParaInfo | null = null
 const PX_CM = 96 / 2.54;
 const PX_PT = 4 / 3;
 /** Толщина линеек, px. */
-const RH = 30;
+const RH = 22;
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string): HTMLElementTagNameMap[K] => { const e = document.createElement(tag); e.className = cls; return e; };
 
 let H: RulerHost;
@@ -157,20 +157,24 @@ function ticks(len: number, zero: number, vertical: boolean): string {
   const cm = PX_CM * z;
   const parts: string[] = [];
   const low = Math.floor(-zero / cm) - 1, high = Math.ceil((len - zero) / cm) + 1;
+  // Деления на целых пикселях (+0,5): линия в 1 px остаётся чёткой, а не размазывается на два.
+  const px = (v: number) => Math.round(v) + 0.5;
   const put = (pos: number, size: number) => {
     if (pos < 0 || pos > len) return;
-    const [x1, y1, x2, y2] = vertical ? [RH - 2 - size, pos, RH - 2, pos] : [pos, RH - 2 - size, pos, RH - 2];
+    const q = px(pos);
+    const [x1, y1, x2, y2] = vertical ? [RH - 1 - size, q, RH - 1, q] : [q, RH - 1 - size, q, RH - 1];
     parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`);
   };
   for (let k = low; k <= high; k++) {
     const p = zero + k * cm;
-    put(p, 8);
     if (k !== 0 && p >= 0 && p <= len) {
+      // Цифра сантиметра вместо длинного деления, как в Word.
       const n = Math.abs(k);
-      parts.push(vertical ? `<text x="5" y="${p + 3}" font-size="9">${n}</text>` : `<text x="${p + 2}" y="${RH - 12}" font-size="9">${n}</text>`);
-    }
-    put(p + cm / 2, 5);
-    if (cm >= 30) for (const q of [1, 2, 3, 4, 6, 7, 8, 9]) put(p + (cm * q) / 10, 2);
+      parts.push(vertical ? `<text x="${RH / 2}" y="${p + 3}" text-anchor="middle" font-size="8.5" stroke="none">${n}</text>` : `<text x="${p}" y="${RH - 8}" text-anchor="middle" font-size="8.5" stroke="none">${n}</text>`);
+    } else put(p, 6);
+    put(p + cm / 2, 4);
+    // Миллиметры — при масштабе от ~65 %.
+    if (cm >= 24) for (const q of [1, 2, 3, 4, 6, 7, 8, 9]) put(p + (cm * q) / 10, 2);
   }
   return parts.join('');
 }
@@ -193,7 +197,7 @@ function doUpdate(): void {
   hsvg.setAttribute('width', String(W));
   hsvg.setAttribute('height', String(hrr.height));
   hsvg.innerHTML = `<rect x="0" y="0" width="${ml}" height="${RH}" fill="#c5c9cf"/><rect x="${W - mr}" y="0" width="${mr}" height="${RH}" fill="#c5c9cf"/>` +
-    `<rect x="${ml}" y="0" width="${Math.max(0, W - ml - mr)}" height="${RH}" fill="#fff"/><g stroke="#555" fill="#555" stroke-width="1">${ticks(W, ml, false)}</g>`;
+    `<rect x="${ml}" y="0" width="${Math.max(0, W - ml - mr)}" height="${RH}" fill="#fff"/><g stroke="#666" fill="#444" stroke-width="1" shape-rendering="crispEdges" font-family="Segoe UI, Carlito, Arimo, sans-serif">${ticks(W, ml, false)}</g>`;
   mLeft.style.left = `${ml}px`;
   mRight.style.left = `${W - mr}px`;
   // Поля хранятся в пунктах текущего раздела, экранная шкала — в сантиметрах.
@@ -211,7 +215,7 @@ function doUpdate(): void {
   vsvg.setAttribute('width', String(vrr.width));
   vsvg.setAttribute('height', String(Hh));
   vsvg.innerHTML = `<rect x="0" y="0" width="${RH}" height="${mt}" fill="#c5c9cf"/><rect x="0" y="${Hh - mb}" width="${RH}" height="${mb}" fill="#c5c9cf"/>` +
-    `<rect x="0" y="${mt}" width="${RH}" height="${Math.max(0, Hh - mt - mb)}" fill="#fff"/><g stroke="#555" fill="#555" stroke-width="1">${ticks(Hh, mt, true)}</g>`;
+    `<rect x="0" y="${mt}" width="${RH}" height="${Math.max(0, Hh - mt - mb)}" fill="#fff"/><g stroke="#666" fill="#444" stroke-width="1" shape-rendering="crispEdges" font-family="Segoe UI, Carlito, Arimo, sans-serif">${ticks(Hh, mt, true)}</g>`;
   mTop.style.top = `${mt}px`;
   mBottom.style.top = `${Hh - mb}px`;
 

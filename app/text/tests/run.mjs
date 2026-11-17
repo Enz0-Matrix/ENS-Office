@@ -2550,6 +2550,21 @@ await test('шаблон «Письмо на бланке»: поля, шапк�
   ok(r.docx[0], 'DOCX туда и обратно: блоки на месте');
   await p.context().close();
 });
+await test('линейки тоньше и точнее: 22 px, деления на целых пикселях, миллиметры видны', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => {
+    const h = document.getElementById('hruler').getBoundingClientRect().height;
+    const lines = [...document.querySelectorAll('#hr-inner svg line')];
+    const xs = lines.map((l) => Number(l.getAttribute('x1')));
+    return { h: Math.round(h), n: lines.length, crisp: xs.every((x) => Math.abs((x % 1) - 0.5) < 1e-6), mm: lines.filter((l) => Number(l.getAttribute('y2')) - Number(l.getAttribute('y1')) === 2).length };
+  });
+  eq(r.h, 22, 'толщина горизонтальной линейки');
+  ok(r.crisp, 'все деления на x+0,5 — линии в 1 px чёткие');
+  ok(r.mm > 100, `миллиметровые деления: ${r.mm}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
