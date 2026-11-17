@@ -25,6 +25,17 @@ import i_image_24 from '@fluentui/svg-icons/icons/image_24_regular.svg?raw';
 import i_chart_bar_24 from '@fluentui/svg-icons/icons/data_bar_vertical_24_regular.svg?raw';
 import i_chart_line_24 from '@fluentui/svg-icons/icons/data_line_24_regular.svg?raw';
 import i_chart_pie_24 from '@fluentui/svg-icons/icons/data_pie_24_regular.svg?raw';
+import i_chart_edit_24 from '@fluentui/svg-icons/icons/data_bar_vertical_edit_24_regular.svg?raw';
+import i_links_sync_24 from '@fluentui/svg-icons/icons/arrow_sync_24_regular.svg?raw';
+import i_page_break_remove_24 from '@fluentui/svg-icons/icons/document_dismiss_24_regular.svg?raw';
+import i_page_break_reset_24 from '@fluentui/svg-icons/icons/arrow_reset_24_regular.svg?raw';
+import i_lock_book_24 from '@fluentui/svg-icons/icons/document_lock_24_regular.svg?raw';
+import i_lock_cells_24 from '@fluentui/svg-icons/icons/table_lock_24_regular.svg?raw';
+import i_sort_custom_24 from '@fluentui/svg-icons/icons/arrow_sort_down_lines_24_regular.svg?raw';
+import i_replace_24 from '@fluentui/svg-icons/icons/arrow_swap_24_regular.svg?raw';
+import i_group_summary_24 from '@fluentui/svg-icons/icons/add_square_24_regular.svg?raw';
+import i_calendar_check_24 from '@fluentui/svg-icons/icons/calendar_checkmark_24_regular.svg?raw';
+import i_table_search_24 from '@fluentui/svg-icons/icons/table_search_24_regular.svg?raw';
 import i_shape_rect_24 from '@fluentui/svg-icons/icons/rectangle_landscape_24_regular.svg?raw';
 import i_shape_ellipse_24 from '@fluentui/svg-icons/icons/circle_24_regular.svg?raw';
 import i_shape_line_24 from '@fluentui/svg-icons/icons/line_24_regular.svg?raw';
@@ -121,6 +132,19 @@ export const ICONS: Record<string, string> = {
   'arrange_back_24': i_arrange_back_24,
   'rotate_cw_24': i_rotate_cw_24,
   'shape_rect_24': i_shape_rect_24,
+  'chart_edit_24': i_chart_edit_24,
+  'links_sync_24': i_links_sync_24,
+  'page_break_remove_24': i_page_break_remove_24,
+  'page_break_reset_24': i_page_break_reset_24,
+  'lock_book_24': i_lock_book_24,
+  'lock_cells_24': i_lock_cells_24,
+  'sort_custom_24': i_sort_custom_24,
+  'replace_24': i_replace_24,
+  'group_summary_24': i_group_summary_24,
+  'calendar_check_24': i_calendar_check_24,
+  'table_search_24': i_table_search_24,
+  // Скруглённый прямоугольник: у Fluent нет, рисуем сами в том же стиле.
+  'shape_round_24': '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.75" y="5.75" width="16.5" height="12.5" rx="4.5" style="fill:none"/></svg>',
   'shape_ellipse_24': i_shape_ellipse_24,
   'shape_line_24': i_shape_line_24,
   'shape_arrow_24': i_shape_arrow_24,

@@ -1,0 +1,22 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Лента ENS-Table как в Excel: одна высота на всех вкладках (таблица не прыгает при переключении).
+   Мелкие кнопки встают столбиками по три, крупные занимают столбик целиком; что не влезло по ширине —
+   прокручивается вправо-влево (колесо мыши тоже листает ленту, см. main.ts). Только для ENS-Table:
+   общий styles.css, который берёт ENS-Text, не меняется. */
+#ribbon.ribbon { height: 112px; min-height: 112px; box-sizing: border-box; overflow-x: auto; overflow-y: hidden;
+  align-items: stretch; scrollbar-width: thin; }
+#ribbon .group { height: 100%; box-sizing: border-box; flex: none; }
+#ribbon .group .items, #ribbon .group .items.row { display: grid; grid-auto-flow: column; grid-template-rows: repeat(3, 28px);
+  align-content: start; justify-content: start; align-items: center; height: 88px; max-width: none; gap: 2px 3px; }
+#ribbon .group .items > .btn.large { grid-row: 1 / -1; align-self: stretch; height: auto; }
+/* «Правила отмены» — столбик справа от кнопок «Отменить» и «Вернуть». */
+#ribbon .group .items > .undo-scope { grid-row: 1 / -1; align-self: start; }
+/* Группы из списков и мелких кнопок («Шрифт», «Число»): строками — списки сверху, кнопки ниже. */
+#ribbon .group .items:has(> .ribbon-select):not(:has(> .btn.large)) { display: flex; flex-direction: row; flex-wrap: wrap;
+  align-content: flex-start; align-items: center; max-width: 220px; }
+/* «Число»: список форматов во всю ширину группы, кнопки строкой ниже. */
+#ribbon .group .items > .ribbon-select[data-command="format.number"] { flex: 1 0 100%; }
+#ribbon .btn.medium { height: 28px; }
+#ribbon .split.medium .split-arrow { height: 28px; }
+#ribbon .ribbon-select { margin: 0; height: 26px; }
+#ribbon .group-name { margin-top: auto; white-space: nowrap; }

@@ -1,6 +1,7 @@
 import './styles.css';
 import './themes.css';
 import './themes2.css';
+import './ribbon-fixed.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
@@ -8,7 +9,7 @@ import { newShape, SHAPE_NAMES } from './shapes';
 import { type BorderType, type CellStyle, type RichRun, columnName, isExternalSheet, openCsv, openOtherFormat, realSheetCount, tableKind, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
-import { boltApply, boltCell } from './bolt';
+import { boltApply, boltCell, setOnBoltLay } from './bolt';
 import { ensMessage, isEnsEgg } from './eggs';
 import { diffBooks, showDiff, showLog, type ChangesHost } from './changelog';
 import { DEFAULT_PRINT, fromSaved, printAreaOf, printSheet, printTitles, renderPreview, toSaved } from './print';
@@ -251,6 +252,7 @@ function commitEdit(dRow: number, dCol: number): void {
   const value = activeValue();
   if (isEnsEgg(value)) { cancelEdit(); showToast(ensMessage()); return; }
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
+  const mark = model.undoMark();
   const notice = value.startsWith('=') ? null : model.getValidationNotice(s.sheet, s.row, s.column, value);
   if (notice && !confirm(`${notice.title ? `${notice.title}\n\n` : ''}${notice.message}\n\n${notice.style === 1 ? 'Продолжить?' : 'ОК — оставить значение, Отмена — править.'}`)) {
     (editor.classList.contains('away') ? formula : editor).focus();
@@ -279,6 +281,7 @@ function commitEdit(dRow: number, dCol: number): void {
     if (!value.startsWith('=') && value.includes('\n') && !model.getCellStyle(s.sheet, s.row, s.column).style.alignment?.wrap_text) {
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
     }
+    widenForNumber(s.sheet, s.row, s.column, value, mark);
   } catch (err) {
     const text = String((err as Error)?.message ?? err).replace(/^Error: /, '');
     showToast(/защищ/.test(text) ? 'Доступ к ячейке запрещён' : `Не удалось записать значение: ${text}`);
@@ -305,6 +308,24 @@ function commitEdit(dRow: number, dCol: number): void {
   grid.render();
   grid.move(dRow, dCol, false);
   focusGrid();
+}
+
+/** Как Excel: введённое число в «Общем» формате не влезло в столбец стандартной ширины — столбец
+ *  расширяется, чтобы число было видно целиком, а не «1,0101E+12». Одна отмена вместе с вводом. */
+function widenForNumber(sheet: number, row: number, column: number, value: string, mark: number): void {
+  if (value.startsWith('=') || model.getCellType(sheet, row, column) !== 1) return;
+  if (model.getCellStyle(sheet, row, column).style.num_fmt.toLowerCase() !== 'general') return;
+  if (Math.abs(model.getColumnWidth(sheet, column) - 90) > 0.5) return; // ширину задавали вручную
+  const shown = model.getFormattedCellValue(sheet, row, column);
+  if (!/E[+-]\d+$/.test(shown)) return;
+  const full = model.formatCellValueAs(sheet, row, column, '0.##############').replace(/[.,]$/, '');
+  const f = model.getCellStyle(sheet, row, column).style.font;
+  measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${Math.round((f.sz ?? 11) * 1.33)}px ${fontStack(f.name)}`;
+  const px = Math.ceil(measure.measureText(full).width + 12);
+  if (px <= 90 || px > 400) return;
+  model.setColumnsWidth(sheet, column, column, px);
+  model.mergeUndoSince(mark);
+  grid.invalidateLayout();
 }
 
 /** Текст ввода: при работе с другим листом он в строке формул. */
@@ -851,6 +872,14 @@ zoomVal.addEventListener('click', () => grid.setZoom(1));
 // Браузер (Chrome, «Муром») масштабирует всю страницу по Ctrl + колесо и Ctrl +/−: запрещаем,
 // колесо над листом меняет только масштаб листа (grid.ts).
 document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+// Лента шире окна: колесо мыши листает её вправо-влево (как в Office), вертикально лента не прокручивается.
+{
+  const rb = document.getElementById('ribbon');
+  rb?.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || rb.scrollWidth <= rb.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    rb.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
+}
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && ['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract', 'Digit0', 'Numpad0'].includes(e.code) && !e.altKey) {
     // Ctrl+0 и прочие браузерные сочетания масштаба страницы не нужны; остальное обрабатывает приложение.
@@ -3926,6 +3955,26 @@ function boltOnSelect(): void {
 }
 
 boltApply();
+// По настройке: уложенный «У. Болт» защищает лист (без пароля), поднятый — снимает защиту,
+// которую поставил сам. Защиту, поставленную человеком, он не трогает.
+let boltLocked: number | null = null;
+setOnBoltLay((down) => {
+  if (!settings.helperLock) return;
+  const sheet = grid.sheet;
+  try {
+    if (down && !model.isSheetProtected(sheet)) {
+      model.setSheetProtected(sheet, true);
+      boltLocked = sheet;
+      showToast('«У. Болт» лёг на лист: лист защищён от правок. Поднимите его двойным щелчком, чтобы снять защиту.');
+    } else if (!down && boltLocked !== null) {
+      if (model.isSheetProtected(boltLocked)) model.setSheetProtected(boltLocked, false);
+      showToast('«У. Болт» встал: защита листа снята.');
+      boltLocked = null;
+    }
+  } catch (e) { showToast(String(e)); }
+  refreshRibbon();
+  grid.render();
+});
 grid.onSelect = () => { boltOnSelect(); showValidationPrompt(); updateFormulaBar(); updateStatus(); refreshRibbon(); syncNumberFormat(); if (!editing) placeEditor(); };
 grid.scroller.addEventListener('scroll', () => { if (!editing) placeEditor(); });
 grid.scroller.addEventListener('mouseup', () => { if (!editing) focusGrid(); });
