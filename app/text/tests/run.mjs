@@ -2650,6 +2650,41 @@ await test('правки: значок ¶ на ленте виден; ссылк
   eq(await a.evaluate((x) => getComputedStyle(x).cursor), 'text', 'без Ctrl — обычный курсор');
   await p.context().close();
 });
+await test('правки линейки: граница поля берётся по всей высоте, отступы уходят в поле до края листа, подсказки', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Абзац для отступа');
+  await p.waitForSelector('#hr-inner .ri-left:not([hidden])');
+  // Граница левого поля: хватаем ниже метки первой строки и выше выступа — раньше там было «мимо».
+  const m = await (await p.$('#hr-inner .rm[aria-label="Левое поле"]')).boundingBox();
+  ok(m.height >= 20, `граница поля по всей высоте линейки: ${m.height}`);
+  const left0 = await p.evaluate(() => window.ens.getMeta().page.left);
+  await p.mouse.move(m.x + m.width / 2, m.y + 9);
+  await p.mouse.down();
+  await p.mouse.move(m.x + m.width / 2 + 30, m.y + 9, { steps: 4 });
+  await p.mouse.up();
+  ok((await p.evaluate(() => window.ens.getMeta().page.left)) - left0 > 15, 'левое поле сдвинулось');
+  // Отступ слева уводим в серую часть (в поле).
+  const li = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(li.x + li.width / 2, li.y + li.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(li.x + li.width / 2 - 40, li.y + li.height / 2, { steps: 4 });
+  await p.mouse.up();
+  const ind = await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.indent);
+  ok(ind < -20, `отступ слева отрицательный (в поле): ${ind}`);
+  // Не дальше края листа.
+  const li2 = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(li2.x + li2.width / 2, li2.y + li2.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(li2.x - 600, li2.y + li2.height / 2, { steps: 4 });
+  await p.mouse.up();
+  const r = await p.evaluate(() => ({ ind: window.ens.view.state.doc.firstChild.attrs.indent, left: window.ens.getMeta().page.left }));
+  ok(Math.abs(r.ind + r.left) < 1, `отступ упёрся в край листа: ${r.ind} при поле ${r.left}`);
+  const hint = await p.$eval('#hr-inner .rm[aria-label="Левое поле"]', (e) => e.title);
+  ok(/тяните/.test(hint), `подсказка у границы поля: ${hint}`);
+  ok(/поле/.test(await p.$eval('#hr-inner .ri-left', (e) => e.title)), 'подсказка у маркера отступа');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

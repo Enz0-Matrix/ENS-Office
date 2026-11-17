@@ -386,10 +386,15 @@ export function initRuler(host: RulerHost): void {
   vin.append(vsvg);
   mLeft = el('div', 'rm'); mRight = el('div', 'rm'); mTop = el('div', 'rm'); mBottom = el('div', 'rm');
   mLeft.title = 'Левое поле'; mRight.title = 'Правое поле'; mTop.title = 'Верхнее поле'; mBottom.title = 'Нижнее поле';
+  // Подсказки при наведении — что можно тянуть; aria-label остаётся коротким (по нему ищут и озвучивают).
+  const hint = (m: HTMLElement, text: string) => { m.dataset.hint = text; };
+  hint(mLeft, 'Левое поле — тяните границу серой и белой части (или стрелки ← →)');
+  hint(mRight, 'Правое поле — тяните границу серой и белой части');
+  hint(mTop, 'Верхнее поле — тяните границу'); hint(mBottom, 'Нижнее поле — тяните границу');
   hin.append(mLeft, mRight);
   vin.append(mTop, mBottom);
   iFirst = el('div', 'ri ri-first'); iHang = el('div', 'ri ri-hang'); iLeft = el('div', 'ri ri-left'); iRight = el('div', 'ri ri-right');
-  iFirst.title = 'Отступ первой строки'; iHang.title = 'Выступ (отступ остальных строк)'; iLeft.title = 'Отступ слева'; iRight.title = 'Отступ справа';
+  iFirst.title = 'Отступ первой строки — тяните; можно увести в поле'; iHang.title = 'Выступ (остальные строки) — тяните'; iLeft.title = 'Отступ слева (весь абзац) — тяните; можно увести в поле'; iRight.title = 'Отступ справа — тяните';
   hin.append(iFirst, iHang, iLeft, iRight);
 
   // Поля страницы: тянем границу серой и белой частей.
@@ -426,6 +431,7 @@ export function initRuler(host: RulerHost): void {
     handle.tabIndex = 0;
     handle.setAttribute('role', 'slider');
     handle.setAttribute('aria-label', handle.title);
+    handle.title = handle.dataset.hint ?? handle.title;
     handle.setAttribute('aria-valuemin', '0');
     handle.addEventListener('keydown', (e) => {
       if (H.locked() || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -455,10 +461,12 @@ export function initRuler(host: RulerHost): void {
     const calc = (dx: number): ParaInfo => {
       const d = dx / (PX_PT * z);
       const snap = (x: number) => Math.round(x * 2) / 2;
-      if (kind === 'first') return { L, F: snap(Math.max(-L, Math.min(textW - 20 - L, F + d))), R };
-      if (kind === 'hang') { const nl = snap(Math.max(0, Math.min(textW - 20, L + d))); return { L: nl, F: F - (nl - L), R }; }
-      if (kind === 'left') return { L: snap(Math.max(0, Math.min(textW - 20, L + d))), F, R };
-      return { L, F, R: snap(Math.max(0, Math.min(textW - 20 - L, R - d))) };
+      // Как в Word: отступы можно увести в поле (на серую часть), но не дальше края листа.
+      const minL = -page.left, minR = -page.right;
+      if (kind === 'first') return { L, F: snap(Math.max(minL - L, Math.min(textW - 20 - L, F + d))), R };
+      if (kind === 'hang') { const nl = snap(Math.max(minL, Math.min(textW - 20, L + d))); return { L: nl, F: Math.max(minL - nl, F - (nl - L)), R }; }
+      if (kind === 'left') return { L: snap(Math.max(minL - Math.min(0, F), Math.min(textW - 20, L + d))), F, R };
+      return { L, F, R: snap(Math.max(minR, Math.min(textW - 20 - L, R - d))) };
     };
     const v = H.view();
     const { from, to } = v.state.selection;
