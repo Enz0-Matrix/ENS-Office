@@ -25,6 +25,7 @@ import { FUNCTION_CATEGORIES } from './funclib';
 import { openSymbols } from './symbols';
 import { defineFromSelection, initNames, nameFormula, openNameManager } from './names';
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
+import { attachFontPicker } from './font-picker';
 import { FUNCTIONS } from './functions';
 import { localeId, refreshShared, saveSettings, settings } from './settings';
 import * as desk from './desktop';
@@ -3813,7 +3814,9 @@ window.addEventListener('keydown', (e) => {
 // --- Запуск ---
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showBackstage());
-onRibbonDrawn(syncBordersButton);
+// После каждой перерисовки ленты: кнопка границ и выбор шрифта как в ENS-Text
+// (каждый шрифт своим начертанием, образец «R Ф 5» — латиница, кириллица, цифра).
+onRibbonDrawn(() => { syncBordersButton(); attachFontPicker({ sample: 'R Ф 5', recentKey: 'ens-table.recentFonts' }); });
 setHiddenThemes(settings.hiddenThemes);
 const setTheme = () => applyTheme(settings.theme, grid, settings.themeMotion, settings.themeMotionForced);
 setCustomThemes(settings.customThemes);
