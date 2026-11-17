@@ -56,6 +56,8 @@ import { hideContextMenu, initContextMenu } from './contextmenu';
 import { tabsPlugin, tabShifts } from './tabs';
 import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
 import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
+import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
+import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -170,6 +172,7 @@ function afterSaved(key: string): void {
 
 function markOpened(key: string): void {
   if (!key) return;
+  rememberFile(key);
   const all = { ...settings.lastOpened, [key]: Date.now() };
   const keys = Object.keys(all).sort((a, b) => all[b] - all[a]).slice(0, 200);
   settings.lastOpened = Object.fromEntries(keys.map((k) => [k, all[k]]));
@@ -518,9 +521,12 @@ function afterChange(docChanged: boolean): void {
   }
 }
 
+const countWords = (text: string): number => (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu) ?? []).length;
+const wordCount = (): number => countWords(view.state.doc.textBetween(0, view.state.doc.content.size, '\n', ' '));
+
 function updateStats(): void {
   const text = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', ' ');
-  const words = (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu) ?? []).length;
+  const words = countWords(text);
   $('status-words').textContent = `Слов: ${words}  ·  Знаков: ${text.replace(/\n/g, '').length}`;
   updateSelStats();
 }
@@ -729,6 +735,14 @@ register(
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
   { id: 'file.history', label: 'История версий', run: () => showHistory() },
+  { id: 'file.menu', label: 'Файл: создать, открыть, сохранить, печать, параметры', keywords: ['файл', 'file', 'параметры', 'настройки', 'options'], keys: ['Alt+KeyF'], run: () => showFileMenu() },
+  { id: 'file.options', label: 'Параметры', keywords: ['настройки', 'параметры', 'имя', 'напоминание', 'типограф'], run: () => showFileMenu('options') },
+  {
+    id: 'file.close', label: 'Закрыть документ', keywords: ['закрыть', 'close'],
+    // Документ закрывается, окно остаётся с пустым документом (как «Закрыть» в Word). Файл на диске забывается,
+    // чтобы следующее «Сохранить» не записало пустой документ поверх него.
+    run: () => void guardUnsaved(() => { if (desktop.isDesktop) desktop.detach(); newDocument(); }),
+  },
   { id: 'file.print', label: 'Печать', keys: ['Ctrl+KeyP'], run: () => void printDocument() },
 );
 
@@ -1194,7 +1208,7 @@ const TABS: RibbonTab[] = [
   },
 ];
 
-const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => fileMenu(), TABS);
+const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showFileMenu(), TABS);
 
 function setSelect(cmd: string, value: string): void {
   const sel = document.querySelector<HTMLSelectElement>(`select[data-command="${cmd}"]`);
@@ -1792,33 +1806,6 @@ function askName(current: string): Promise<string | null> {
   });
 }
 
-function fileMenu(): void {
-  dialog((box, close) => {
-    const item = (label: string, id: string) => el('button', { textContent: label, onclick: () => { close(); run(id); } });
-    // «Закрыть» — в шапке, как в ENS-Table: та же иконка dismiss, чтобы меню не выглядело ловушкой:
-    // Esc работает, но не каждый о нём догадается.
-    const closeBtn = el('button', { class: 'menu-close', type: 'button', title: 'Закрыть меню (Esc)', onclick: close });
-    closeBtn.innerHTML = `${ICONS.dismiss_20 ?? ''}<span>Закрыть</span>`;
-    box.append(
-      el('div', { class: 'menu-head' }, el('h2', { textContent: 'Файл' }), closeBtn),
-      el('div', { class: 'menu-list' },
-        item('Создать', 'file.new'), item('Создать из шаблона…', 'file.templates'), item('Сохранить как мой шаблон…', 'file.saveTemplate'), item('Служебный документ…', 'file.wizard'), item('Журнал регистрации…', 'file.journal'), item('Открыть…', 'file.open'), item('Сохранить', 'file.save'), item('Сохранить как…', 'file.saveAs'), item('История версий…', 'ver.history'), item('Печать…', 'file.print'),
-        el('button', { textContent: 'О программе', onclick: () => { close(); about(); } })),
-    );
-  });
-}
-
-function about(): void {
-  dialog((box, close) => {
-    box.append(
-      el('h2', { textContent: `ENS-Text ${APP_VERSION}` }),
-      el('p', { textContent: 'Текстовый редактор ENS-Office. Работает без интернета. Формат файлов — .docx.' }),
-      el('p', { textContent: 'Версия 0.1 — первый этап: абзацы, заголовки, списки, таблицы, изображения, ссылки, страницы, печать. Колонтитулы, сноски и совместная работа — в планах.' }),
-      el('div', { class: 'dlg-actions' }, el('button', { class: 'primary', textContent: 'Закрыть', onclick: close })),
-    );
-  });
-}
-
 // ---------------------------------------------------------------- восстановление
 
 function scheduleRecovery(): void {
@@ -1924,6 +1911,20 @@ initImageTools({
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
 });
 initTableMove({ view: () => view, sheet: $('sheet'), scale: () => zoom, locked: () => !!hfSession });
+initFileMenu({
+  info: () => ({ title: docName, path: desktop.isDesktop ? desktop.currentPath() : '', dirty: isDirty(), words: wordCount(), pages: pageCount(view), versions: hist.versions.length }),
+  isDesktop: desktop.isDesktop,
+  openPath: (path) => void desktop.openPath(path),
+  create: (id) => {
+    if (id == null) { run('file.new'); return; }
+    const t = builtInTemplates().find((x) => x.id === id);
+    if (!t) return;
+    void guardUnsaved(() => { const b = t.build(); templateHost.create(b.doc, b.meta, b.name); });
+  },
+  liveQuotes: () => liveQuotesOn,
+  setLiveQuotes: (on) => { if (on !== liveQuotesOn) run('typo.live'); },
+  applySettings: () => { updateUi(); refreshRibbon(); },
+});
 initContextMenu({ view: () => view, sheet: $('sheet'), openLink: openHref, copyText: (t) => { void copyText(t).then(() => toast('Адрес ссылки скопирован')); } });
 initCommandSearch();
 applyPage();
