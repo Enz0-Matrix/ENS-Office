@@ -1,6 +1,7 @@
 import './styles.css';
 import './themes.css';
 import './themes2.css';
+import './ribbon-fixed.css';
 import { allCommands, handleKey, keyLabel, matchScore, register, run } from './commands';
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
@@ -850,6 +851,14 @@ zoomVal.addEventListener('click', () => grid.setZoom(1));
 // Браузер (Chrome, «Муром») масштабирует всю страницу по Ctrl + колесо и Ctrl +/−: запрещаем,
 // колесо над листом меняет только масштаб листа (grid.ts).
 document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+// Лента шире окна: колесо мыши листает её вправо-влево (как в Office), вертикально лента не прокручивается.
+{
+  const rb = document.getElementById('ribbon');
+  rb?.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || rb.scrollWidth <= rb.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    rb.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
+}
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && ['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract', 'Digit0', 'Numpad0'].includes(e.code) && !e.altKey) {
     // Ctrl+0 и прочие браузерные сочетания масштаба страницы не нужны; остальное обрабатывает приложение.
