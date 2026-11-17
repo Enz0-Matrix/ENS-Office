@@ -6,6 +6,7 @@ import numbers20 from '@fluentui/svg-icons/icons/text_number_list_ltr_20_regular
 import indentMore20 from '@fluentui/svg-icons/icons/text_indent_increase_20_regular.svg?raw';
 import indentLess20 from '@fluentui/svg-icons/icons/text_indent_decrease_20_regular.svg?raw';
 import table24 from '@fluentui/svg-icons/icons/table_24_regular.svg?raw';
+import docTable24 from '@fluentui/svg-icons/icons/document_table_24_regular.svg?raw';
 import table20 from '@fluentui/svg-icons/icons/table_20_regular.svg?raw';
 import image24 from '@fluentui/svg-icons/icons/image_24_regular.svg?raw';
 import link24 from '@fluentui/svg-icons/icons/link_24_regular.svg?raw';
@@ -65,6 +66,7 @@ Object.assign(ICONS, {
   text_indent_less_20: indentLess20,
   table_24: table24,
   table_20: table20,
+  excel_table_24: docTable24,
   image_24: image24,
   link_24: link24,
   page_break_24: pageBreak24,

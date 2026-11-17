@@ -2693,6 +2693,64 @@ await test('правки линейки: граница поля берётся 
   ok(/поле/.test(await p.$eval('#hr-inner .ri-left', (e) => e.title)), 'подсказка у маркера отступа');
   await p.context().close();
 });
+await test('таблица из файла Excel (.xlsx): формулы из файла, общие формулы, неподдержанное — значением; Ctrl+V значений — итоги формулами', async () => {
+  const { zipSync, strToU8 } = createRequire(import.meta.url)('fflate');
+  // Книга как у пользователя: A1:E3, E1 = C1+B1+A1, E2 = C2+B2-A2, строка 3 — СУММ (общая формула), D — пусто.
+  // На втором листе — функция, которой в тексте нет (ВПР): остаётся значением.
+  const sheet1 = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+    <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c><c r="C1"><v>3</v></c><c r="D1" s="2"/><c r="E1"><f>C1+B1+A1</f><v>6</v></c></row>
+    <row r="2"><c r="A2"><v>7</v></c><c r="B2"><v>9</v></c><c r="C2"><v>11</v></c><c r="E2"><f>C2+B2-A2</f><v>13</v></c></row>
+    <row r="3"><c r="A3"><f t="shared" ref="A3:C3" si="0">SUM(A1:A2)</f><v>8</v></c><c r="B3"><f t="shared" si="0"/><v>11</v></c><c r="C3"><f t="shared" si="0"/><v>14</v></c><c r="E3"><f>SUM(E1:E2)</f><v>19</v></c></row>
+  </sheetData></worksheet>`;
+  const sheet2 = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+    <row r="2"><c r="B2" t="s"><v>0</v></c><c r="C2"><v>5</v></c></row>
+    <row r="3"><c r="B3" t="inlineStr"><is><t>Код</t></is></c><c r="C3"><f>VLOOKUP(1,Лист1!A1:B2,2)</f><v>2</v></c></row>
+  </sheetData></worksheet>`;
+  const xlsx = zipSync({
+    'xl/workbook.xml': strToU8('<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/><sheet name="Цены" sheetId="2" r:id="rId2"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/></Relationships>'),
+    'xl/sharedStrings.xml': strToU8('<sst><si><t>Цена &amp; НДС</t></si></sst>'),
+    'xl/worksheets/sheet1.xml': strToU8(sheet1), 'xl/worksheets/sheet2.xml': strToU8(sheet2),
+  });
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.click('#tabs .tab:has-text("Вставка")');
+  ok(await p.$('[data-command="insert.excel"]'), 'кнопка «Из Excel» на ленте «Вставка»');
+  await p.setInputFiles('#xlsx-input', { name: 'книга.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
+  await p.waitForSelector('.sheet-pick');
+  eq(await p.$$eval('.sheet-pick', (b) => b.map((x) => x.textContent)), ['Лист1 — 3×5', 'Цены — 2×2'], 'выбор листа');
+  await p.click('.sheet-pick');
+  const formulas = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  const grid = () => p.evaluate(() => [...window.ens.view.dom.querySelectorAll('table')].map((t) => [...t.querySelectorAll('tr')].map((r) => [...r.children].map((c) => c.textContent))));
+  eq(await formulas(), ['=C1+B1+A1', '=C2+B2-A2', '=SUM(A1:A2)', '=SUM(B1:B2)', '=SUM(C1:C2)', '=SUM(E1:E2)'], 'все формулы, общие — развёрнуты');
+  eq((await grid())[0], [['1', '2', '3', '', '6'], ['7', '9', '11', '', '13'], ['8', '11', '14', '', '19']], 'значения');
+  // Правка числа: A1 1 → 4 — пересчитываются E1, A3 и E3 (E2 от A1 не зависит).
+  await p.waitForTimeout(700);
+  await p.evaluate(() => { const E = window.ens; let pos = null; E.view.state.doc.descendants((n, q) => { if (pos == null && n.isText && n.text === '1') pos = q; }); E.view.dispatch(E.view.state.tr.insertText('4', pos, pos + 1)); });
+  const g = (await grid())[0];
+  eq([g[0][4], g[1][4], g[2][0], g[2][4]], ['9', '13', '11', '22'], 'пересчёт как в Excel');
+  // Второй лист: строка из общих строк, ВПР со ссылкой на другой лист — значением.
+  await p.keyboard.press('Control+End');
+  await p.setInputFiles('#xlsx-input', { name: 'книга.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
+  await p.waitForSelector('.sheet-pick');
+  await p.click('.sheet-pick >> nth=1');
+  eq((await grid())[1], [['Цена & НДС', '5'], ['Код', '2']], 'второй лист значениями');
+  ok(/Значениями оставлены 1/.test(await p.$eval('#toast', (t) => t.textContent)), 'сообщение: одна формула оставлена значением');
+  await p.context().close();
+
+  // Ctrl+V из Excel: в буфере только значения (HTML без x:fmla) — итоги становятся формулами.
+  const q = await page();
+  await q.click('.ProseMirror');
+  const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table>
+    <tr><td x:num>1</td><td x:num>2</td><td x:num>3</td><td></td><td x:num>6</td></tr>
+    <tr><td x:num>7</td><td x:num>9</td><td x:num>11</td><td></td><td x:num>13</td></tr>
+    <tr><td x:num>8</td><td x:num>11</td><td x:num>14</td><td></td><td x:num>19</td></tr></table></body></html>`;
+  await q.evaluate((h) => { const dt = new DataTransfer(); dt.setData('text/html', h); dt.setData('text/plain', '1\t2'); window.ens.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }, html);
+  const f2 = await q.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  eq(f2, ['=SUM(LEFT)', '=SUM(ABOVE)', '=SUM(ABOVE)', '=SUM(ABOVE)', '=SUM(ABOVE)'], 'итоги строки и столбца распознаны (E2 = C2+B2−A2 — не сумма, осталась числом)');
+  await q.context().close();
+});
+
 await test('вставка из Excel: таблица с живыми формулами (смещение адресов подбирается), пересчёт, DOCX, специальная вставка', async () => {
   const p = await page();
   await p.click('.ProseMirror');

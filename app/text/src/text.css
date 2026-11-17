@@ -442,6 +442,7 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 .paste-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
 .paste-opt { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .paste-opt small { color: var(--muted); }
+.sheet-pick { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 6px 10px; }
 
 /* Перенос слов (Макет → Перенос слов): по словарю языка текста. */
 .ProseMirror.hyphenate p, .ProseMirror.hyphenate li, .ProseMirror.hyphenate td { hyphens: auto; -webkit-hyphens: auto; }

@@ -59,7 +59,8 @@ import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './di
 import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
 import { attachFontPicker } from './font-picker';
 import { formulasPlugin } from './table-formulas';
-import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode } from './paste-special';
+import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode, type PastedTable } from './paste-special';
+import { guessTotals, readXlsx } from './xlsx-import';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
@@ -483,6 +484,8 @@ const view = new EditorView($('sheet'), {
     return false;
   },
   handleDrop(v, event) {
+    const xlsx = [...(event.dataTransfer?.files ?? [])].find((f) => /\.xlsx$/i.test(f.name));
+    if (xlsx) { void insertXlsxFile(xlsx); return true; }
     const files = [...(event.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'));
     if (!files.length) return false;
     void insertImageFile(files[0]);
@@ -541,13 +544,43 @@ function pasteAs(mode: PasteMode, html: string, text: string): boolean {
   const t = (html && isSpreadsheetHtml(html) ? parseSpreadsheetHtml(html) : null) ?? parseTsv(text) ?? (html ? parseSpreadsheetHtml(html) : null);
   if (!t) { toast('В буфере нет таблицы: вставьте как текст.'); return false; }
   if (mode === 'values') for (const c of t.rows.flat()) if (c) c.formula = null;
-  const node = tableNode(schema, t);
-  v.dispatch(v.state.tr.replaceSelectionWith(node).scrollIntoView());
-  v.focus();
-  toast(mode === 'table' && t.withFormulas
-    ? `Таблица вставлена с формулами (${t.withFormulas}): поменяйте число — итоги пересчитаются. Формула ячейки — правый щелчок → «Формула…».`
-    : 'Таблица вставлена значениями. Специальная вставка — Ctrl+Alt+V.');
+  // Excel отдаёт в буфер только значения: итоговые строку и столбец делаем формулами =SUM(ABOVE)/=SUM(LEFT).
+  const guessed = mode === 'table' && !t.withFormulas ? guessTotals(t) : 0;
+  insertPastedTable(t);
+  toast(guessed
+    ? `Excel передаёт через буфер только числа. Итоги (${guessed}) распознаны и стали формулами — пересчитаются. Все формулы как в Excel: Вставка → «Из Excel» (файл .xlsx).`
+    : mode === 'table' && t.withFormulas
+      ? `Таблица вставлена с формулами (${t.withFormulas}): поменяйте число — итоги пересчитаются. Формула ячейки — правый щелчок → «Формула…».`
+      : 'Таблица вставлена значениями. С формулами: Вставка → «Из Excel» (файл .xlsx).');
   return true;
+}
+
+function insertPastedTable(t: PastedTable): void {
+  const v = active();
+  v.dispatch(v.state.tr.replaceSelectionWith(tableNode(schema, t)).scrollIntoView());
+  v.focus();
+}
+
+/** Таблица из файла .xlsx: формулы из файла, проверенные пересчётом. Несколько листов — выбрать лист. */
+async function insertXlsxFile(file: File): Promise<void> {
+  let sheets;
+  try { sheets = readXlsx(new Uint8Array(await file.arrayBuffer())).filter((x) => x.table.rows.length); }
+  catch { toast('Не удалось прочитать файл Excel (.xlsx).'); return; }
+  if (!sheets.length) { toast('В книге Excel нет данных.'); return; }
+  const put = (sh: (typeof sheets)[number]) => {
+    if (sh.table.rows.length * (sh.table.rows[0]?.length ?? 0) > 5000) { toast('Лист слишком большой для таблицы в тексте (больше 5000 ячеек).'); return; }
+    insertPastedTable(sh.table);
+    const f = sh.table.withFormulas;
+    toast(`Таблица «${sh.name}» вставлена${f ? `, формул: ${f} — пересчитываются` : ''}.${sh.dropped ? ` Значениями оставлены ${sh.dropped} (функции или ссылки, которых в тексте нет).` : ''}`);
+  };
+  if (sheets.length === 1) { put(sheets[0]); return; }
+  dialog((box, close) => {
+    box.append(
+      el('h2', { textContent: 'Какой лист вставить?' }),
+      el('div', { class: 'paste-opts' }, ...sheets.map((sh) => el('button', { class: 'sheet-pick', textContent: `${sh.name} — ${sh.table.rows.length}×${sh.table.rows[0]?.length ?? 0}`, onclick: () => { close(); put(sh); } }))),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close })),
+    );
+  });
 }
 
 function pasteSpecialDialog(): void {
@@ -749,6 +782,7 @@ register(
   { id: 'edit.replace', label: 'Заменить', keys: ['Ctrl+KeyH'], run: () => openFind(true) },
   { id: 'insert.table', label: 'Таблица', run: () => tableDialog() },
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
+  { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
@@ -1113,6 +1147,7 @@ const TABS: RibbonTab[] = [
         name: 'Таблицы и рисунки',
         items: [
           { type: 'large', command: 'insert.table', icon: 'table', label: 'Таблица' },
+          { type: 'large', command: 'insert.excel', icon: 'excel_table', label: 'Из Excel' },
           { type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' },
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
@@ -1642,6 +1677,13 @@ async function insertImageFile(file: File): Promise<void> {
   const k = dim.w > maxW ? maxW / dim.w : 1;
   dispatchCmd(insertImage(src, Math.round(dim.w * k), Math.round(dim.h * k), file.name.replace(/\.[^.]+$/, '')));
 }
+
+$('xlsx-input').addEventListener('change', (e) => {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (f) void insertXlsxFile(f);
+});
 
 $('image-input').addEventListener('change', (e) => {
   const input = e.target as HTMLInputElement;
