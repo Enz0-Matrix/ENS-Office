@@ -416,24 +416,6 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 #ribbon .ribbon-select { margin: 0; height: 26px; }
 #ribbon .group-name { margin-top: auto; white-space: nowrap; }
 
-/* Окно выбора шрифта (font-picker.ts). */
-.font-picker { position: fixed; z-index: 40; width: 360px; max-height: 60vh; display: flex; flex-direction: column; background: #fff; color: #222;
-  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
-.font-picker .fp-search { margin: 6px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; font: inherit; }
-.font-picker .fp-list { overflow: auto; padding: 0 4px 6px; }
-.font-picker .fp-head { font-size: 11px; color: var(--muted); padding: 8px 6px 2px; text-transform: uppercase; letter-spacing: .03em; }
-.font-picker .fp-row { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; width: 100%; text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; color: inherit; }
-.font-picker .fp-row:hover, .font-picker .fp-row:focus { background: #e6f3ef; outline: none; }
-.font-picker .fp-row.on { background: #cfe9e2; }
-.font-picker .fp-name { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.font-picker .fp-sample { font-size: 15px; color: #555; white-space: nowrap; }
-.font-picker .fp-tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; font: 11px "Segoe UI", "Carlito", sans-serif; }
-.font-picker .fp-tag { padding: 0 5px; border-radius: 3px; background: #eef1f4; color: #455; }
-.font-picker .fp-tag.ok { background: #e2f3ea; color: #1d6b42; }
-.font-picker .fp-tag.warn { background: #fdecea; color: #a12a1a; }
-.font-picker .fp-tag.sub { background: #fff4d6; color: #7a5b00; }
-.font-picker .fp-more { margin: 8px 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 4px; background: #fafafa; font: inherit; cursor: pointer; }
-
 /* Формулы в ячейках (table-formulas.ts): значок fx в углу, формула — в подсказке. */
 .ProseMirror td.fx, .ProseMirror th.fx { position: relative; }
 .ProseMirror td.fx::before, .ProseMirror th.fx::before { content: "fx"; position: absolute; top: 1px; left: 2px; font: italic 9px/1 "Segoe UI", sans-serif; color: #7a8ca5; pointer-events: none; }
