@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, isExternalSheet, realSheetCount, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, isExternalSheet, openCsv, openOtherFormat, realSheetCount, tableKind, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { boltApply, boltCell } from './bolt';
@@ -2747,8 +2747,11 @@ fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
   try {
-    const next = openXlsx(new Uint8Array(await file.arrayBuffer()), file.name, localeId());
-    setModel(next, { ...desk.newDoc(file.name.replace(/\.xls[xm]$/i, '')) });
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const kind = tableKind(file.name);
+    const title = file.name.replace(/\.(xlsx|xlsm|xls|ods|csv|txt)$/i, '');
+    const next = kind === 'csv' ? openCsv(bytes, title, localeId()) : kind === 'other' ? openOtherFormat(bytes, title, localeId()) : openXlsx(bytes, file.name, localeId());
+    setModel(next, { ...desk.newDoc(title) });
     let lost: string[] = [];
     try { lost = next.lostFeatures?.() ?? []; } catch { /* старый движок */ }
     if (lost.length) showToast(`В книге есть то, что ENS-Table пока не сохраняет: ${lost.join(', ')}. Исходный файл не изменится.`);
@@ -3538,6 +3541,8 @@ register(
     run: () => sortBy(grid.sel.column, true) },
   { id: 'data.sortCustom', label: 'Настраиваемая сортировка…', keywords: ['custom sort', 'сортировка по нескольким столбцам', 'уровни сортировки'],
     run: () => sortBy(grid.sel.column, false, true) },
+  { id: 'file.saveCsv', label: 'Сохранить лист в CSV', keywords: ['csv', 'экспорт', 'текст с разделителями', 'export'],
+    run: () => { void desk.saveSheetCsv(); } },
   { id: 'data.updateLinks', label: 'Обновить связи', keywords: ['внешние ссылки', 'другие книги', 'связи', 'обновить значения', 'edit links', 'update links', 'refresh'],
     run: () => { void desk.updateLinks(false); } },
   { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
@@ -3980,4 +3985,5 @@ await desk.start({
   toast: showToast,
   goTo: goToArea,
   refresh: () => { grid.render(); updateFormulaBar(); updateStatus(); },
+  currentSheet: () => grid.sheet,
 });
