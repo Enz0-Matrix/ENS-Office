@@ -1711,13 +1711,16 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
     const fire = (el, init) => { const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }); el.dispatchEvent(e); return e.defaultPrevented; };
     const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     document.querySelector('.ProseMirror').dispatchEvent(ctx);
+    // Своё меню, открытое этим событием, закрываем щелчком мимо — как пользователь.
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     return {
       ctx: ctx.defaultPrevented,
       ctrlR: fire(document.body, { key: 'r', ctrlKey: true }),
       f5: fire(document.body, { key: 'F5' }),
     };
   });
-  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'без меню ничего не подавляется');
+  // Меню WebView в документе подавлено всегда: вместо него своё контекстное меню (contextmenu.ts).
+  eq(await outcome(), { ctx: true, ctrlR: false, f5: false }, 'без окна: меню WebView заменено своим, клавиши не трогаем');
 
   await p.click('.tab.file');
   await p.waitForSelector('#dialog:not([hidden])', { timeout: 3000 });
@@ -1740,7 +1743,7 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
   eq(inField, { input: false, heading: true }, 'поле ввода — меню можно, остальное окно — нельзя');
   await p.keyboard.press('Escape');
 
-  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
+  eq(await outcome(), { ctx: true, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
   await p.context().close();
 });
 
@@ -1911,6 +1914,359 @@ await test('слияние: ключи параметров, бинарные д
     return failures;
   });
   eq(failures, [], 'ключи и основа слияния');
+  await p.context().close();
+});
+await test('вёрстка: строка с выступом и табуляциями не выходит левее листа (DOCX туда и обратно)', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const mk = (indent, first, t) => s.nodes.paragraph.create({ indent, first }, s.text(t));
+    // Выступ больше отступа слева, первая строка шире выступа, табуляции — образец артефакта.
+    const doc = s.nodes.doc.create(null, [
+      mk(36, -36, 'а)\tКороткий выступ, всё по правилам'),
+      mk(18, -54, 'Пункт1234567890\tтекст шире выступа\tи ещё табуляция'),
+      mk(null, -200, 'Очень\tдлинный\tвыступ\tза поле и за край листа'),
+      mk(-150, null, 'Отрицательный отступ слева больше поля'),
+    ]);
+    const back = E.importDocx(E.exportDocx(doc, E.getMeta(), 'x'));
+    E.loadDoc(back.doc, back.meta, 'x');
+    const paper = document.querySelector('.paper').getBoundingClientRect().left;
+    const firsts = [...E.view.dom.querySelectorAll('p')].map((el) => {
+      const rg = document.createRange();
+      rg.selectNodeContents(el);
+      return Math.min(...[...rg.getClientRects()].map((x) => x.left)) - paper;
+    });
+    return { firsts, attrs: back.doc.content.content.map((n) => [n.attrs.indent, n.attrs.first]) };
+  });
+  eq(r.attrs, [[36, -36], [18, -54], [null, -200], [-150, null]], 'отступы пережили DOCX без изменений');
+  r.firsts.forEach((x, i) => ok(x >= -0.5, `абзац ${i + 1}: начало строки левее листа на ${(-x).toFixed(1)} px`));
+  ok(r.firsts[0] > 100, 'обычный выступ внутри поля не тронут');
+  await p.context().close();
+});
+await test('рисунок «за текстом»: обычный щелчок выделяет его там, где нет букв, буквы над ним остаются тексту', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    // Рисунок 300×200 px за первыми строками: над его верхом текст, ниже — пустые абзацы.
+    const float = { mode: 'behind', hRel: 'page', hOff: 100, hAlign: null, vRel: 'page', vOff: 50, vAlign: null, dist: [0, 0, 8, 8] };
+    const img = s.nodes.image.create({ src: png, width: 300, height: 200, float });
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    E.loadDoc(s.nodes.doc.create(null, [P([s.text('Текст над рисунком '), img, s.text('продолжается')]), P(), P(), P(), P(), P(), P()]), E.getMeta(), 'behind');
+  }, PNG);
+  await p.waitForTimeout(400);
+  const kind = () => p.evaluate(() => { const sel = window.ens.view.state.selection; return sel.node ? sel.node.type.name : 'text'; });
+  const img = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  // Нижняя часть рисунка: под ней пустые абзацы — щелчок выбирает рисунок, появляются ручки.
+  await p.mouse.click(img.x + img.width / 2, img.y + img.height - 15);
+  eq(await kind(), 'image', 'щелчок по пустому месту над рисунком');
+  await p.waitForSelector('.img-ov.abs:not([hidden]) .img-h-se');
+  // Ручкой можно менять размер: одна запись в истории.
+  const se = await (await p.$('.img-h-se')).boundingBox();
+  await p.mouse.move(se.x + 4, se.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(se.x - 56, se.y - 36, { steps: 5 });
+  await p.mouse.up();
+  await p.waitForTimeout(200);
+  const w = await p.evaluate(() => { let a = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') a = n.attrs; }); return a.width; });
+  ok(w < 280, `ширина уменьшилась: ${w}`);
+  // Щелчок по букве первой строки, которая лежит поверх рисунка, ставит курсор в текст.
+  const letter = await p.evaluate(() => {
+    const t = window.ens.view.dom.querySelector('p').firstChild;
+    const r = document.createRange(); r.setStart(t, 2); r.setEnd(t, 3);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  const im2 = await (await p.$('.ProseMirror img.fl-behind')).boundingBox();
+  ok(letter.y > im2.y && letter.x > im2.x, `буква лежит над рисунком: ${JSON.stringify([letter, im2])}`);
+  await p.mouse.click(letter.x, letter.y);
+  eq(await kind(), 'text', 'щелчок по букве — курсор в тексте');
+  await p.context().close();
+});
+await test('линейки «живые»: отступ, поле и столбец двигаются за мышью, в истории одна запись', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const long = 'Длинный абзац для проверки отступов, который переносится на несколько строк. '.repeat(4);
+    const cell = (t) => s.nodes.table_cell.create(null, s.nodes.paragraph.create(null, s.text(t)));
+    const row = () => s.nodes.table_row.create(null, [cell('а'), cell('б'), cell('в')]);
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text(long)), s.nodes.table.create({ borders: true }, [row(), row()])]), E.getMeta(), 'live');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 3)));
+    E.view.focus();
+  });
+  await p.waitForSelector('#hr-inner .ri-left:not([hidden])');
+  const paraLeft = () => p.evaluate(() => window.ens.view.dom.querySelector('p').getBoundingClientRect().left);
+  const indent = () => p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.indent);
+  const x0 = await paraLeft();
+  // Отступ слева: во время перетаскивания абзац уже сдвинут, документ ещё не изменён.
+  const m = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(m.x + m.width / 2, m.y + m.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(m.x + m.width / 2 + 30, m.y + m.height / 2, { steps: 3 });
+  await p.mouse.move(m.x + m.width / 2 + 60, m.y + m.height / 2, { steps: 3 });
+  const mid = await paraLeft();
+  ok(mid - x0 > 50, `абзац двигается за мышью: ${x0} → ${mid}`);
+  eq(await indent(), null, 'до отпускания документ не меняется');
+  const m2 = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  ok(m2.x - m.x > 50, 'метка отступа едет за мышью');
+  await p.mouse.up();
+  const ind = await indent();
+  ok(ind > 40, `после отпускания отступ записан: ${ind}`);
+  // Одна запись в истории: одна отмена возвращает исходное, вторая ничего не меняет.
+  await p.keyboard.press('Control+KeyZ');
+  eq(await indent(), null, 'одна отмена — исходный отступ');
+  const t = await text(p);
+  await p.keyboard.press('Control+KeyZ');
+  eq(await text(p), t, 'вторая отмена ничего не меняет');
+  ok(Math.abs((await paraLeft()) - x0) < 1, 'предпросмотр снят');
+  // Левое поле: текст перетекает до отпускания.
+  const pageLeft = () => p.evaluate(() => window.ens.getMeta().page.left);
+  const L0 = await pageLeft();
+  const lm = await (await p.$('#hr-inner .rm[aria-label="Левое поле"]')).boundingBox();
+  await p.mouse.move(lm.x + lm.width / 2, lm.y + lm.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(lm.x + lm.width / 2 + 40, lm.y + lm.height / 2, { steps: 4 });
+  ok((await paraLeft()) - x0 > 30, 'поле: текст сдвинулся до отпускания');
+  eq(await pageLeft(), L0, 'поле: документ не изменён до отпускания');
+  await p.mouse.up();
+  ok((await pageLeft()) - L0 > 20, 'поле записано');
+  // Столбец таблицы: ширина меняется за мышью, запись — одна.
+  await p.evaluate(() => {
+    const E = window.ens; let pos = 0;
+    E.view.state.doc.descendants((n, q) => { if (!pos && n.type.name === 'table_cell') pos = q + 2; });
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, pos)));
+  });
+  await p.waitForSelector('#hr-inner .rc');
+  const cellW = () => p.evaluate(() => window.ens.view.dom.querySelector('td').getBoundingClientRect().width);
+  const colw = () => p.evaluate(() => { let c = null; window.ens.view.state.doc.descendants((n) => { if (!c && n.type.name === 'table_cell') c = n.attrs.colwidth; }); return c; });
+  const w0 = await cellW();
+  const c0 = await colw();
+  const rc = (await p.$$('#hr-inner .rc'))[1];
+  const b = await rc.boundingBox();
+  await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(b.x + b.width / 2 + 40, b.y + b.height / 2, { steps: 4 });
+  ok((await cellW()) - w0 > 30, `столбец шире до отпускания: ${w0} → ${await cellW()}`);
+  eq(await colw(), c0, 'ширина в документе не изменена до отпускания');
+  await p.mouse.up();
+  ok((await colw())?.[0] > w0 + 20, `ширина записана: ${JSON.stringify(await colw())}`);
+  await p.keyboard.press('Control+KeyZ');
+  eq(await colw(), c0, 'одна отмена возвращает ширину');
+  await p.context().close();
+});
+
+await test('обрезка рисунка: во время перетаскивания видна отрезаемая часть', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('А '), s.nodes.image.create({ src: png, width: 200, height: 100 })])]), E.getMeta(), 'crop');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 3)));
+    E.run('image.crop');
+  }, PNG);
+  await p.waitForSelector('.img-ov.crop:not([hidden]) .img-h-e');
+  const e = await (await p.$('.img-h-e')).boundingBox();
+  const img0 = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.move(e.x + 4, e.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(e.x - 56, e.y + 4, { steps: 4 });
+  const g = await p.$('.crop-ghost');
+  ok(g, 'полупрозрачный полный рисунок показан');
+  const gb = await g.boundingBox();
+  ok(Math.abs(gb.x - img0.x) < 2 && Math.abs(gb.width - img0.width) < 2, `призрак на месте исходного рисунка: ${JSON.stringify([gb, img0])}`);
+  await p.mouse.up();
+  ok(!(await p.$('.crop-ghost')), 'после отпускания призрак убран');
+  const crop = await p.evaluate(() => { let c = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') c = n.attrs.crop; }); return c; });
+  ok(crop && crop[2] > 0.2, `обрезано справа: ${JSON.stringify(crop)}`);
+  await p.context().close();
+});
+await test('таблица: перемещение за ручку в углу, линия места, одна запись в истории, Esc отменяет', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const tbl = s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('А1'), cell('Б1')]), s.nodes.table_row.create(null, [cell('А2'), cell('Б2')])]);
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый'), tbl, P('Второй'), P('Третий'), P('Четвёртый')]), E.getMeta(), 'move');
+  });
+  const order = () => p.evaluate(() => { const o = []; window.ens.view.state.doc.forEach((n) => o.push(n.type.name === 'table' ? 'T' : n.textContent)); return o.join(','); });
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'исходный порядок');
+  // Ручка появляется при наведении на таблицу.
+  const cellBox = await (await p.$('.ProseMirror td')).boundingBox();
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h = await (await p.$('.tbl-move')).boundingBox();
+  const tb = await (await p.$('.ProseMirror table')).boundingBox();
+  ok(h.x < tb.x && h.y < tb.y && tb.x - h.x < 30, 'ручка у левого верхнего угла таблицы');
+  // Путь от таблицы к ручке её не прячет.
+  await p.mouse.move(h.x + h.width / 2, h.y + h.height / 2, { steps: 5 });
+  ok(!(await p.$eval('.tbl-move', (e) => e.hidden)), 'ручка не исчезла по дороге');
+  const target = await p.evaluate(() => { const ps = window.ens.view.dom.querySelectorAll(':scope > p'); const r = ps[ps.length - 1].getBoundingClientRect(); return { x: r.left + 20, y: r.bottom - 3 }; });
+  // Esc отменяет перетаскивание.
+  await p.mouse.down();
+  await p.mouse.move(target.x, target.y, { steps: 6 });
+  ok(await p.$eval('.tbl-drop', (e) => !e.hidden), 'линия места вставки видна');
+  await p.keyboard.press('Escape');
+  await p.mouse.up();
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'Esc: таблица осталась на месте');
+  // Перенос в конец документа.
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h2 = await (await p.$('.tbl-move')).boundingBox();
+  await p.mouse.move(h2.x + h2.width / 2, h2.y + h2.height / 2, { steps: 3 });
+  await p.mouse.down();
+  await p.mouse.move(target.x, target.y, { steps: 6 });
+  await p.mouse.up();
+  eq(await order(), 'Первый,Второй,Третий,Четвёртый,T', 'таблица перенесена в конец');
+  ok(await p.evaluate(() => window.ens.view.state.selection.$from.node(1).type.name === 'table'), 'курсор в перенесённой таблице');
+  ok((await p.evaluate(() => window.ens.view.state.doc.lastChild.textContent)) === 'А1Б1А2Б2', 'содержимое таблицы цело');
+  // Одна отмена возвращает на место.
+  await p.keyboard.press('Control+KeyZ');
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'одна отмена возвращает таблицу');
+  // Перенос в начало (до первого абзаца) и запись в DOCX.
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h3 = await (await p.$('.tbl-move')).boundingBox();
+  const first = await p.evaluate(() => { const r = window.ens.view.dom.querySelector(':scope > p').getBoundingClientRect(); return { x: r.left + 20, y: r.top + 2 }; });
+  await p.mouse.move(h3.x + h3.width / 2, h3.y + h3.height / 2, { steps: 3 });
+  await p.mouse.down();
+  await p.mouse.move(first.x, first.y, { steps: 6 });
+  await p.mouse.up();
+  eq(await order(), 'T,Первый,Второй,Третий,Четвёртый', 'таблица перенесена в начало');
+  const back = await p.evaluate(() => { const E = window.ens; const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'm')); const o = []; b.doc.forEach((n) => o.push(n.type.name === 'table' ? 'T' : n.textContent)); return o.join(','); });
+  ok(back.startsWith('T,Первый,Второй,Третий,Четвёртый'), `DOCX: ${back}`);
+  await p.context().close();
+});
+await test('контекстные меню: текст, выделение, ссылка, рисунок, таблица; меню браузера не показывается', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    const cell = (t) => s.nodes.table_cell.create(null, P(s.text(t)));
+    const link = s.marks.link.create({ href: 'https://example.org/' });
+    E.loadDoc(s.nodes.doc.create(null, [
+      P([s.text('Обычный текст абзаца. '), s.text('ссылка', [link]), s.text(' и хвост')]),
+      P([s.nodes.image.create({ src: png, width: 120, height: 80 })]),
+      s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('А1'), cell('Б1')]), s.nodes.table_row.create(null, [cell('А2'), cell('Б2')])]),
+      P(s.text('Последний')),
+    ]), E.getMeta(), 'ctx');
+  }, PNG);
+  // Меню WebView отменено (defaultPrevented) везде, кроме полей ввода.
+  await p.evaluate(() => { window.__ctxPrevented = []; document.addEventListener('contextmenu', (e) => setTimeout(() => window.__ctxPrevented.push(e.defaultPrevented)), false); });
+  const kind = () => p.$eval('.context-menu.ctx-text', (m) => (m.hidden ? 'hidden' : m.dataset.kind));
+  const labels = () => p.$$eval('.context-menu.ctx-text button', (b) => b.map((x) => (x.disabled ? '-' : '') + x.querySelector('span').textContent));
+  const at = (sel, off = 2) => p.evaluate(({ sel, off }) => {
+    const el = window.ens.view.dom.querySelector(sel);
+    const t = [...el.childNodes].find((n) => n.nodeType === 3) ?? el.firstChild.firstChild ?? el.firstChild;
+    const r = document.createRange(); r.setStart(t, off); r.setEnd(t, off + 1);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }, { sel, off });
+  // Текст: курсор встаёт в точку щелчка, «Вырезать» и «Копировать» недоступны.
+  let pt = await at('p', 3);
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  eq(await kind(), 'text', 'меню текста');
+  let l = await labels();
+  ok(l.includes('-Вырезать') && l.includes('-Копировать') && l.includes('Вставить') && l.includes('Ссылка…'), `пункты текста: ${l}`);
+  ok(await p.evaluate(() => window.ens.view.state.selection.from === 4), 'курсор встал в точку щелчка');
+  await p.keyboard.press('Escape');
+  eq(await kind(), 'hidden', 'Esc закрывает меню');
+  // Выделение: щелчок внутри выделения его сохраняет; пункты форматирования.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1, 8))); });
+  pt = await at('p', 2);
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  eq(await kind(), 'selection', 'меню выделения');
+  l = await labels();
+  ok(l.includes('Вырезать') && l.includes('Полужирный') && l.includes('Очистить форматирование'), `пункты выделения: ${l}`);
+  ok(await p.evaluate(() => { const s = window.ens.view.state.selection; return s.from === 1 && s.to === 8; }), 'выделение сохранено');
+  // «Полужирный» из меню применяется к выделению.
+  await p.click('.context-menu.ctx-text button:has-text("Полужирный")');
+  ok(await p.evaluate(() => window.ens.view.state.doc.firstChild.firstChild.marks.some((m) => m.type.name === 'strong')), 'полужирный применён');
+  eq(await kind(), 'hidden', 'меню закрылось после команды');
+  // Ссылка: открыть, изменить, копировать адрес, удалить.
+  const a = await (await p.$('.ProseMirror a')).boundingBox();
+  await p.mouse.click(a.x + a.width / 2, a.y + a.height / 2, { button: 'right' });
+  ok((await kind()).startsWith('link'), 'меню ссылки');
+  l = await labels();
+  ok(l.includes('Открыть ссылку') && l.includes('Изменить ссылку…') && l.includes('Удалить ссылку'), `пункты ссылки: ${l}`);
+  await p.click('.context-menu.ctx-text button:has-text("Удалить ссылку")');
+  ok(await p.evaluate(() => !window.ens.view.dom.querySelector('a') && window.ens.view.state.doc.firstChild.textContent.includes('ссылка')), 'ссылка снята, текст остался');
+  // Рисунок: правый щелчок выделяет его; пункты рисунка.
+  const im = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.click(im.x + im.width / 2, im.y + im.height / 2, { button: 'right' });
+  eq(await kind(), 'image', 'меню рисунка');
+  l = await labels();
+  ok(l.includes('Формат рисунка…') && l.includes('За текстом') && l.includes('Удалить рисунок'), `пункты рисунка: ${l}`);
+  ok(await p.evaluate(() => window.ens.view.state.selection.node?.type.name === 'image'), 'рисунок выделен');
+  await p.click('.context-menu.ctx-text button:has-text("За текстом")');
+  ok(await p.evaluate(() => { let f = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') f = n.attrs.float; }); return f?.mode === 'behind'; }), 'обтекание «за текстом» из меню');
+  // Таблица: строки и столбцы. Сначала снять выделение рисунка: его рамка (уже «за текстом») может лежать над таблицей.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  const td = await (await p.$('.ProseMirror tr:last-child td:last-child')).boundingBox();
+  await p.mouse.click(td.x + 10, td.y + td.height / 2, { button: 'right' });
+  ok((await kind()).startsWith('table'), `меню таблицы: ${await kind()}`);
+  l = await labels();
+  ok(l.includes('Вставить строку ниже') && l.includes('Удалить столбец') && l.includes('Свойства таблицы…'), `пункты таблицы: ${l}`);
+  // Фоновая служебная транзакция (пересчёт страниц) не закрывает открытое меню.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setMeta('addToHistory', false)); });
+  ok((await kind()).startsWith('table'), `меню пережило служебную транзакцию: ${await kind()}`);
+  await p.click('.context-menu.ctx-text button:has-text("Вставить строку ниже")');
+  eq(await p.$$eval('.ProseMirror tr', (r) => r.length), 3, 'строка добавлена из меню');
+  // Клавиатура: Shift+F10, стрелки, Enter.
+  await p.keyboard.press('Shift+F10');
+  ok((await kind()) !== 'hidden', 'Shift+F10 открывает меню');
+  await p.keyboard.press('Escape');
+  // Вне листа (лента) меню WebView тоже не показывается; Shift+правый щелчок по тексту — системное (орфография).
+  await p.click('#tabs', { button: 'right' });
+  await p.click('#status-page', { button: 'right' });
+  pt = await at('p', 3);
+  await p.keyboard.down('Shift');
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  await p.keyboard.up('Shift');
+  eq(await kind(), 'hidden', 'Shift+правый щелчок: наше меню не открывается');
+  await p.waitForTimeout(50);
+  const prevented = await p.evaluate(() => window.__ctxPrevented);
+  ok(prevented.length >= 8 && prevented.slice(0, -1).every(Boolean) && prevented[prevented.length - 1] === false, `меню WebView: ${JSON.stringify(prevented)}`);
+  await p.context().close();
+});
+await test('вёрстка: в документе из нескольких разделов отступ и выступ абзаца сохраняются, строка не выходит за лист (образец пользователя)', async () => {
+  const p = await page();
+  // Как в присланном файле: книжный раздел, затем альбомный; абзац «отступ 3 см, выступ 3 см», по ширине,
+  // первое слово шире выступа, две табуляции; рядом — абзац с отступом первой строки 1,5 см.
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const m = E.getMeta();
+    const land = { ...m.page, w: m.page.h, h: m.page.w, left: 28.35, right: 35.45 };
+    const doc = s.nodes.doc.create(null, [
+      s.nodes.paragraph.create(null, s.text('Книжный раздел')),
+      s.nodes.section_break.create({ page: land }),
+      s.nodes.paragraph.create({ first: 42.5 }, s.text('объёмы топлива')),
+      s.nodes.paragraph.create({ indent: 85.05, first: -85.05, align: 'justify' }, s.text('шжроьроьбромьроьь\t\tПриложение: Согласованные объемы')),
+      s.nodes.paragraph.create({ indent: -200 }, s.text('Отрицательный отступ больше поля')),
+    ]);
+    const back = E.importDocx(E.exportDocx(doc, m, 'x'));
+    E.loadDoc(back.doc, back.meta, 'x');
+    await new Promise((res) => setTimeout(res, 400));
+    const ps = [...E.view.dom.querySelectorAll(':scope > p')];
+    const papers = [...document.querySelectorAll('.paper')].map((e) => e.getBoundingClientRect());
+    const info = (el) => {
+      const rg = document.createRange(); rg.selectNodeContents(el);
+      const rects = [...rg.getClientRects()];
+      const first = Math.min(...rects.map((x) => x.left));
+      // По строке, а не по блоку: у первого абзаца раздела сверху отступ до нового листа.
+      const y = rects[0].top;
+      const paper = papers.find((b) => y >= b.top && y < b.bottom);
+      return { first, paperLeft: paper.left, paperW: paper.width };
+    };
+    return { fuel: info(ps[1]), hang: info(ps[2]), neg: info(ps[3]), firstAttr: back.doc.child(2).attrs.first, k: 4 / 3 };
+  });
+  const k = r.k;
+  // Альбомный лист шире: текст считается от его края; поле 28,35 pt (1 см).
+  const marginX = (x) => (x.first - x.paperLeft) / k;
+  ok(Math.abs(marginX(r.hang) - 28.35) < 2, `выступ: первая строка у поля (1 см), а не левее: ${marginX(r.hang).toFixed(1)} pt`);
+  ok(Math.abs(marginX(r.fuel) - (28.35 + 42.5)) < 2, `отступ первой строки 1,5 см не теряется: ${marginX(r.fuel).toFixed(1)} pt`);
+  ok(marginX(r.neg) >= -0.5, `отрицательный отступ не за краем листа: ${marginX(r.neg).toFixed(1)} pt`);
   await p.context().close();
 });
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);

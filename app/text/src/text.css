@@ -290,6 +290,8 @@
 .img-ov { position: absolute; z-index: 6; pointer-events: none; outline: 1px solid var(--accent, #2b579a); }
 .img-ov[hidden] { display: none; }
 .img-ov.crop { outline: 2px dashed #e69500; }
+.crop-ghost { position: absolute; z-index: 0; opacity: .35; pointer-events: none; outline: 1px dashed #e69500; max-width: none; }
+@media print { .crop-ghost { display: none; } }
 .img-ov-body { position: absolute; inset: 0; pointer-events: none; }
 .img-ov.abs .img-ov-body { pointer-events: auto; cursor: move; }
 .img-h { position: absolute; width: 9px; height: 9px; background: #fff; border: 1px solid var(--accent, #2b579a); box-sizing: border-box; pointer-events: auto; }
@@ -347,3 +349,16 @@
 .merge-conflict { border: 1px solid var(--border, #888); padding: 12px; margin: 12px 0; }
 .merge-conflict pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
 .merge-results > .primary { margin-top: 12px; }
+
+/* Ручка перемещения таблицы и линия места вставки (table-move.ts). */
+.tbl-move { position: absolute; z-index: 6; width: 16px; height: 16px; line-height: 14px; text-align: center; font: 13px/14px sans-serif;
+  color: var(--accent, #2b579a); background: #fff; border: 1px solid var(--accent, #2b579a); border-radius: 2px; cursor: move; user-select: none; }
+.tbl-move[hidden], .tbl-drop[hidden] { display: none; }
+.tbl-drop { position: absolute; z-index: 6; height: 0; border-top: 2px solid var(--accent, #2b579a); pointer-events: none; }
+.sheet.tbl-moving, .sheet.tbl-moving * { cursor: move !important; }
+@media print { .tbl-move, .tbl-drop { display: none !important; } }
+
+/* Контекстное меню документа (contextmenu.ts); основа — .context-menu из общих стилей ENS-Table. */
+.context-menu.ctx-text .ctx-sep { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
+.context-menu.ctx-text > button { display: flex; gap: 24px; align-items: baseline; }
+.context-menu.ctx-text > button.ctx-hint { font-size: 12px; }

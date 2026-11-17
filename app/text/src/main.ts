@@ -29,7 +29,7 @@ import * as V from './versions';
 import { askNamedVersion, fmtWhen, openHistory, type HistoryHost } from './history-ui';
 import { saveSettings, settings } from '../../table/src/settings';
 import { osUserName } from '../../table/src/platform';
-import { readText } from '../../table/src/platform';
+import { copyText, readText } from '../../table/src/platform';
 import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
@@ -51,7 +51,9 @@ import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats a
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
-import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
+import { initTableMove, updateTableMove } from './table-move';
+import { hideContextMenu, initContextMenu } from './contextmenu';
+import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
   addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
@@ -316,6 +318,8 @@ function applyPage(): void {
     const first = effOf(secs[0].page), lastE = effOf(secs[secs.length - 1].page);
     view.dom.style.padding = `${first.top}pt 0 ${lastE.bottom}pt 0`;
   } else view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
+  // Расстояние от края листа до текста: им ограничен выступ первой строки (schema.ts, paraStyle).
+  view.dom.style.setProperty('--pl', `${secs.length > 1 ? 0 : e.left}pt`);
   drawPapers(pageCount(view));
   const d = meta.defaults;
   const root = document.documentElement.style;
@@ -420,6 +424,7 @@ function setZoom(z: number): void {
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
   updateOverlay();
   updateRuler();
+  updateTableMove();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -430,7 +435,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -456,15 +461,7 @@ const view = new EditorView($('sheet'), {
     const $pos = v.state.doc.resolve(pos);
     const link = schema.marks.link.isInSet($pos.marks());
     if (!link) return false;
-    if (desktop.isDesktop) {
-      desktop.openTarget(link.attrs.href).catch((e) => toast(String((e as Error)?.message ?? e)));
-      return true;
-    }
-    const a = document.createElement('a');
-    a.href = link.attrs.href;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.click();
+    openHref(link.attrs.href as string);
     return true;
   },
 });
@@ -484,9 +481,25 @@ function syncImageTab(): void {
   else if (!on && active === 'Рисунок') click('Главная');
 }
 
+/** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
+function openHref(href: string): void {
+  if (desktop.isDesktop) {
+    desktop.openTarget(href).catch((e) => toast(String((e as Error)?.message ?? e)));
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.click();
+}
+
 function afterChange(docChanged: boolean): void {
+  // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
+  if (docChanged) hideContextMenu();
   updateUi();
   updateOverlay();
+  updateTableMove();
   updateRuler();
   syncImageTab();
   renderInspector(inspectorSource, inspectorActions);
@@ -1606,7 +1619,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -1854,11 +1867,21 @@ document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
 initRuler({
   view: () => view, papers: () => $('papers'), zoom: () => zoom, pageIndex: () => Math.max(0, currentPage() - 1), page: () => curPage(),
   changePage: (next) => changePage(next), locked: () => !!hfSession,
+  previewPage: (next) => {
+    // Предпросмотр боковых полей: строки сразу перетекают. Только для документа из одного раздела;
+    // верхнее и нижнее поле меняют разбиение на страницы — их показывают линейка и направляющая.
+    if (sectionsOf(view.state.doc, meta.page).length > 1) return;
+    const p = { ...effPage(), ...(next ?? {}) };
+    view.dom.style.paddingLeft = `${p.left}pt`;
+    view.dom.style.paddingRight = `${p.right}pt`;
+  },
 });
 initImageTools({
   view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
 });
+initTableMove({ view: () => view, sheet: $('sheet'), scale: () => zoom, locked: () => !!hfSession });
+initContextMenu({ view: () => view, sheet: $('sheet'), openLink: openHref, copyText: (t) => { void copyText(t).then(() => toast('Адрес ссылки скопирован')); } });
 initCommandSearch();
 applyPage();
 setZoom(1);

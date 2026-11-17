@@ -297,7 +297,15 @@ function marginDecos(doc: PMNode, base: PageSetup): Decoration[] | null {
     while (si + 1 < secs.length && off >= secs[si + 1].from) si++;
     const p = secs[si].page;
     const side = (wmax - p.w) / 2;
-    out.push(Decoration.node(off, off + node.nodeSize, { style: `margin-left:${side + p.left}pt;margin-right:${side + p.right}pt` }));
+    // Стиль декорации идёт после стиля узла и заменяет его margin: отступы абзаца (слева, справа) прибавляем сами,
+    // иначе абзац с отступом и выступом (3 см и 3 см) начинал первую строку левее листа раздела.
+    const own = node.type.name === 'paragraph' || node.type.name === 'heading';
+    const il = own ? ((node.attrs.indent as number | null) ?? 0) : 0;
+    const ir = own ? ((node.attrs.rindent as number | null) ?? 0) : 0;
+    // Отрицательный отступ уводит текст в поле, но не за край листа раздела.
+    const ml = Math.max(side, side + p.left + il);
+    // --pl: от края листа раздела до текста — им ограничен выступ первой строки (schema.ts, paraStyle).
+    out.push(Decoration.node(off, off + node.nodeSize, { style: `margin-left:${ml}pt;margin-right:${side + p.right + ir}pt;--pl:${p.left}pt` }));
   });
   return out;
 }

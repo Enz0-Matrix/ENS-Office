@@ -41,8 +41,10 @@ const paraAttrs = {
 function paraStyle(a: ParaAttrs): string {
   const s: string[] = [];
   if (a.align) s.push(`text-align:${a.align}`);
-  if (a.indent) s.push(`margin-left:${a.indent}pt`);
-  if (a.first) s.push(`text-indent:${a.first}pt`);
+  // Начало строки не выходит левее листа: --pl — расстояние от края листа до текста (ставят main.ts и pagination.ts).
+  // Без ограничения выступ больше отступа слева (с длинным текстом и табуляциями) уводил первую строку за край бумаги.
+  if (a.indent) s.push(a.indent < 0 ? `margin-left:max(${a.indent}pt, calc(-1 * var(--pl, 0pt)))` : `margin-left:${a.indent}pt`);
+  if (a.first) s.push(a.first < 0 && a.first + (a.indent ?? 0) < 0 ? `text-indent:max(${a.first}pt, calc(-1 * (var(--pl, 0pt) + ${Math.max(a.indent ?? 0, 0)}pt)))` : `text-indent:${a.first}pt`);
   if (a.rindent) s.push(`margin-right:${a.rindent}pt`);
   if (a.before != null) s.push(`margin-top:${a.before}pt`);
   if (a.after != null) s.push(`margin-bottom:${a.after}pt`);
@@ -65,7 +67,8 @@ function paraDom(tag: string, node: PMNode): DOMOutputSpec {
 function parseParaAttrs(el: HTMLElement): Partial<ParaAttrs> {
   const st = el.style;
   const pt = (v: string) => {
-    const m = /^(-?[\d.]+)(pt|px|cm|mm)?$/.exec(v.trim());
+    // max(-36pt, calc(…)) — ограниченный выступ из paraStyle: значение — первый аргумент.
+    const m = /^(-?[\d.]+)(pt|px|cm|mm)?$/.exec(v.trim().replace(/^max\(\s*([^,]+),.*$/, '$1'));
     if (!m) return null;
     const n = parseFloat(m[1]);
     return m[2] === 'px' ? n * 0.75 : m[2] === 'cm' ? n * 28.3465 : m[2] === 'mm' ? n * 2.83465 : n;
