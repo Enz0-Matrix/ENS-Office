@@ -973,6 +973,49 @@ function renameSheet(index: number, tab?: HTMLElement): void {
   input.addEventListener('blur', () => finish(true));
 }
 
+/** Скрыть или показать сразу несколько листов (флажками); один шаг отмены.
+ *  Хотя бы один лист остаётся видимым, как в Excel. */
+function sheetsDialog(mode: 'hide' | 'show', preselect?: number): void {
+  const props = model.getWorksheetsProperties();
+  const list = props
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => (mode === 'hide' ? p.state === 'visible' : p.state === 'hidden'));
+  if (!list.length) { showToast(mode === 'hide' ? 'Нет видимых листов.' : 'Скрытых листов нет.'); return; }
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal small"><h2>${mode === 'hide' ? 'Скрыть листы' : 'Показать листы'}</h2>
+    <p class="bs-muted">${mode === 'hide' ? 'Отметьте листы, которые нужно скрыть. Хотя бы один лист останется видимым.' : 'Отметьте листы, которые нужно показать.'}</p>
+    <div class="sheet-pick" style="max-height:50vh;overflow:auto">${list.map(({ p, i }) =>
+      `<label style="display:block;padding:2px 0"><input type="checkbox" data-i="${i}"${i === preselect ? ' checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>
+    <p><label><input type="checkbox" data-all> Все</label></p>
+    <div class="rec-actions"><button data-act="ok" class="primary">${mode === 'hide' ? 'Скрыть' : 'Показать'}</button><button data-act="cancel">Отмена</button></div></div>`;
+  overlay.hidden = false;
+  const boxes = [...overlay.querySelectorAll<HTMLInputElement>('input[data-i]')];
+  overlay.querySelector<HTMLInputElement>('input[data-all]')!.addEventListener('change', (e) => {
+    boxes.forEach((b) => { b.checked = (e.target as HTMLInputElement).checked; });
+  });
+  const close = () => { overlay.hidden = true; overlay.innerHTML = ''; focusGrid(); };
+  overlay.querySelector('[data-act="cancel"]')!.addEventListener('click', close);
+  overlay.querySelector('[data-act="ok"]')!.addEventListener('click', () => {
+    let chosen = boxes.filter((b) => b.checked).map((b) => Number(b.dataset.i));
+    if (!chosen.length) { close(); return; }
+    if (mode === 'hide' && chosen.length >= props.filter((p) => p.state === 'visible').length) {
+      showToast('Все листы скрыть нельзя: один остаётся видимым.');
+      return;
+    }
+    const mark = model.undoMark();
+    try {
+      for (const i of chosen) mode === 'hide' ? model.hideSheet(i) : model.unhideSheet(i);
+    } catch (e) { showToast(String(e)); }
+    model.mergeUndoSince(mark);
+    close();
+    if (mode === 'show') setSheet(chosen[0]);
+    else if (chosen.includes(grid.sheet)) setSheet(model.getWorksheetsProperties().findIndex((p) => p.state === 'visible'));
+    else renderSheetTabs();
+    chosen = [];
+  });
+}
+
 const SHEET_COLORS = ['', '#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#7030A0'];
 
 function sheetMenu(index: number, x: number, y: number): void {
@@ -995,7 +1038,9 @@ function sheetMenu(index: number, x: number, y: number): void {
       const next = model.getWorksheetsProperties().findIndex((p) => p.state === 'visible');
       setSheet(next);
     } },
-    ...hidden.map(({ p, i }) => ({ label: `Показать «${p.name}»`, run: () => { model.unhideSheet(i); setSheet(i); } })),
+    { label: 'Скрыть несколько листов…', disabled: visible <= 1, run: () => sheetsDialog('hide', index) },
+    ...hidden.slice(0, 3).map(({ p, i }) => ({ label: `Показать «${p.name}»`, run: () => { model.unhideSheet(i); setSheet(i); } })),
+    { label: 'Показать листы…', disabled: hidden.length === 0, run: () => sheetsDialog('show') },
   ];
   const menu = showMenu(items, x, y);
   const colors = document.createElement('div');
@@ -2396,6 +2441,7 @@ function undoRedo(kind: 'undo' | 'redo'): void {
       return;
     }
     wink(kind);
+    afterUndoSheets();
     grid.invalidateLayout();
     updateFormulaBar();
     updateStatus();
@@ -2406,10 +2452,21 @@ function undoRedo(kind: 'undo' | 'redo'): void {
   if (!can) { showToast(kind === 'undo' ? 'Отменять нечего.' : 'Повторять нечего.'); return; }
   if (kind === 'undo') model.undo(); else model.redo();
   wink(kind);
+  afterUndoSheets();
   grid.invalidateLayout();
   updateFormulaBar();
   updateStatus();
   syncUndoState();
+}
+
+/** После отмены и повтора: ярлыки листов (скрыть, показать, переименовать, удалить листы
+ *  отменяются тоже — раньше ярлыки оставались прежними), открыт видимый лист. */
+function afterUndoSheets(): void {
+  const props = model.getWorksheetsProperties();
+  if (grid.sheet >= props.length || props[grid.sheet]?.state !== 'visible') {
+    const next = props.findIndex((p) => p.state === 'visible');
+    setSheet(Math.max(0, next), false);
+  } else renderSheetTabs();
 }
 
 /** Нефритовые — когда можно, серые — когда нельзя. */
@@ -2966,10 +3023,17 @@ function pasteText(text: string): void {
       out.push(Array.from({ length: area.width }, (_, c) => src[c % w] ?? ''));
     }
   }
-  model.pasteCsvText(area, out.map((r) => r.join('\t')).join('\n'));
-  grid.render();
-  updateFormulaBar();
-  updateStatus();
+  try {
+    model.setSelectedCell(area.row, area.column);
+    model.pasteCsvText(area, out.map((r) => r.join('\t')).join('\n'));
+  } catch (e) {
+    showToast(`Не удалось вставить: ${e}`);
+  } finally {
+    // что бы ни случилось, на экране — то, что в книге (раньше ячейка казалась пустой до Enter)
+    grid.render();
+    updateFormulaBar();
+    updateStatus();
+  }
 }
 
 // --- Команды ---
@@ -3543,6 +3607,8 @@ register(
     run: () => sortBy(grid.sel.column, false, true) },
   { id: 'file.saveCsv', label: 'Сохранить лист в CSV', keywords: ['csv', 'экспорт', 'текст с разделителями', 'export'],
     run: () => { void desk.saveSheetCsv(); } },
+  { id: 'sheet.hideMany', label: 'Скрыть несколько листов…', keywords: ['скрыть листы', 'hide sheets', 'листы'], run: () => sheetsDialog('hide', grid.sheet) },
+  { id: 'sheet.showMany', label: 'Показать скрытые листы…', keywords: ['показать листы', 'unhide sheets', 'отобразить листы', 'листы'], run: () => sheetsDialog('show') },
   { id: 'data.updateLinks', label: 'Обновить связи', keywords: ['внешние ссылки', 'другие книги', 'связи', 'обновить значения', 'edit links', 'update links', 'refresh'],
     run: () => { void desk.updateLinks(false); } },
   { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
@@ -3721,6 +3787,8 @@ search.addEventListener('input', () => showPicker(searchResults(search.value), s
 search.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { search.value = ''; hidePicker(); focusGrid(); }
   if (e.key === 'Enter') {
+    // иначе Enter, дойдя до ячейки (фокус уже там), начинал в ней ввод с переводом строки
+    e.preventDefault();
     const first = searchResults(search.value)[0];
     hidePicker(); search.value = '';
     focusGrid();
@@ -3731,6 +3799,13 @@ search.addEventListener('blur', () => setTimeout(hidePicker, 100));
 
 // Сочетания, которые работают из любого места окна.
 window.addEventListener('keydown', (e) => {
+  // Фокус ни на чём (после меню ярлыка листа, окна, щелчка по пустому месту): горячие клавиши
+  // всё равно работают — раньше Ctrl+Z и другие молчали, пока не щёлкнешь по ячейке.
+  if (e.target === document.body && $('recovery').hidden && !e.defaultPrevented) {
+    focusGrid();
+    gridKey(e);
+    return;
+  }
   if (e.target === editor || e.target === formula) return;
   if (e.altKey && e.code === 'KeyQ') { e.preventDefault(); search.focus(); }
 });

@@ -1259,7 +1259,12 @@ fn parse_number(
     // ENS-Office: where the group separator is a (non-breaking) space, as in
     // Russian, people type and paste ordinary spaces: "1 234 567,89".
     let spaced = group_separator.is_whitespace();
-    let is_group = |x: char| x == group_separator || (spaced && (x == ' ' || x == '\u{a0}' || x == '\u{202f}'));
+    // Кроме обычного и неразрывного, Word, 1С и сайты ставят узкий (U+202F), тонкий (U+2009),
+    // цифровой (U+2007), пунктуационный (U+2008) и волосяной (U+200A) пробелы.
+    let is_group = |x: char| {
+        x == group_separator
+            || (spaced && matches!(x, ' ' | '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}' | '\u{2008}' | '\u{200a}'))
+    };
     // get the sign
     let sign = if characters[0] == '-' {
         position += 1;

@@ -53,7 +53,12 @@ let lastKey = '';
 function say(text: string, ms = 9000): void {
   if (!root) return;
   bubble.textContent = text;
+  bubble.classList.remove('below', 'left');
   bubble.hidden = false;
+  // у края окна облачко открывается в другую сторону, а не уезжает за экран
+  const r = bubble.getBoundingClientRect();
+  if (r.top < 0) bubble.classList.add('below');
+  if (r.left < 0) bubble.classList.add('left');
   clearTimeout(bubbleTimer);
   bubbleTimer = window.setTimeout(() => (bubble.hidden = true), ms);
 }
@@ -90,6 +95,9 @@ function build(): void {
   });
   body.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    // щелчок с дрожанием руки — не перетаскивание (раньше помощник «убегал» и ложился)
+    const r = root!.getBoundingClientRect();
+    if (!drag.moved && Math.hypot(e.clientX - (r.left + drag.dx), e.clientY - (r.top + drag.dy)) < 4) return;
     drag.moved = true;
     root!.style.left = `${Math.max(0, Math.min(innerWidth - 80, e.clientX - drag.dx))}px`;
     root!.style.top = `${Math.max(0, Math.min(innerHeight - 100, e.clientY - drag.dy))}px`;

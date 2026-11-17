@@ -132,6 +132,7 @@ mod test_ens_incremental;
 mod test_ens_format_lock;
 mod test_ens_locale_ru;
 mod test_ens_language_ru;
+mod test_ens_paste_numbers;
 mod test_ens_external;
 mod test_ens_user_formulas;
 mod test_ens_top50_ru;

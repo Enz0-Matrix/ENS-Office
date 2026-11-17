@@ -783,6 +783,10 @@ impl<'a> UserModel<'a> {
         }
         self.push_diff_list(diff_list);
         // select the pasted area
+        // ENS-Office: сначала активная ячейка — в начало вставки: иначе выделение
+        // отвергалось («selected cell is not inside the range»), вставка обрывалась
+        // до пересчёта, и ячейка выглядела пустой до следующего Enter.
+        self.set_selected_cell(area.row, area.column)?;
         self.set_selected_range(area.row, area.column, row - 1, last_column)?;
         self.evaluate_if_not_paused();
         Ok(())
