@@ -1711,13 +1711,16 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
     const fire = (el, init) => { const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }); el.dispatchEvent(e); return e.defaultPrevented; };
     const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     document.querySelector('.ProseMirror').dispatchEvent(ctx);
+    // Своё меню, открытое этим событием, закрываем щелчком мимо — как пользователь.
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     return {
       ctx: ctx.defaultPrevented,
       ctrlR: fire(document.body, { key: 'r', ctrlKey: true }),
       f5: fire(document.body, { key: 'F5' }),
     };
   });
-  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'без меню ничего не подавляется');
+  // Меню WebView в документе подавлено всегда: вместо него своё контекстное меню (contextmenu.ts).
+  eq(await outcome(), { ctx: true, ctrlR: false, f5: false }, 'без окна: меню WebView заменено своим, клавиши не трогаем');
 
   await p.click('.tab.file');
   await p.waitForSelector('#dialog:not([hidden])', { timeout: 3000 });
@@ -1740,7 +1743,7 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
   eq(inField, { input: false, heading: true }, 'поле ввода — меню можно, остальное окно — нельзя');
   await p.keyboard.press('Escape');
 
-  eq(await outcome(), { ctx: false, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
+  eq(await outcome(), { ctx: true, ctrlR: false, f5: false }, 'после закрытия снова как обычно');
   await p.context().close();
 });
 
@@ -2198,10 +2201,11 @@ await test('контекстные меню: текст, выделение, с�
   ok(await p.evaluate(() => window.ens.view.state.selection.node?.type.name === 'image'), 'рисунок выделен');
   await p.click('.context-menu.ctx-text button:has-text("За текстом")');
   ok(await p.evaluate(() => { let f = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') f = n.attrs.float; }); return f?.mode === 'behind'; }), 'обтекание «за текстом» из меню');
-  // Таблица: строки и столбцы.
-  const td = await (await p.$('.ProseMirror td')).boundingBox();
+  // Таблица: строки и столбцы. Сначала снять выделение рисунка: его рамка (уже «за текстом») может лежать над таблицей.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  const td = await (await p.$('.ProseMirror tr:last-child td:last-child')).boundingBox();
   await p.mouse.click(td.x + 10, td.y + td.height / 2, { button: 'right' });
-  ok((await kind()).startsWith('table'), 'меню таблицы');
+  ok((await kind()).startsWith('table'), `меню таблицы: ${await kind()}`);
   l = await labels();
   ok(l.includes('Вставить строку ниже') && l.includes('Удалить столбец') && l.includes('Свойства таблицы…'), `пункты таблицы: ${l}`);
   await p.click('.context-menu.ctx-text button:has-text("Вставить строку ниже")');
