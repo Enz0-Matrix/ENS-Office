@@ -32,6 +32,12 @@ pub(crate) fn get_workbook_xml_rels(workbook: &Workbook) -> String {
             "<Relationship Id=\"rId{id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml\" Target=\"../customXml/item1.xml\"/>"
         ));
     }
+    if workbook.ens_vba_parts.iter().any(|p| p.path.eq_ignore_ascii_case("xl/vbaProject.bin")) {
+        id += 1;
+        relationships_str.push(format!(
+            "<Relationship Id=\"rId{id}\" Type=\"http://schemas.microsoft.com/office/2006/relationships/vbaProject\" Target=\"vbaProject.bin\"/>"
+        ));
+    }
     format!(
         "{XML_DECLARATION}\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}</Relationships>",
         relationships_str.join("")

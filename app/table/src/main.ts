@@ -2747,7 +2747,10 @@ fileInput.addEventListener('change', async () => {
   if (!file) return;
   try {
     const next = openXlsx(new Uint8Array(await file.arrayBuffer()), file.name, localeId());
-    setModel(next, { ...desk.newDoc(file.name.replace(/\.xlsx$/i, '')) });
+    setModel(next, { ...desk.newDoc(file.name.replace(/\.xls[xm]$/i, '')) });
+    let lost: string[] = [];
+    try { lost = next.lostFeatures?.() ?? []; } catch { /* старый движок */ }
+    if (lost.length) showToast(`В книге есть то, что ENS-Table пока не сохраняет: ${lost.join(', ')}. Исходный файл не изменится.`);
   } catch (err) {
     alert(`Не удалось открыть «${file.name}»:\n${err}`);
   }

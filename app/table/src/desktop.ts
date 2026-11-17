@@ -18,6 +18,18 @@ export interface Doc {
   dirty: boolean;
   /** Книга восстановлена после сбоя: временные файлы удаляются, когда её сохранят. */
   recoveredFrom?: { session: string; id: string };
+  /** В исходном файле есть то, что ENS-Table не сохраняет: поверх него не пишем без спроса (ADR-005). */
+  lost?: string[];
+}
+
+/** В книге есть макросы (VBA). */
+const hasMacros = (m: Model) => { try { return m.hasMacros?.() ?? false; } catch { return false; } };
+/** Что из открытого файла не будет сохранено. */
+const lostOf = (m: Model) => { try { return m.lostFeatures?.() ?? []; } catch { return []; } };
+/** Байты книги; в .xlsx без макросов (Excel не откроет .xlsx с макросами). */
+function bookBytes(m: Model, path: string): Uint8Array {
+  if (hasMacros(m) && !/\.xlsm$/i.test(path) && m.toXlsxWithoutMacros) return m.toXlsxWithoutMacros();
+  return m.toXlsx();
 }
 
 export interface Host {
@@ -199,11 +211,16 @@ export async function openPath(path: string): Promise<void> {
     const bytes = await readFile(path);
     const model = openXlsx(bytes, info.name, localeId());
     if (isDesktop) await recovery.forget(doc.id).catch(() => {});
-    host.setModel(model, { id: newId(), path, title: baseName(path), modifiedMs: info.modified_ms, dirty: false });
+    const lost = lostOf(model);
+    host.setModel(model, { id: newId(), path, title: baseName(path), modifiedMs: info.modified_ms, dirty: false, lost: lost.length ? lost : undefined });
     await track();
     try { model.clearEnsChanges(); } catch { /* старый движок */ } // подготовка листа после открытия — не правка
     onOpened(model, path, await currentUser(), host);
     if (info.readonly) host.toast('Файл только для чтения: изменения можно сохранить под другим именем.');
+    if (lost.length) {
+      host.toast(`В книге есть то, что ENS-Table пока не сохраняет: ${lost.join(', ')}. ` +
+        'Исходный файл не будет перезаписан без вашего согласия: сохраняйте под другим именем.');
+    }
   } catch (e) {
     host.toast(String(e));
   }
@@ -215,15 +232,33 @@ export async function save(): Promise<boolean> {
   const doc = host.doc();
   if (!isDesktop) return download();
   if (!doc.path) return saveAs();
+  if (doc.lost?.length) {
+    // ADR-005: поверх исходного файла с потерями не пишем — только «Сохранить как».
+    const act = await choose(`Сохранить «${doc.title}» в новый файл?`,
+      `В исходном файле есть то, что ENS-Table пока не сохраняет: ${doc.lost.join(', ')}. ` +
+      'Если записать поверх него, это пропадёт. Сохраните книгу под другим именем — исходный файл останется как есть.',
+      [['saveas', 'Сохранить как…'], ['cancel', 'Отмена']]);
+    return act === 'saveas' ? saveAs() : false;
+  }
   return writeTo(doc.path, false);
 }
 
 export async function saveAs(): Promise<boolean> {
   const doc = host.doc();
   if (!isDesktop) return download();
-  const path = await pickSave(`${doc.title.replace(/ \(восстановлено\)$/, '')}.xlsx`);
-  if (!path) return false;
-  return writeTo(path.endsWith('.xlsx') || path.endsWith('.xlsm') ? path : `${path}.xlsx`, true);
+  const macros = hasMacros(host.model());
+  const ext = macros ? '.xlsm' : '.xlsx';
+  const picked = await pickSave(`${doc.title.replace(/ \(восстановлено\)$/, '')}${ext}`);
+  if (!picked) return false;
+  let path = /\.xls[xm]$/i.test(picked) ? picked : `${picked}${ext}`;
+  if (macros && /\.xlsx$/i.test(path)) {
+    const act = await choose('В книге есть макросы',
+      'В формате .xlsx макросы не сохраняются. Сохранить книгу как .xlsm, чтобы они остались?',
+      [['xlsm', 'Сохранить как .xlsm'], ['xlsx', 'Без макросов (.xlsx)'], ['cancel', 'Отмена']]);
+    if (act === 'cancel') return false;
+    if (act === 'xlsm') path = path.replace(/\.xlsx$/i, '.xlsm');
+  }
+  return writeTo(path, true);
 }
 
 let osName: Promise<string> | null = null;
@@ -252,7 +287,7 @@ async function writeTo(path: string, isNew: boolean): Promise<boolean> {
 
 async function writeBytes(path: string, isNew: boolean): Promise<boolean> {
   const doc = host.doc();
-  const bytes = host.model().toXlsx();
+  const bytes = bookBytes(host.model(), path);
   const expected = isNew ? 0 : doc.modifiedMs;
   try {
     doc.modifiedMs = await saveFile(path, bytes, expected);
@@ -277,6 +312,7 @@ async function writeBytes(path: string, isNew: boolean): Promise<boolean> {
   doc.path = path;
   doc.title = baseName(path);
   doc.dirty = false;
+  doc.lost = undefined; // новый файл записан ENS-Table: в нём нечему теряться
   rememberRecent(path, doc.title);
   if (doc.recoveredFrom) {
     await recovery.discard(doc.recoveredFrom.session, doc.recoveredFrom.id).catch(() => {});
@@ -328,10 +364,11 @@ async function download(): Promise<boolean> {
   beforeSave(host.model(), await currentUser());
   afterSave(host.model(), ''); celebrate(host.model());
   const a = document.createElement('a');
+  const macros = hasMacros(host.model());
   a.href = URL.createObjectURL(new Blob([new Uint8Array(host.model().toXlsx())], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    type: macros ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }));
-  a.download = `${doc.title}.xlsx`;
+  a.download = `${doc.title}${macros ? '.xlsm' : '.xlsx'}`;
   a.click();
   URL.revokeObjectURL(a.href);
   doc.dirty = false;
@@ -497,6 +534,27 @@ async function setupClose(): Promise<void> {
     await recovery.forget(doc.id).catch(() => {});
     if ((await getAllWebviewWindows()).length <= 1) await recovery.endSession().catch(() => {});
     await win.destroy();
+  });
+}
+
+/** Окно с вопросом и кнопками; первая — основная. Закрыть нечем, кроме кнопок. */
+function choose<T extends string>(title: string, text: string, buttons: [T, string][]): Promise<T> {
+  const panel = document.getElementById('recovery')!;
+  panel.innerHTML = `
+    <div class="modal small">
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(text)}</p>
+      <div class="rec-actions">
+        ${buttons.map(([act, label], i) => `<button data-act="${act}"${i === 0 ? ' class="primary"' : ''}>${escapeHtml(label)}</button>`).join('')}
+      </div>
+    </div>`;
+  panel.hidden = false;
+  return new Promise((resolve) => {
+    panel.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+      b.addEventListener('click', () => {
+        panel.hidden = true;
+        resolve(b.dataset.act as T);
+      }));
   });
 }
 

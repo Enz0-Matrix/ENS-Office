@@ -124,9 +124,15 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
     } else {
         String::new()
     };
+    // ENS-Office: codeName книги нужен макросам (модуль «ЭтаКнига»).
+    let workbook_pr = if workbook.ens_code_name.is_empty() {
+        String::new()
+    } else {
+        format!("<workbookPr codeName=\"{}\"/>", escape_xml(&workbook.ens_code_name))
+    };
     format!("{XML_DECLARATION}\n\
     <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-    {workbook_protection}\
+    {workbook_pr}{workbook_protection}\
     <bookViews>
     <workbookView activeTab=\"{selected_sheet}\"/>\
     </bookViews>

@@ -10,6 +10,7 @@ use crate::expressions::utils;
 use crate::language::get_default_language;
 use crate::locale::get_default_locale;
 use crate::model::{CellStructure, Model};
+use crate::types::TableColumn;
 use crate::types::{ArrayKind, Cell, Link, MergedCell, Worksheet};
 
 /// Applies `map` to the (row, column) key of every link in the worksheet, so
@@ -412,6 +413,95 @@ impl<'a> Model<'a> {
     }
 
     /// Updates the `range` field and formula fields of every CF rule on `sheet` according to `displace_data`.
+    /// ENS-Office: «умные» таблицы (ListObject) сдвигаются, растут и сжимаются вместе
+    /// со строками и столбцами, как в Excel. Таблица, чьи ячейки удалены целиком, исчезает.
+    /// При вставке столбца внутрь таблицы добавляется столбец таблицы, при удалении — убирается.
+    fn displace_tables(&mut self, sheet: u32, displace_data: &DisplaceData) {
+        let Ok(sheet_name) = self.workbook.worksheet(sheet).map(|w| w.get_name()) else {
+            return;
+        };
+        let names: Vec<String> = self
+            .workbook
+            .tables
+            .iter()
+            .filter(|(_, t)| t.sheet_name == sheet_name)
+            .map(|(k, _)| k.clone())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        // Заголовки новых столбцов таблицы: Excel вписывает имя в ячейку заголовка.
+        let mut new_headers: Vec<(i32, i32, String)> = Vec::new();
+        for name in names {
+            let Some(table) = self.workbook.tables.get_mut(&name) else {
+                continue;
+            };
+            let old_c1 = utils::parse_reference_a1(
+                table.reference.split(':').next().unwrap_or_default(),
+            )
+            .map(|r| r.column);
+            match displace_cf_sqref_part(&table.reference, displace_data, sheet) {
+                None => {
+                    self.workbook.tables.remove(&name);
+                }
+                Some(new_ref) => {
+                    if let (Some(c1), DisplaceData::Column { column, delta, .. }) =
+                        (old_c1, displace_data)
+                    {
+                        let width = table.columns.len() as i32;
+                        let c2 = c1 + width - 1;
+                        if *delta < 0 {
+                            let (from, to) = (*column, *column - delta - 1);
+                            let lo = from.max(c1);
+                            let hi = to.min(c2);
+                            if lo <= hi {
+                                table.columns.drain((lo - c1) as usize..=(hi - c1) as usize);
+                                table.ens_raw_xml.clear();
+                            }
+                        } else if *column > c1 && *column <= c2 {
+                            table.ens_raw_xml.clear();
+                            let at = (*column - c1) as usize;
+                            let mut next_id =
+                                table.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+                            for k in 0..*delta {
+                                let mut n = width + k + 1;
+                                let mut col_name = format!("Столбец{n}");
+                                while table.columns.iter().any(|c| c.name == col_name) {
+                                    n += 1;
+                                    col_name = format!("Столбец{n}");
+                                }
+                                if table.header_row_count > 0 {
+                                    let header_row = utils::parse_reference_a1(
+                                        new_ref.split(':').next().unwrap_or_default(),
+                                    )
+                                    .map(|r| r.row);
+                                    if let Some(header_row) = header_row {
+                                        new_headers.push((header_row, *column + k, col_name.clone()));
+                                    }
+                                }
+                                table.columns.insert(
+                                    at + k as usize,
+                                    TableColumn {
+                                        id: next_id,
+                                        name: col_name,
+                                        ..Default::default()
+                                    },
+                                );
+                                next_id += 1;
+                            }
+                        }
+                    }
+                    table.reference = new_ref;
+                }
+            }
+        }
+        self.parser.set_tables(self.workbook.tables.clone());
+        for (row, column, text) in new_headers {
+            // Ячейка только что вставлена и пуста: запись не может не пройти.
+            let _ = self.set_user_input(sheet, row, column, text);
+        }
+    }
+
     fn displace_cf_ranges(&mut self, sheet: u32, displace_data: &DisplaceData) {
         let count = match self.workbook.worksheets.get(sheet as usize) {
             Some(ws) => ws.conditional_formatting.len(),
@@ -700,6 +790,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
 
         // In the list of columns:
         // * Keep all the columns to the left
@@ -829,6 +920,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
         let worksheet = &mut self.workbook.worksheet_mut(sheet)?;
 
         // deletes all the column styles
@@ -1105,6 +1197,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
 
         Ok(())
     }
@@ -1214,6 +1307,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
         Ok(())
     }
 
@@ -1371,6 +1465,7 @@ impl<'a> Model<'a> {
         };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
         Ok(())
     }
 
@@ -1518,6 +1613,7 @@ impl<'a> Model<'a> {
         let disp = DisplaceData::RowMove { sheet, row, delta };
         self.displace_cells(&disp)?;
         self.displace_cf_ranges(sheet, &disp);
+        self.displace_tables(sheet, &disp);
         Ok(())
     }
 

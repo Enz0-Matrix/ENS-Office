@@ -426,6 +426,13 @@ pub(crate) enum Diff {
         old_value: Vec<crate::cf_types::ConditionalFormatting>,
         new_value: Vec<crate::cf_types::ConditionalFormatting>,
     },
+    /// ENS-Office: «умные» таблицы книги. `old_value` ставится только при отмене,
+    /// `new_value` — только при повторе (None — ничего не делать). Так снимок не
+    /// сдвигается второй раз вставкой или удалением строк, которые идут рядом в том же шаге.
+    SetTables {
+        old_value: Option<std::collections::HashMap<String, crate::types::Table>>,
+        new_value: Option<std::collections::HashMap<String, crate::types::Table>>,
+    },
     // FIXME: we are missing SetViewDiffs
 }
 

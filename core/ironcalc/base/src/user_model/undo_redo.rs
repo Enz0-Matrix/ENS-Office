@@ -148,6 +148,14 @@ impl<'a> UserModel<'a> {
                 Diff::SetPrintArea { sheet, new_value: _, old_value } => {
                     self.write_print_area(*sheet, *old_value)?;
                 }
+                Diff::SetTables { old_value, new_value: _ } => {
+                    if let Some(t) = old_value {
+                        self.model.workbook.tables = t.clone();
+                        // формулы со ссылками на таблицы разбираются заново
+                        self.model.reset_parsed_structures();
+                        needs_evaluation = true;
+                    }
+                }
                 Diff::SetConditionalFormattingList { sheet, old_value, new_value: _ } => {
                     self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = old_value.clone();
                     needs_evaluation = true;
@@ -764,6 +772,14 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetPrintArea { sheet, new_value, old_value: _ } => {
                     self.write_print_area(*sheet, *new_value)?;
+                }
+                Diff::SetTables { old_value: _, new_value } => {
+                    if let Some(t) = new_value {
+                        self.model.workbook.tables = t.clone();
+                        // формулы со ссылками на таблицы разбираются заново
+                        self.model.reset_parsed_structures();
+                        needs_evaluation = true;
+                    }
                 }
                 Diff::SetConditionalFormattingList { sheet, old_value: _, new_value } => {
                     self.model.workbook.worksheet_mut(*sheet)?.conditional_formatting = new_value.clone();

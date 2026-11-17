@@ -47,6 +47,7 @@ fn create_test_table(
             },
             totals_row_dxf_id: None,
             has_filters: false,
+            ens_raw_xml: String::new(),
         },
     );
     table
