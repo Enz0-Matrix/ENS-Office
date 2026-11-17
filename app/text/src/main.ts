@@ -51,6 +51,7 @@ import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats a
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
+import { initTableMove, updateTableMove } from './table-move';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -422,6 +423,7 @@ function setZoom(z: number): void {
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
   updateOverlay();
   updateRuler();
+  updateTableMove();
 }
 
 // ---------------------------------------------------------------- редактор
@@ -489,6 +491,7 @@ function syncImageTab(): void {
 function afterChange(docChanged: boolean): void {
   updateUi();
   updateOverlay();
+  updateTableMove();
   updateRuler();
   syncImageTab();
   renderInspector(inspectorSource, inspectorActions);
@@ -1869,6 +1872,7 @@ initImageTools({
   view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,
   textWidth: () => (curPage().w - curPage().left - curPage().right) * PX, update: updateUi,
 });
+initTableMove({ view: () => view, sheet: $('sheet'), scale: () => zoom, locked: () => !!hfSession });
 initCommandSearch();
 applyPage();
 setZoom(1);

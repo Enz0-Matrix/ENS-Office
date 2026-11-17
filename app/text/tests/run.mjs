@@ -2077,6 +2077,63 @@ await test('обрезка рисунка: во время перетаскив�
   ok(crop && crop[2] > 0.2, `обрезано справа: ${JSON.stringify(crop)}`);
   await p.context().close();
 });
+await test('таблица: перемещение за ручку в углу, линия места, одна запись в истории, Esc отменяет', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const tbl = s.nodes.table.create({ borders: true }, [s.nodes.table_row.create(null, [cell('А1'), cell('Б1')]), s.nodes.table_row.create(null, [cell('А2'), cell('Б2')])]);
+    E.loadDoc(s.nodes.doc.create(null, [P('Первый'), tbl, P('Второй'), P('Третий'), P('Четвёртый')]), E.getMeta(), 'move');
+  });
+  const order = () => p.evaluate(() => { const o = []; window.ens.view.state.doc.forEach((n) => o.push(n.type.name === 'table' ? 'T' : n.textContent)); return o.join(','); });
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'исходный порядок');
+  // Ручка появляется при наведении на таблицу.
+  const cellBox = await (await p.$('.ProseMirror td')).boundingBox();
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h = await (await p.$('.tbl-move')).boundingBox();
+  const tb = await (await p.$('.ProseMirror table')).boundingBox();
+  ok(h.x < tb.x && h.y < tb.y && tb.x - h.x < 30, 'ручка у левого верхнего угла таблицы');
+  // Путь от таблицы к ручке её не прячет.
+  await p.mouse.move(h.x + h.width / 2, h.y + h.height / 2, { steps: 5 });
+  ok(!(await p.$eval('.tbl-move', (e) => e.hidden)), 'ручка не исчезла по дороге');
+  const target = await p.evaluate(() => { const ps = window.ens.view.dom.querySelectorAll(':scope > p'); const r = ps[ps.length - 1].getBoundingClientRect(); return { x: r.left + 20, y: r.bottom - 3 }; });
+  // Esc отменяет перетаскивание.
+  await p.mouse.down();
+  await p.mouse.move(target.x, target.y, { steps: 6 });
+  ok(await p.$eval('.tbl-drop', (e) => !e.hidden), 'линия места вставки видна');
+  await p.keyboard.press('Escape');
+  await p.mouse.up();
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'Esc: таблица осталась на месте');
+  // Перенос в конец документа.
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h2 = await (await p.$('.tbl-move')).boundingBox();
+  await p.mouse.move(h2.x + h2.width / 2, h2.y + h2.height / 2, { steps: 3 });
+  await p.mouse.down();
+  await p.mouse.move(target.x, target.y, { steps: 6 });
+  await p.mouse.up();
+  eq(await order(), 'Первый,Второй,Третий,Четвёртый,T', 'таблица перенесена в конец');
+  ok(await p.evaluate(() => window.ens.view.state.selection.$from.node(1).type.name === 'table'), 'курсор в перенесённой таблице');
+  ok((await p.evaluate(() => window.ens.view.state.doc.lastChild.textContent)) === 'А1Б1А2Б2', 'содержимое таблицы цело');
+  // Одна отмена возвращает на место.
+  await p.keyboard.press('Control+KeyZ');
+  eq(await order(), 'Первый,T,Второй,Третий,Четвёртый', 'одна отмена возвращает таблицу');
+  // Перенос в начало (до первого абзаца) и запись в DOCX.
+  await p.mouse.move(cellBox.x + 10, cellBox.y + 10);
+  await p.waitForSelector('.tbl-move:not([hidden])');
+  const h3 = await (await p.$('.tbl-move')).boundingBox();
+  const first = await p.evaluate(() => { const r = window.ens.view.dom.querySelector(':scope > p').getBoundingClientRect(); return { x: r.left + 20, y: r.top + 2 }; });
+  await p.mouse.move(h3.x + h3.width / 2, h3.y + h3.height / 2, { steps: 3 });
+  await p.mouse.down();
+  await p.mouse.move(first.x, first.y, { steps: 6 });
+  await p.mouse.up();
+  eq(await order(), 'T,Первый,Второй,Третий,Четвёртый', 'таблица перенесена в начало');
+  const back = await p.evaluate(() => { const E = window.ens; const b = E.importDocx(E.exportDocx(E.view.state.doc, E.getMeta(), 'm')); const o = []; b.doc.forEach((n) => o.push(n.type.name === 'table' ? 'T' : n.textContent)); return o.join(','); });
+  ok(back.startsWith('T,Первый,Второй,Третий,Четвёртый'), `DOCX: ${back}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
