@@ -2311,6 +2311,22 @@ await test('табуляция как в Word: стопы через 1,27 см �
   ok(r.same, 'документ не изменился (табуляция — только вид)');
   await p.context().close();
 });
+await test('версия: один номер — из package.json в «О программе», в tauri.conf.json и в Cargo.toml', async () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  const conf = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8')).version;
+  eq(conf, '../package.json', 'tauri.conf.json берёт версию из package.json');
+  for (const f of ['src-tauri/Cargo.toml', 'redos7/Cargo.toml']) {
+    const m = /^version\s*=\s*"([^"]+)"/m.exec(readFileSync(join(root, f), 'utf8'));
+    eq(m?.[1], pkg, `${f}: версия совпадает с package.json`);
+  }
+  const p = await page();
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden])');
+  await p.click('#dialog button:has-text("О программе")');
+  await p.waitForSelector('#dialog h2:has-text("ENS-Text")');
+  eq(await p.$eval('#dialog h2', (h) => h.textContent), `ENS-Text ${pkg}`, '«О программе» показывает версию из package.json');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
