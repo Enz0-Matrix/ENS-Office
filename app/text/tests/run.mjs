@@ -2399,6 +2399,48 @@ await test('скрытые символы: Ctrl+* показывает ¶ · ° 
   ok(await p.evaluate(() => !window.ens.view.dom.classList.contains('show-marks') && !document.querySelector('.hm-para')), 'выключено');
   await p.context().close();
 });
+await test('словарь: фамилия Едренников во всех формах не проверяется; свои слова — окно и контекстное меню', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [
+      P('Едренников, Едренникову, Едренниковой, Едренниковыми и едренникова — все формы.'),
+      P('Слово Зюзюкинцев проверяется, пока его нет в словаре.'),
+    ]), E.getMeta(), 'dict');
+  });
+  await p.waitForTimeout(200);
+  const ok1 = () => p.$$eval('.ProseMirror .dict-word[spellcheck="false"]', (a) => a.map((x) => x.textContent));
+  eq(await ok1(), ['Едренников', 'Едренникову', 'Едренниковой', 'Едренниковыми', 'едренникова'], 'встроенные формы фамилии не проверяются');
+  // Контекстное меню: «Добавить в словарь» для слова под курсором.
+  const pt = await p.evaluate(() => {
+    const t = window.ens.view.dom.querySelectorAll('p')[1].firstChild;
+    const i = t.textContent.indexOf('Зюзюкинцев') + 3;
+    const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 1);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  await p.click('.context-menu.ctx-text button:has-text("Добавить «Зюзюкинцев» в словарь")');
+  ok((await ok1()).includes('Зюзюкинцев'), 'слово из меню больше не проверяется');
+  // Набор новой формы: тоже из словаря (фамилия на -ев — добавлены все формы).
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.insertText(' Зюзюкинцевым', E.view.state.doc.content.size - 1)); });
+  ok((await ok1()).includes('Зюзюкинцевым'), 'форма фамилии тоже в словаре');
+  // Окно «Словарь»: свои слова, удаление, добавление без форм.
+  await p.evaluate(() => window.ens.run('review.dictionary'));
+  await p.waitForSelector('#dialog .dict-list');
+  ok((await p.$$eval('#dialog .dict-row span', (a) => a.map((x) => x.textContent))).includes('Зюзюкинцева'), 'в окне видны добавленные формы');
+  await p.fill('#dialog input[type=text]', 'ЕНСОфис');
+  await p.keyboard.press('Enter');
+  ok((await p.$$eval('#dialog .dict-row span', (a) => a.map((x) => x.textContent))).includes('ЕНСОфис'), 'слово добавлено из окна');
+  await p.click('#dialog .dict-row:has-text("Зюзюкинцев") >> nth=0 >> button');
+  await p.keyboard.press('Escape');
+  const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.dict')));
+  ok(saved.includes('ЕНСОфис') && !saved.includes('Зюзюкинцев'), `словарь сохранён у пользователя: ${saved.length} слов`);
+  ok(!(await ok1()).includes('Зюзюкинцев'), 'удалённое слово снова проверяется');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent.includes('Зюзюкинцевым')), true, 'текст документа не тронут');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

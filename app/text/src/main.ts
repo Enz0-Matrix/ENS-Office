@@ -55,6 +55,7 @@ import { initTableMove, updateTableMove } from './table-move';
 import { hideContextMenu, initContextMenu } from './contextmenu';
 import { tabsPlugin, tabShifts } from './tabs';
 import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
+import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -437,7 +438,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -701,6 +702,7 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  { id: 'review.dictionary', label: 'Словарь…', keywords: ['словарь', 'орфография', 'фамилия', 'не подчёркивать', 'исключения'], run: () => dictDialog() },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
@@ -1056,6 +1058,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'review.mergeCopies', icon: 'document_text', label: 'Объединить копии' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
           { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
+          { type: 'large', command: 'review.dictionary', icon: 'document_text', label: 'Словарь' },
         ],
       },
       { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }, { type: 'large', command: 'view.night', icon: 'paint_brush', label: 'Ночной лист' }] },
@@ -1356,6 +1359,42 @@ function tableDialog(): void {
   });
 }
 
+/** Окно «Словарь»: свои слова, которые проверка орфографии не подчёркивает; для фамилий — сразу все формы. */
+function dictDialog(): void {
+  dialog((box, close) => {
+    const input = el('input', { type: 'text', placeholder: 'Слово или фамилия' });
+    const forms = el('input', { type: 'checkbox', checked: true });
+    const list = el('div', { class: 'dict-list' });
+    const draw = () => {
+      const words = userWords();
+      list.replaceChildren(...(words.length ? words.map((w) => el('div', { class: 'dict-row' },
+        el('span', { textContent: w }),
+        el('button', { textContent: 'Удалить', title: `Удалить «${w}» из словаря`, onclick: () => { removeWord(view, w); draw(); } }))) : [el('p', { class: 'dict-empty', textContent: 'Своих слов пока нет.' })]));
+    };
+    const add = () => {
+      const w = input.value.trim();
+      if (!w) return;
+      const added = addWords(view, w, forms.checked);
+      toast(added.length ? `В словарь добавлено: ${added.join(', ')}` : 'Это слово уже есть в словаре');
+      input.value = '';
+      input.focus();
+      draw();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    box.append(
+      el('h2', { textContent: 'Словарь' }),
+      el('p', { textContent: 'Слова из словаря проверка орфографии не подчёркивает. Словарь хранится на этом компьютере.' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Новое слово' }), input, el('button', { class: 'primary', textContent: 'Добавить', onclick: add })),
+      el('label', { class: 'dict-forms' }, forms, ' Для фамилии на -ов, -ев, -ин добавить все формы (Иванов, Иванова, Иванову…)'),
+      list,
+      el('p', { class: 'dict-builtin', textContent: `Встроено в программу: ${BUILTIN_WORDS.slice(0, 3).join(', ')} и другие формы (${BUILTIN_WORDS.length}).` }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Закрыть', onclick: close })),
+    );
+    draw();
+    input.focus();
+  });
+}
+
 function linkDialog(): void {
   dialog((box, close) => {
     const url = el('input', { type: 'text', value: linkAt(active().state) ?? 'https://', placeholder: 'Адрес ссылки' });
@@ -1623,7 +1662,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();

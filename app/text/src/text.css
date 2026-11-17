@@ -375,3 +375,10 @@
 .ProseMirror.show-marks .hm-para::after { content: "¶"; }
 .ProseMirror.show-marks .hm-br::after { content: "↵"; }
 @media print { .ProseMirror .hm-w, .ProseMirror.show-marks .hm-sp::after, .ProseMirror.show-marks .hm-nb::after, .ProseMirror.show-marks span.tab::after { display: none !important; content: none !important; } }
+
+/* Окно «Словарь» (dict.ts). */
+.dict-list { max-height: 34vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; margin: 8px 0; min-height: 40px; }
+.dict-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 2px 6px; }
+.dict-row:hover { background: rgba(0,0,0,.04); }
+.dict-forms { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.dict-empty, .dict-builtin { color: var(--muted); font-size: 13px; }
