@@ -382,3 +382,12 @@
 .dict-row:hover { background: rgba(0,0,0,.04); }
 .dict-forms { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .dict-empty, .dict-builtin { color: var(--muted); font-size: 13px; }
+
+/* Меню «Файл» ENS-Text (backstage-ui.ts): основа — .backstage и .bs-* из общих стилей ENS-Table. */
+.text-backstage .bs-tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.text-backstage .bs-tile { width: 150px; font-size: 13px; text-align: center; }
+.text-backstage .bs-page { width: 84px; height: 112px; background: #fff; border: 1px solid #d0d0d0; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  background-image: repeating-linear-gradient(180deg, transparent 0 14px, #e6e6e6 14px 15px); background-clip: content-box; padding: 14px 10px; box-sizing: border-box; }
+.text-backstage .bs-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 8px 0 12px; }
+.text-backstage .bs-wide:disabled { opacity: .5; cursor: default; }
+.text-backstage .bs-row input[type=number] { margin: 0 4px; }

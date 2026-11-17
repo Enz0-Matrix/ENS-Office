@@ -1685,23 +1685,24 @@ await test('«рентген» форматирования: что задано
   await p.context().close();
 });
 
-await test('меню «Файл»: кнопка «Закрыть» видна, в фокусе и закрывает меню', async () => {
+await test('меню «Файл»: кнопка «Назад» видна, Esc и кнопка закрывают меню', async () => {
   const p = await page();
   await p.click('.tab.file');
-  await p.waitForSelector('#dialog:not([hidden]) .menu-close', { timeout: 3000 });
+  await p.waitForSelector('.text-backstage:not([hidden]) .bs-back', { timeout: 3000 });
   const st = await p.evaluate(() => {
-    const b = document.querySelector('#dialog .menu-close');
+    const b = document.querySelector('.text-backstage .bs-back');
     const r = b.getBoundingClientRect();
-    return { text: b.textContent.trim(), icon: !!b.querySelector('svg'), w: Math.round(r.width), h: Math.round(r.height), title: b.getAttribute('title'), focused: document.activeElement === b };
+    return { icon: !!b.querySelector('svg'), w: Math.round(r.width), h: Math.round(r.height), title: b.getAttribute('title') };
   });
-  eq(st.text, 'Закрыть', 'подпись кнопки');
   ok(st.icon, 'значок как в ENS-Table');
-  ok(st.w > 40 && st.h > 16, `кнопка не нулевая: ${JSON.stringify(st)}`);
+  ok(st.w > 20 && st.h > 16, `кнопка не нулевая: ${JSON.stringify(st)}`);
   ok(/Esc/.test(st.title || ''), 'подсказка про Esc');
-  ok(st.focused, 'кнопка в фокусе');
-  await p.click('#dialog .menu-close');
-  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
-  ok(true, 'меню закрылось кнопкой');
+  await p.click('.text-backstage .bs-back');
+  await p.waitForSelector('.text-backstage', { state: 'hidden', timeout: 3000 });
+  await p.click('.tab.file');
+  await p.waitForSelector('.text-backstage:not([hidden])');
+  await p.keyboard.press('Escape');
+  await p.waitForSelector('.text-backstage', { state: 'hidden', timeout: 3000 });
   await p.context().close();
 });
 
@@ -1723,11 +1724,11 @@ await test('меню открыто: правая кнопка и Ctrl+R/F5 не
   eq(await outcome(), { ctx: true, ctrlR: false, f5: false }, 'без окна: меню WebView заменено своим, клавиши не трогаем');
 
   await p.click('.tab.file');
-  await p.waitForSelector('#dialog:not([hidden])', { timeout: 3000 });
+  await p.waitForSelector('.text-backstage:not([hidden])', { timeout: 3000 });
   eq(await outcome(), { ctx: true, ctrlR: true, f5: true }, 'при открытом меню перезапуск заблокирован');
 
   await p.keyboard.press('Escape');
-  await p.waitForFunction(() => document.getElementById('dialog').hidden, null, { timeout: 3000 });
+  await p.waitForSelector('.text-backstage', { state: 'hidden', timeout: 3000 });
 
   // В окне с полем ввода системное меню должно остаться, иначе пропадёт «Вставить».
   await p.evaluate(() => window.ens.run('file.saveAs'));
@@ -2321,10 +2322,8 @@ await test('версия: один номер — из package.json в «О пр
   }
   const p = await page();
   await p.click('.tab.file');
-  await p.waitForSelector('#dialog:not([hidden])');
-  await p.click('#dialog button:has-text("О программе")');
-  await p.waitForSelector('#dialog h2:has-text("ENS-Text")');
-  eq(await p.$eval('#dialog h2', (h) => h.textContent), `ENS-Text ${pkg}`, '«О программе» показывает версию из package.json');
+  await p.waitForSelector('.text-backstage:not([hidden]) .bs-about');
+  ok((await p.$eval('.text-backstage .bs-about', (a) => a.textContent)).includes(`ENS-Text ${pkg}`), 'меню «Файл» показывает версию из package.json');
   await p.context().close();
 });
 await test('скрытые символы: Ctrl+* показывает ¶ · ° → ↵, вёрстка и документ не меняются, при печати не видны', async () => {
@@ -2439,6 +2438,116 @@ await test('словарь: фамилия Едренников во всех ф
   ok(saved.includes('ЕНСОфис') && !saved.includes('Зюзюкинцев'), `словарь сохранён у пользователя: ${saved.length} слов`);
   ok(!(await ok1()).includes('Зюзюкинцев'), 'удалённое слово снова проверяется');
   eq(await p.evaluate(() => window.ens.view.state.doc.textContent.includes('Зюзюкинцевым')), true, 'текст документа не тронут');
+  await p.context().close();
+});
+await test('меню «Файл» как в ENS-Table: разделы, шаблоны плитками, параметры, «Закрыть», авторство и лицензия', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Черновик');
+  // Alt+F открывает меню на «Сведениях».
+  await p.keyboard.press('Alt+KeyF');
+  await p.waitForSelector('.text-backstage:not([hidden])');
+  const nav = await p.$$eval('.text-backstage .bs-nav button[data-go]', (b) => b.map((x) => x.textContent.trim()).filter(Boolean));
+  eq(nav, ['Сведения', 'Создать', 'Открыть', 'Сохранить', 'Сохранить как', 'Печать', 'Закрыть', 'Параметры'], 'разделы как в ENS-Table');
+  ok((await p.$eval('.text-backstage .bs-body h2', (h) => h.textContent)).includes('есть несохранённые изменения'), 'сведения: несохранённые изменения');
+  ok(/Слов: 1/.test(await p.$eval('.text-backstage .bs-body', (b) => b.textContent)) || /слов: 1/.test(await p.$eval('.text-backstage .bs-body', (b) => b.textContent)), 'сведения: число слов');
+  const about = await p.$eval('.text-backstage .bs-about', (a) => a.textContent);
+  ok(about.includes('Едренников') && about.includes('AGPL-3.0-or-later'), `авторство и лицензия: ${about}`);
+  // Создать: пустой документ и все встроенные шаблоны плитками.
+  await p.click('.text-backstage [data-go="new"]');
+  const tiles = await p.$$eval('.text-backstage .bs-tile', (b) => b.map((x) => x.textContent.trim()));
+  ok(tiles[0] === 'Новый документ' && tiles.includes('Письмо') && tiles.includes('Приказ') && tiles.length >= 10, `плитки: ${tiles}`);
+  await p.click('.text-backstage .bs-tile:has-text("Письмо")');
+  // Документ не сохранён: сначала вопрос.
+  await p.waitForSelector('#dialog:not([hidden]) button.danger');
+  await p.click('#dialog button.danger');
+  await p.waitForFunction(() => window.ens.view.state.doc.textContent.length > 50);
+  ok(await p.$('.text-backstage[hidden]'), 'меню закрылось');
+  ok(!(await p.evaluate(() => window.ens.view.state.doc.textContent.includes('Черновик'))), 'создан документ из шаблона «Письмо»');
+  // Параметры: имя автора, напоминание, типограф — сохраняются в настройках.
+  await p.keyboard.press('Alt+KeyF');
+  await p.click('.text-backstage [data-go="options"]');
+  await p.fill('.text-backstage input[data-set="userName"]', 'Тестов Т. Т.');
+  await p.press('.text-backstage input[data-set="userName"]', 'Tab');
+  await p.fill('.text-backstage input[data-set="saveReminderMinutes"]', '25');
+  await p.press('.text-backstage input[data-set="saveReminderMinutes"]', 'Tab');
+  const live0 = await p.$eval('.text-backstage input[data-set="liveQuotes"]', (c) => c.checked);
+  await p.click('.text-backstage input[data-set="liveQuotes"]');
+  const marks = await p.$('.text-backstage input[data-set="view.marks"]');
+  ok(marks, 'скрытые знаки — в параметрах');
+  await marks.click();
+  const st = await p.evaluate(() => {
+    const raw = Object.keys(localStorage).map((k) => localStorage.getItem(k)).join(' ');
+    return { name: raw.includes('Тестов Т. Т.'), rem: /"saveReminderMinutes":25/.test(raw), live: localStorage.getItem('ens-text.liveQuotes'), marks: window.ens.view.dom.classList.contains('show-marks') };
+  });
+  ok(st.name && st.rem, `имя и напоминание сохранены: ${JSON.stringify(st)}`);
+  eq(st.live, live0 ? '0' : '1', 'типограф переключён');
+  ok(st.marks, 'скрытые знаки включены из параметров');
+  // Открыть: в браузере — «Обзор…» и пояснение, без путей.
+  await p.click('.text-backstage [data-go="open"]');
+  ok((await p.$$('.text-backstage .bs-wide')).length >= 1, 'кнопка «Обзор…»');
+  // «Закрыть»: документ закрывается, остаётся пустой.
+  await p.click('.text-backstage [data-go="close"]');
+  await p.waitForSelector('#dialog:not([hidden]) button.danger');
+  await p.click('#dialog button.danger');
+  await p.waitForFunction(() => window.ens.view.state.doc.textContent === '');
+  ok(await p.$('.text-backstage[hidden]'), 'меню закрылось после «Закрыть»');
+  await p.context().close();
+});
+await test('шаблоны: каждый встроенный шаблон создаётся без ошибок (письмо, приказ, акт, протокол без даты)', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const { builtInTemplates } = await import('/src/templates.ts');
+    return builtInTemplates().map((t) => { try { const b = t.build(); b.doc.check(); return [t.id, b.doc.textContent.length > 0 || t.id.startsWith('blank')]; } catch (e) { return [t.id, String(e.message)]; } });
+  });
+  for (const [id, res] of r) ok(res === true, `шаблон ${id}: ${res}`);
+  ok(r.length >= 9, `шаблонов: ${r.length}`);
+  await p.context().close();
+});
+await test('шаблон «Письмо на бланке»: поля, шапка-таблица, шрифты, исполнитель внизу первого листа, DOCX', async () => {
+  const p = await page();
+  await p.keyboard.press('Alt+KeyF');
+  await p.click('.text-backstage [data-go="new"]');
+  await p.click('.text-backstage .bs-tile:has-text("Письмо на бланке")');
+  await p.waitForFunction(() => window.ens.view.state.doc.textContent.includes('Исполнитель:'));
+  await p.waitForTimeout(600);
+  const r = await p.evaluate(() => {
+    const E = window.ens, d = E.view.state.doc, m = E.getMeta();
+    const t = d.firstChild;
+    const cells = []; t.descendants((n) => { if (n.type.name === 'table_cell') cells.push(n.textContent); });
+    const marks = (text) => { let out = null; d.descendants((n) => { if (n.isText && n.text.includes(text) && !out) out = n.marks.map((x) => x.type.name + (x.attrs.size ? ':' + x.attrs.size : '')); }); return out; };
+    const paraOf = (text) => { let a = null; d.descendants((n) => { if (n.type.name === 'paragraph' && n.textContent.startsWith(text) && !a) a = n.attrs; }); return a; };
+    // Низ блока «Исполнитель» и низ текста первой страницы.
+    const sheet = document.getElementById('sheet').getBoundingClientRect();
+    const last = E.view.dom.lastElementChild.getBoundingClientRect();
+    const box = E.pageBoxes()[0];
+    const limit = box.top + box.H - box.eff.bottom * E.PX;
+    const lineH = E.view.dom.lastElementChild.getBoundingClientRect().height;
+    return {
+      page: [m.page.top, m.page.bottom, m.page.left, m.page.right].map((x) => Math.round(x / 28.3465 * 100) / 100),
+      font: [m.defaults.font, m.defaults.size],
+      cols: cells.length, logo: cells[0], middle: cells[1], addr: cells[2],
+      addrMarks: marks('Генеральному директору'), subj: marks('О выплате премии'), appeal: marks('Уважаемый'),
+      bodyFirst: paraOf('[Основной текст')?.first, attach: paraOf('Приложение:')?.first, item: paraOf('1. ')?.first,
+      sign: marks('[Должность]'),
+      gap: limit - (last.bottom - sheet.top), lineH, pages: E.pageCount(),
+      lastText: d.lastChild.textContent,
+      docx: (() => { const b = E.importDocx(E.exportDocx(d, m, 'x')); return [b.doc.childCount === d.childCount, b.meta.lossy.length]; })(),
+    };
+  });
+  eq(r.page, [2, 2, 2.5, 1.5], 'поля: верх 2, низ 2, лево 2,5, право 1,5 см');
+  eq(r.font, ['Times New Roman', 14], 'Times New Roman 14');
+  eq(r.cols, 3, 'шапка — таблица на 3 столбца');
+  ok(r.logo.includes('Логотип') && r.middle === '' && r.addr.startsWith('Генеральному директору'), `ячейки: ${r.logo} | ${r.middle} | ${r.addr}`);
+  eq(r.addrMarks, ['strong'], 'адресат жирный');
+  ok(r.subj.includes('em') && r.subj.includes('textStyle:12'), `тема курсивом 12: ${r.subj}`);
+  ok(r.appeal.includes('strong'), 'обращение жирным');
+  ok(Math.abs(r.bodyFirst - 35.4) < 0.1 && r.attach == null && Math.abs(r.item - 35.4) < 0.1, `абзацы 1,25 см, «Приложение» без отступа: ${r.bodyFirst} ${r.attach} ${r.item}`);
+  ok(r.sign.includes('strong'), 'должность подписанта жирным');
+  eq(r.pages, 1, 'одна страница');
+  ok(r.gap >= -1 && r.gap < r.lineH + 2, `исполнитель в последних строках листа: до низа ${r.gap.toFixed(1)} px при строке ${r.lineH.toFixed(1)} px`);
+  ok(r.lastText.includes('(000)'), 'последняя строка — телефон исполнителя');
+  ok(r.docx[0], 'DOCX туда и обратно: блоки на месте');
   await p.context().close();
 });
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);

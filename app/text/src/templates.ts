@@ -6,7 +6,11 @@ import { newMeta, type DocMeta } from './docx';
 import { body, buildForm, FORMS, INDENT, para, twoCols, type FormType } from './forms';
 import { schema } from './schema';
 
-export interface Built { doc: PMNode; meta: DocMeta; name: string }
+export interface Built {
+  doc: PMNode; meta: DocMeta; name: string;
+  /** Сколько последних блоков прижать к низу первой страницы пустыми строками перед ними (блок «Исполнитель»). */
+  fillBeforeLast?: number;
+}
 export interface BuiltIn { id: string; title: string; hint: string; build: () => Built }
 
 const n = schema.nodes;
@@ -33,10 +37,51 @@ function fromForm(type: FormType): Built {
   return { ...b, name: `${spec.title} (шаблон)` };
 }
 
+/** Письмо на бланке организации: шапка-таблица (логотип, пусто, адресат), тема, обращение, текст, приложения,
+ *  подпись; исполнитель — в последних строках листа (пустые строки до него добавляет программа при создании). */
+function letterhead(): Built {
+  const meta = gostMeta(70.9, 42.5); // поля: верх 2, низ 2, лево 2,5, право 1,5 см
+  const empty = () => para({ text: '' });
+  const b14 = (t: string) => para({ text: t, bold: true });
+  const cell = (w: number, ...content: PMNode[]) => n.table_cell.create({ colwidth: [w] }, content.length ? content : [empty()]);
+  // Ширина текста 17 см ≈ 643 px: логотип 200, промежуток 113, адресат 330.
+  const headTable = n.table.create({ borders: false }, [n.table_row.create(null, [
+    cell(200, para({ text: ph('Логотип: Вставка → Рисунок'), size: 10 })),
+    cell(113),
+    cell(330, b14('Генеральному директору'), b14(ph('наименование компании')), empty(), b14(ph('И. О. Фамилия'))),
+  ])]);
+  const signRow = n.table.create({ borders: false }, [n.table_row.create(null, [
+    n.table_cell.create({ colwidth: [380] }, para({ text: ph('Должность'), bold: true, align: 'left' })),
+    n.table_cell.create({ colwidth: [263] }, para({ text: ph('И. О. Фамилия'), align: 'right' })),
+  ])]);
+  return {
+    name: 'Письмо на бланке (шаблон)', meta, fillBeforeLast: 3,
+    doc: n.doc.create(null, [
+      headTable,
+      empty(), empty(),
+      para({ text: ph('О выплате премии'), italic: true, size: 12 }),
+      empty(),
+      para({ text: `Уважаемый ${ph('Имя Отчество')}!`, bold: true, align: 'center' }),
+      empty(),
+      ...body(ph('Основной текст письма. Абзацы — через Enter.')),
+      empty(),
+      para({ text: 'Приложение:' }),
+      para({ text: `1. ${ph('Название документа')} на ___ л. в 1 экз.`, first: INDENT, align: 'justify' }),
+      para({ text: `2. ${ph('Название документа')} на ___ л. в 1 экз.`, first: INDENT, align: 'justify' }),
+      empty(), empty(),
+      signRow,
+      para({ text: 'Исполнитель:', size: 12 }),
+      para({ text: `00/${ph('И. О. Фамилия')}`, size: 12 }),
+      para({ text: '(000) 000-00-00', size: 12 }),
+    ]),
+  };
+}
+
 const BUILT_IN: BuiltIn[] = [
   { id: 'blank-7097', title: 'Пустой документ по ГОСТ Р 7.0.97', hint: 'Поля 20/10/20/20 мм, Times New Roman 14, номера страниц вверху со второй страницы',
     build: () => ({ doc: n.doc.create(null, [n.paragraph.create({ align: 'justify', first: INDENT })]), meta: gostMeta(), name: 'Документ' }) },
   { id: 'letter', title: 'Письмо', hint: 'Реквизиты по ГОСТ Р 7.0.97: организация, дата и номер, адресат, заголовок, текст, подпись', build: () => fromForm('letter') },
+  { id: 'letterhead', title: 'Письмо на бланке', hint: 'Поля 2/2,5/2/1,5 см; шапка: логотип и адресат; тема, обращение, текст, приложения, подпись; исполнитель внизу листа', build: letterhead },
   { id: 'order', title: 'Приказ', hint: 'Преамбула, «ПРИКАЗЫВАЮ», пункты, контроль, подпись', build: () => fromForm('order') },
   { id: 'act', title: 'Акт', hint: 'Основание, комиссия, что установлено, подписи', build: () => fromForm('act') },
   { id: 'protocol', title: 'Протокол', hint: 'Председатель, секретарь, присутствовали, повестка, «СЛУШАЛИ / РЕШИЛИ»', build: () => fromForm('protocol') },
