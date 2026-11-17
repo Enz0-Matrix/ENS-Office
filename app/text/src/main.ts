@@ -57,7 +57,7 @@ import { tabsPlugin, tabShifts } from './tabs';
 import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
 import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
 import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
-import { attachFontPicker } from './font-picker';
+import { attachFontPicker } from '../../table/src/font-picker';
 import { formulasPlugin } from './table-formulas';
 import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode, type PastedTable } from './paste-special';
 import { guessTotals, readXlsx } from './xlsx-import';
