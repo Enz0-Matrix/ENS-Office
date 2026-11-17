@@ -2441,6 +2441,16 @@ await test('словарь: фамилия Едренников во всех ф
   eq(await p.evaluate(() => window.ens.view.state.doc.textContent.includes('Зюзюкинцевым')), true, 'текст документа не тронут');
   await p.context().close();
 });
+await test('шаблоны: каждый встроенный шаблон создаётся без ошибок (письмо, приказ, акт, протокол без даты)', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const { builtInTemplates } = await import('/src/templates.ts');
+    return builtInTemplates().map((t) => { try { const b = t.build(); b.doc.check(); return [t.id, b.doc.textContent.length > 0 || t.id.startsWith('blank')]; } catch (e) { return [t.id, String(e.message)]; } });
+  });
+  for (const [id, res] of r) ok(res === true, `шаблон ${id}: ${res}`);
+  ok(r.length >= 9, `шаблонов: ${r.length}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
