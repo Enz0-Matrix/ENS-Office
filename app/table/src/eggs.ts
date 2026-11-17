@@ -51,6 +51,10 @@ export function showCredits(): void {
     <p>Идея, постановка задач, испытания: <b>Н. Едренников</b></p>
     <p>Движок таблиц: IronCalc (MIT/Apache-2.0), доработан под русский интерфейс</p>
     <p>Помощник: <b>У. Болт</b> (ему всё равно, но он рад)</p>
+    <h3>Спасибо за идеи и испытания</h3>
+    <p><b>@Wedlor</b> (pikabu.ru/@Wedlor) — за идею связи между книгами</p>
+    <p><b>@Markonx</b> (pikabu.ru/@Markonx) — за идею понимать числа с пробелами</p>
+    <p><b>Иванов М. Ю.</b> — за испытания и множество идей</p>
     <p class="credits-small">Нажмите в любом месте, чтобы закрыть</p></div>`;
   d.addEventListener('click', () => d.remove());
   document.body.append(d);

@@ -217,12 +217,12 @@ export const TABS: RibbonTab[] = [
         { type: 'large', command: 'chart.bar', icon: 'chart_bar', label: 'Столбцы' },
         { type: 'large', command: 'chart.line', icon: 'chart_line', label: 'Линии' },
         { type: 'large', command: 'chart.pie', icon: 'chart_pie', label: 'Круговая' },
-        { type: 'large', command: 'chart.edit', icon: 'chart_bar', label: 'Изменить' },
+        { type: 'large', command: 'chart.edit', icon: 'chart_edit', label: 'Изменить' },
       ] },
       { name: 'Фигуры', items: [
         { type: 'large', command: 'shape.textbox', icon: 'text_box', label: 'Надпись' },
         { type: 'large', command: 'shape.rect', icon: 'shape_rect', label: 'Прямоугольник' },
-        { type: 'large', command: 'shape.round', icon: 'shape_rect', label: 'Скруглённый' },
+        { type: 'large', command: 'shape.round', icon: 'shape_round', label: 'Скруглённый' },
         { type: 'large', command: 'shape.ellipse', icon: 'shape_ellipse', label: 'Эллипс' },
         { type: 'large', command: 'shape.line', icon: 'shape_line', label: 'Линия' },
         { type: 'large', command: 'shape.arrow', icon: 'shape_arrow', label: 'Стрелка' },
@@ -240,8 +240,8 @@ export const TABS: RibbonTab[] = [
       ] },
       { name: 'Разрывы страниц', items: [
         { type: 'large', command: 'page.breakInsert', icon: 'page_break', label: 'Вставить разрыв' },
-        { type: 'large', command: 'page.breakRemove', icon: 'page_break', label: 'Убрать разрыв' },
-        { type: 'large', command: 'page.breakReset', icon: 'page_break', label: 'Сбросить разрывы' },
+        { type: 'large', command: 'page.breakRemove', icon: 'page_break_remove', label: 'Убрать разрыв' },
+        { type: 'large', command: 'page.breakReset', icon: 'page_break_reset', label: 'Сбросить разрывы' },
       ] },
       { name: 'Символы', items: [{ type: 'large', command: 'insert.symbol', icon: 'symbols', label: 'Символ' }] },
     ],
@@ -252,8 +252,8 @@ export const TABS: RibbonTab[] = [
     groups: [
       { name: 'Защита', items: [
         { type: 'large', command: 'protect.sheet', icon: 'lock_closed', label: 'Защитить лист' },
-        { type: 'large', command: 'protect.book', icon: 'lock_closed', label: 'Защитить структуру книги' },
-        { type: 'large', command: 'protect.cells', icon: 'lock_closed', label: 'Защита ячеек' },
+        { type: 'large', command: 'protect.book', icon: 'lock_book', label: 'Защитить структуру книги' },
+        { type: 'large', command: 'protect.cells', icon: 'lock_cells', label: 'Защита ячеек' },
       ] },
       { name: 'Примечания', items: [
         { type: 'large', command: 'comment.edit', icon: 'comment_add', label: 'Примечание' },
@@ -270,25 +270,25 @@ export const TABS: RibbonTab[] = [
         items: [
           { type: 'large', command: 'data.sortAsc', icon: 'sort_asc', label: 'От А до Я' },
           { type: 'large', command: 'data.sortDesc', icon: 'sort_desc', label: 'От Я до А' },
-          { type: 'large', command: 'data.sortCustom', icon: 'arrow_sort', label: 'Сортировка…' },
+          { type: 'large', command: 'data.sortCustom', icon: 'sort_custom', label: 'Сортировка…' },
           { type: 'large', command: 'data.filter', icon: 'filter', label: 'Фильтр' },
         ],
       },
       { name: 'Проверка данных', items: [{ type: 'large', command: 'data.validation', icon: 'dropdown_list', label: 'Проверка' }] },
-      { name: 'Связи', items: [{ type: 'large', command: 'data.updateLinks', icon: 'link', label: 'Обновить связи' }] },
+      { name: 'Связи', items: [{ type: 'large', command: 'data.updateLinks', icon: 'links_sync', label: 'Обновить связи' }] },
       {
         name: 'Структура',
         items: [
           { type: 'large', command: 'data.group', icon: 'group', label: 'Сгруппировать' },
           { type: 'large', command: 'data.ungroup', icon: 'group_list', label: 'Разгруппировать' },
-          { type: 'large', command: 'data.summary', icon: 'group', label: 'Положение «+»' },
+          { type: 'large', command: 'data.summary', icon: 'group_summary', label: 'Положение «+»' },
         ],
       },
       {
         name: 'Поиск',
         items: [
           { type: 'large', command: 'edit.find', icon: 'search', label: 'Найти' },
-          { type: 'large', command: 'edit.replace', icon: 'arrow_sort', label: 'Заменить' },
+          { type: 'large', command: 'edit.replace', icon: 'replace', label: 'Заменить' },
         ],
       },
     ],
@@ -306,7 +306,7 @@ export const TABS: RibbonTab[] = [
           { type: 'large', command: 'fn.logic', icon: 'branch_fork', label: 'Логические' },
           { type: 'large', command: 'fn.text', icon: 'text_font', label: 'Текстовые' },
           { type: 'large', command: 'fn.date', icon: 'calendar_ltr', label: 'Дата и время' },
-          { type: 'large', command: 'fn.lookup', icon: 'search', label: 'Ссылки и массивы' },
+          { type: 'large', command: 'fn.lookup', icon: 'table_search', label: 'Ссылки и массивы' },
           { type: 'large', command: 'fn.math', icon: 'calculator', label: 'Математические' },
           { type: 'large', command: 'fn.other', icon: 'more_horizontal', label: 'Другие функции' },
         ],
@@ -358,7 +358,7 @@ export const TABS: RibbonTab[] = [
       {
         name: 'Ввод',
         items: [
-          { type: 'large', command: 'options.recognizeDates', icon: 'calendar_ltr', label: 'Распознавать даты' },
+          { type: 'large', command: 'options.recognizeDates', icon: 'calendar_check', label: 'Распознавать даты' },
           { type: 'large', command: 'options.expandEditor', icon: 'arrow_autofit_width', label: 'Расширять поле ввода' },
           {
             type: 'select', command: 'options.decimal', width: 150,
