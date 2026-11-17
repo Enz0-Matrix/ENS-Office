@@ -2327,6 +2327,78 @@ await test('версия: один номер — из package.json в «О пр
   eq(await p.$eval('#dialog h2', (h) => h.textContent), `ENS-Text ${pkg}`, '«О программе» показывает версию из package.json');
   await p.context().close();
 });
+await test('скрытые символы: Ctrl+* показывает ¶ · ° → ↵, вёрстка и документ не меняются, при печати не видны', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    E.loadDoc(s.nodes.doc.create(null, [
+      P([s.text('Один два\tтри'), s.nodes.hard_break.create(), s.text('№ 5')]),
+      P(),
+      P(s.text('Длинный абзац для проверки переносов строк, который не должен сдвинуться от знаков. '.repeat(3))),
+    ]), E.getMeta(), 'marks');
+  });
+  await p.waitForTimeout(400);
+  // Положение каждой буквы текста (по текстовым узлам): знаки не должны сдвигать ни одну.
+  const geom = () => p.evaluate(() => {
+    const out = [];
+    const d = window.ens.view.dom, o = d.getBoundingClientRect();
+    const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT);
+    let n = 0;
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (t.parentElement.closest('.hm-w')) continue;
+      for (let i = 0; i < t.length; i++, n++) {
+        if (n % 7) continue;
+        const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 1);
+        const b = r.getBoundingClientRect(); out.push([Math.round((b.left - o.left) * 2) / 2, Math.round((b.top - o.top) * 2) / 2]);
+      }
+    }
+    return out;
+  });
+  const before = await geom();
+  const doc0 = await p.evaluate(() => JSON.stringify(window.ens.view.state.doc.toJSON()));
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Shift+Digit8');
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => {
+    const d = window.ens.view.dom;
+    const content = (sel) => [...d.querySelectorAll(sel)].map((e) => getComputedStyle(e, '::after').content);
+    return {
+      on: d.classList.contains('show-marks'),
+      para: content('.hm-para'), sp: content('.hm-sp'), nb: content('.hm-nb'), tab: content('span.tab'), br: content('.hm-br'),
+    };
+  });
+  ok(r.on, 'режим включён');
+  eq(r.para, ['"¶"', '"¶"', '"¶"'], '¶ в конце каждого абзаца, и пустого тоже');
+  ok(r.sp.length >= 10 && r.sp.every((c) => c === '"·"'), `· на пробелах: ${r.sp.length}`);
+  eq(r.nb, ['"°"'], '° на неразрывном пробеле');
+  eq(r.tab, ['"→"'], '→ на табуляции');
+  eq(r.br, ['"↵"'], '↵ на разрыве строки');
+  const after = await geom();
+  // Допуск 1 px: обёртки пробелов меняют субпиксельную расстановку, но не строки.
+  ok(after.length === before.length && after.every((q, i) => Math.abs(q[0] - before[i][0]) <= 1 && q[1] === before[i][1]), 'буквы на своих местах, строки не перенеслись иначе');
+  eq(await p.evaluate(() => JSON.stringify(window.ens.view.state.doc.toJSON())), doc0, 'документ не изменился');
+  ok(await p.$eval('[data-command="view.marks"]', (b) => b.classList.contains('on')), 'кнопка ¶ на ленте нажата');
+  // Ввод при включённых знаках: новые пробелы тоже с точкой.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.keyboard.type('А Б ');
+  ok((await p.$$('.ProseMirror .hm-sp')).length >= r.sp.length + 2, 'знаки появляются на новых пробелах');
+  // Печать: знаков не видно.
+  await p.emulateMedia({ media: 'print' });
+  const printed = await p.evaluate(() => [...document.querySelectorAll('.ProseMirror .hm-para, .ProseMirror .hm-sp')].slice(0, 3).map((e) => e.classList.contains('hm-para') ? getComputedStyle(e).display : getComputedStyle(e, '::after').content));
+  ok(printed.every((x) => x === 'none'), `при печати знаков нет: ${printed}`);
+  await p.emulateMedia({ media: 'screen' });
+  // Выбор запоминается; повторное нажатие выключает.
+  await p.reload();
+  await p.waitForFunction(() => window.ens);
+  ok(await p.evaluate(() => window.ens.view.dom.classList.contains('show-marks')), 'после перезапуска знаки снова видны');
+  // Окно восстановления несохранённого документа — закрываем.
+  if (await p.$('#dialog:not([hidden])')) { await p.keyboard.press('Escape'); await p.waitForSelector('#dialog', { state: 'hidden' }); }
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Shift+Digit8');
+  ok(await p.evaluate(() => !window.ens.view.dom.classList.contains('show-marks') && !document.querySelector('.hm-para')), 'выключено');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

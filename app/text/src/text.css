@@ -362,3 +362,16 @@
 .context-menu.ctx-text .ctx-sep { border: 0; border-top: 1px solid var(--border); margin: 4px 6px; }
 .context-menu.ctx-text > button { display: flex; gap: 24px; align-items: baseline; }
 .context-menu.ctx-text > button.ctx-hint { font-size: 12px; }
+
+/* Скрытые символы (marks.ts): знаки не занимают места и не печатаются. */
+.ProseMirror.show-marks .hm-sp, .ProseMirror.show-marks .hm-nb, .ProseMirror.show-marks span.tab { position: relative; }
+.ProseMirror.show-marks .hm-sp::after, .ProseMirror.show-marks .hm-nb::after, .ProseMirror.show-marks span.tab::after {
+  position: absolute; left: 0; right: 0; top: 0; text-align: center; color: #4a7bd0; pointer-events: none; font-weight: normal; font-style: normal; text-decoration: none; }
+.ProseMirror.show-marks .hm-sp::after { content: "·"; }
+.ProseMirror.show-marks .hm-nb::after { content: "°"; }
+.ProseMirror.show-marks span.tab::after { content: "→"; }
+.ProseMirror .hm-w { position: relative; pointer-events: none; user-select: none; }
+.ProseMirror .hm-w::after { position: absolute; left: 0; top: 0; color: #4a7bd0; font-weight: normal; font-style: normal; text-decoration: none; white-space: nowrap; pointer-events: none; }
+.ProseMirror.show-marks .hm-para::after { content: "¶"; }
+.ProseMirror.show-marks .hm-br::after { content: "↵"; }
+@media print { .ProseMirror .hm-w, .ProseMirror.show-marks .hm-sp::after, .ProseMirror.show-marks .hm-nb::after, .ProseMirror.show-marks span.tab::after { display: none !important; content: none !important; } }

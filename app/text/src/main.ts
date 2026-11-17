@@ -54,6 +54,7 @@ import { frameViews } from './frameview';
 import { initTableMove, updateTableMove } from './table-move';
 import { hideContextMenu, initContextMenu } from './contextmenu';
 import { tabsPlugin, tabShifts } from './tabs';
+import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -436,7 +437,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -630,6 +631,7 @@ register(
   { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
   { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
   { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  { id: 'view.marks', label: 'Отобразить все знаки', keywords: ['скрытые символы', 'непечатаемые', 'знаки абзаца', 'пробелы', 'табуляция', '¶'], keys: ['Ctrl+Shift+Digit8'], checked: () => hiddenMarksOn(view.state), run: () => { setHiddenMarks(view, !hiddenMarksOn(view.state)); updateUi(); view.focus(); } },
   { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
   { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
   { id: 'frame.select', label: 'Выделить надпись', keywords: ['надпись', 'выделить рамку'], run: () => selectFrame() },
@@ -918,6 +920,7 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
+          { type: 'small', command: 'view.marks', icon: 'paragraph_20' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
@@ -1620,7 +1623,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
