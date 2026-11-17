@@ -53,6 +53,7 @@ import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
 import { initTableMove, updateTableMove } from './table-move';
 import { hideContextMenu, initContextMenu } from './contextmenu';
+import { tabsPlugin, tabShifts } from './tabs';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -435,7 +436,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -1619,7 +1620,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -1928,6 +1929,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

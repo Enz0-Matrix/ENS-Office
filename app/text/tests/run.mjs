@@ -2269,6 +2269,48 @@ await test('вёрстка: в документе из нескольких ра
   ok(marginX(r.neg) >= -0.5, `отрицательный отступ не за краем листа: ${marginX(r.neg).toFixed(1)} pt`);
   await p.context().close();
 });
+await test('табуляция как в Word: стопы через 1,27 см от поля, неявный стоп на выступе; документ не меняется', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const P = (a, t) => s.nodes.paragraph.create(a, s.text(t));
+    const doc = s.nodes.doc.create(null, [
+      P(null, 'а\tб\tв'),
+      // Отступ 18 pt: браузер считал бы шаг от отступа, Word — от поля.
+      P({ indent: 18 }, 'Слово\tдалее'),
+      // Как в образце: отступ 3 см, выступ 3 см, слово шире выступа, две табуляции.
+      P({ indent: 85.05, first: -85.05, align: 'justify' }, 'шжроьроьбромьроьь\t\tПриложение'),
+      // Короткое слово при выступе: табуляция встаёт на отступ (неявный стоп).
+      P({ indent: 85.05, first: -85.05 }, '1.\tПункт'),
+    ]);
+    E.loadDoc(doc, E.getMeta(), 'tabs');
+    await new Promise((res) => setTimeout(res, 600));
+    const pt = 3 / 4;
+    const ps = [...E.view.dom.querySelectorAll(':scope > p')];
+    // Поле — левый край текста страницы: левый край абзаца без отступа.
+    const margin = ps[0].getBoundingClientRect().left;
+    const ends = ps.map((el) => [...el.querySelectorAll('span.tab')].map((t) => {
+      const b = t.getBoundingClientRect();
+      return Math.round(((b.right + parseFloat(getComputedStyle(t).marginRight) - margin) * pt) * 10) / 10;
+    }));
+    // Конец первого слова образца — от него Word считает следующий стоп.
+    const t3 = ps[2].querySelector('span.tab').previousSibling ?? ps[2].firstChild;
+    const rg = document.createRange(); rg.selectNodeContents(t3);
+    const wordEnd = Math.round((rg.getBoundingClientRect().right - margin) * pt * 10) / 10;
+    const json = JSON.stringify(E.view.state.doc.toJSON());
+    return { ends, wordEnd, same: json === JSON.stringify(doc.toJSON()) };
+  });
+  const near = (a, b) => Math.abs(a - b) < 1;
+  ok(near(r.ends[0][0], 36) && near(r.ends[0][1], 72), `простые табуляции на 36 и 72 pt: ${r.ends[0]}`);
+  const onGrid = (x) => { const m = x % 36; return m < 1 || 36 - m < 1; };
+  ok(onGrid(r.ends[1][0]), `от поля, а не от отступа (кратно 36 pt): ${r.ends[1]}`);
+  // Слово шире выступа (85 pt): табуляции идут на ближайшие стопы сетки 36 pt после конца слова.
+  const after = 36 * (Math.floor(r.wordEnd / 36) + 1);
+  ok(r.wordEnd > 85 && near(r.ends[2][0], after) && near(r.ends[2][1], after + 36), `образец: слово до ${r.wordEnd} pt, табуляции ${r.ends[2]}, ждём ${after} и ${after + 36}`);
+  ok(near(r.ends[3][0], 85.05), `короткий номер при выступе — табуляция до отступа: ${r.ends[3]}`);
+  ok(r.same, 'документ не изменился (табуляция — только вид)');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
