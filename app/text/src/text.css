@@ -442,3 +442,14 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 .paste-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
 .paste-opt { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
 .paste-opt small { color: var(--muted); }
+
+/* Перенос слов (Макет → Перенос слов): по словарю языка текста. */
+.ProseMirror.hyphenate p, .ProseMirror.hyphenate li, .ProseMirror.hyphenate td { hyphens: auto; -webkit-hyphens: auto; }
+/* Подложка: надпись на каждом листе, за текстом; печатается. */
+.paper .watermark { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-45deg); white-space: nowrap; pointer-events: none; user-select: none;
+  font-family: "Times New Roman", Tinos, serif; font-weight: bold; color: rgba(150, 150, 150, .35); letter-spacing: .04em; }
+:root[data-night-sheet] .paper .watermark { color: rgba(200, 200, 200, .18); }
+.wm-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.wm-preset { border: 1px solid var(--border); background: #fafafa; border-radius: 4px; padding: 5px 10px; cursor: pointer; font: 600 13px "Times New Roman", serif; }
+.wm-preset:hover { border-color: var(--accent); }
+@media print { .paper .watermark { color: rgba(150, 150, 150, .35) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }

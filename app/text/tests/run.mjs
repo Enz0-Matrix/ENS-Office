@@ -2775,6 +2775,62 @@ await test('формулы таблиц: функции по-русски и п�
   ok(Number.isNaN(r.num[4]), 'текст — не число');
   await p.context().close();
 });
+await test('пункт 10: перенос слов, подложка на каждой странице, колонки сохраняются в DOCX без потерь', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const long = 'Электрификация достопримечательностей одновременно с переоборудованием предприятий. '.repeat(30);
+    E.loadDoc(s.nodes.doc.create(null, Array.from({ length: 6 }, () => s.nodes.paragraph.create({ align: 'justify' }, s.text(long)))), E.getMeta(), 'p10');
+  });
+  await p.waitForTimeout(400);
+  // Перенос слов.
+  const lines = () => p.evaluate(() => { const r = document.createRange(); r.selectNodeContents(window.ens.view.dom.querySelector('p')); return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size; });
+  const before = await lines();
+  await p.evaluate(() => window.ens.run('layout.hyphenation'));
+  await p.waitForTimeout(200);
+  ok(await p.evaluate(() => window.ens.view.dom.classList.contains('hyphenate')), 'перенос включён');
+  await p.click('#tabs .tab:text-is("Макет")');
+  ok(await p.$eval('[data-command="layout.hyphenation"]', (b) => b.classList.contains('on')), 'кнопка на ленте нажата');
+  const after = await lines();
+  ok(after <= before, `строк не больше: ${before} → ${after}`);
+  ok(await p.evaluate(() => window.ens.isDirty()), 'документ помечен изменённым');
+  // Подложка из окна: готовая надпись.
+  await p.evaluate(() => window.ens.run('layout.watermark'));
+  await p.waitForSelector('#dialog:not([hidden]) .wm-preset');
+  await p.click('#dialog .wm-preset:has-text("ЧЕРНОВИК")');
+  await p.waitForTimeout(300);
+  const wm = await p.evaluate(() => ({ papers: document.querySelectorAll('.paper').length, marks: [...document.querySelectorAll('.paper .watermark')].map((w) => w.textContent), angle: getComputedStyle(document.querySelector('.paper .watermark')).transform }));
+  ok(wm.papers >= 2 && wm.marks.length === wm.papers && wm.marks.every((t) => t === 'ЧЕРНОВИК'), `подложка на каждом листе: ${JSON.stringify(wm)}`);
+  ok(wm.angle !== 'none', 'надпись повёрнута');
+  // DOCX: подложка как у Word, перенос — w:autoHyphenation; колонки (2) раздела сохраняются.
+  const r = await p.evaluate(() => {
+    const E = window.ens;
+    const m = { ...E.getMeta(), page: { ...E.getMeta().page, cols: 2, colSpace: 35.4 } };
+    const bytes = E.exportDocx(E.view.state.doc, m, 'p10');
+    const files = E.unzip(bytes);
+    const txt = (n) => (files[n] ? new TextDecoder().decode(files[n]) : '');
+    const back = E.importDocx(bytes);
+    return {
+      hdr: txt('word/header1.xml'), settings: txt('word/settings.xml'), doc: txt('word/document.xml'),
+      wm: back.meta.watermark, hy: back.meta.hyphenate, cols: back.meta.page.cols, header: back.meta.hf.header, lossy: back.meta.lossy,
+      again: (() => { const b2 = E.exportDocx(back.doc, back.meta, 'x'); return new TextDecoder().decode(E.unzip(b2)['word/document.xml']).includes('w:cols w:num="2"'); })(),
+    };
+  });
+  ok(r.hdr.includes('PowerPlusWaterMarkObject') && r.hdr.includes('string="ЧЕРНОВИК"'), 'подложка в колонтитуле, как у Word');
+  ok(r.settings.includes('<w:autoHyphenation/>'), 'перенос слов в настройках документа');
+  ok(r.doc.includes('<w:cols w:num="2"'), 'колонки в свойствах раздела');
+  eq([r.wm, r.hy, r.cols], ['ЧЕРНОВИК', true, 2], 'всё прочитано обратно');
+  eq(r.header, null, 'колонтитул, созданный только ради подложки, пустой');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.again, 'колонки переживают второе сохранение');
+  // Убрать подложку.
+  await p.evaluate(() => window.ens.run('layout.watermark'));
+  await p.waitForSelector('#dialog:not([hidden]) .wm-preset');
+  await p.click('#dialog button:has-text("Убрать подложку")');
+  await p.waitForTimeout(200);
+  eq(await p.$$eval('.paper .watermark', (w) => w.length), 0, 'подложка убрана');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

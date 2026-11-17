@@ -86,7 +86,7 @@ function emptyDoc(): PMNode {
   return schema.nodes.doc.createAndFill()!;
 }
 
-const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf);
+const metaKey = () => JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf) + JSON.stringify([!!meta.hyphenate, meta.watermark ?? '']);
 const isDirty = () => !view.state.doc.eq(savedDoc) || metaKey() !== savedMeta;
 
 
@@ -327,6 +327,8 @@ function applyPage(): void {
     const first = effOf(secs[0].page), lastE = effOf(secs[secs.length - 1].page);
     view.dom.style.padding = `${first.top}pt 0 ${lastE.bottom}pt 0`;
   } else view.dom.style.padding = `${e.top}pt ${e.right}pt ${e.bottom}pt ${e.left}pt`;
+  // Перенос слов: браузер расставляет переносы по словарю языка (lang="ru" у текста).
+  view.dom.classList.toggle('hyphenate', !!meta.hyphenate);
   // Расстояние от края листа до текста: им ограничен выступ первой строки (schema.ts, paraStyle).
   view.dom.style.setProperty('--pl', `${secs.length > 1 ? 0 : e.left}pt`);
   drawPapers(pageCount(view));
@@ -350,12 +352,22 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
     : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
   const sheetW = Math.max(...list.map((b) => b.W));
   const papers = $('papers');
-  const sig = `${layout.gap}|${sheetW}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join(',')}`;
+  const wm = meta.watermark?.trim() ?? '';
+  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join(',')}`;
   if (papers.dataset.sig !== sig) {
     papers.replaceChildren(...list.map((b) => {
       const d = document.createElement('div');
       d.className = 'paper';
       d.style.cssText = `top:${b.top}px;height:${b.H}px;left:${(sheetW - b.W) / 2}px;right:auto;width:${b.W}px`;
+      if (wm) {
+        // Подложка: по центру листа под 45°, размер — по длине надписи и диагонали листа.
+        const w = document.createElement('div');
+        w.className = 'watermark';
+        w.textContent = wm;
+        const diag = Math.hypot(b.W, b.H);
+        w.style.fontSize = `${Math.max(24, Math.min(160, (diag * 0.62) / Math.max(4, [...wm].length) * 1.6))}px`;
+        d.append(w);
+      }
       return d;
     }));
     papers.dataset.sig = sig;
@@ -858,6 +870,12 @@ register(
   { id: 'file.save', label: 'Сохранить', keys: ['Ctrl+KeyS'], run: () => void save() },
   { id: 'file.saveAs', label: 'Сохранить как', keys: ['Ctrl+Shift+KeyS'], run: () => void save(true) },
   { id: 'file.history', label: 'История версий', run: () => showHistory() },
+  {
+    id: 'layout.hyphenation', label: 'Перенос слов', keywords: ['перенос', 'расстановка переносов', 'дефис', 'hyphenation'],
+    checked: () => !!meta.hyphenate,
+    run: () => { meta.hyphenate = !meta.hyphenate || undefined; metaChanged(); toast(meta.hyphenate ? 'Перенос слов включён: длинные слова переносятся по слогам.' : 'Перенос слов выключен.'); },
+  },
+  { id: 'layout.watermark', label: 'Подложка…', keywords: ['подложка', 'водяной знак', 'черновик', 'образец', 'копия', 'watermark'], run: () => watermarkDialog() },
   { id: 'file.menu', label: 'Файл: создать, открыть, сохранить, печать, параметры', keywords: ['файл', 'file', 'параметры', 'настройки', 'options'], keys: ['Alt+KeyF'], run: () => showFileMenu() },
   { id: 'file.options', label: 'Параметры', keywords: ['настройки', 'параметры', 'имя', 'напоминание', 'типограф'], run: () => showFileMenu('options') },
   {
@@ -1134,6 +1152,13 @@ const TABS: RibbonTab[] = [
         items: [{ type: 'select', command: 'image.wrap', width: 150, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] }],
       },
       { name: 'Разделы', items: [{ type: 'large', command: 'insert.sectionBreak', icon: 'page_break', label: 'Разрыв раздела' }] },
+      {
+        name: 'Текст и фон',
+        items: [
+          { type: 'large', command: 'layout.hyphenation', icon: 'hyphenation', label: 'Перенос слов' },
+          { type: 'large', command: 'layout.watermark', icon: 'watermark', label: 'Подложка' },
+        ],
+      },
       {
         name: 'Абзац',
         items: [{ type: 'select', command: 'para.after', options: [{ value: '', label: 'После абзаца: как в документе' }, { value: '0', label: 'После: 0 пт' }, { value: '6', label: 'После: 6 пт' }, { value: '8', label: 'После: 8 пт' }, { value: '12', label: 'После: 12 пт' }], width: 210 }],
@@ -1413,6 +1438,36 @@ function marginsKey(): string {
 }
 
 /** Изменить страницу того раздела, где стоит курсор (первого — DocMeta.page, остальных — их разрыв). */
+/** Изменились настройки документа (перенос слов, подложка): перерисовать и отметить «изменено». */
+function metaChanged(): void {
+  applyPage();
+  replan(view);
+  updateUi();
+  refreshRibbon();
+  scheduleRecovery();
+}
+
+/** Окно «Подложка»: готовые надписи (ЧЕРНОВИК, ОБРАЗЕЦ, КОПИЯ, ДСП) или своя; «Нет» — убрать. */
+function watermarkDialog(): void {
+  dialog((box, close) => {
+    const presets = ['ЧЕРНОВИК', 'ОБРАЗЕЦ', 'КОПИЯ', 'ДСП', 'НЕ КОПИРОВАТЬ', 'СРОЧНО'];
+    const input = el('input', { type: 'text', value: meta.watermark ?? '', placeholder: 'Текст подложки' });
+    const set = (v: string) => { meta.watermark = v.trim() || null; close(); metaChanged(); view.focus(); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') set(input.value); });
+    box.append(
+      el('h2', { textContent: 'Подложка' }),
+      el('p', { textContent: 'Надпись по диагонали на каждой странице, светло-серая, за текстом. Печатается и сохраняется в DOCX так же, как подложка Word.' }),
+      el('div', { class: 'wm-presets' }, ...presets.map((t) => el('button', { class: 'wm-preset', textContent: t, onclick: () => set(t) }))),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Свой текст' }), input),
+      el('div', { class: 'dlg-actions' },
+        el('button', { textContent: 'Убрать подложку', onclick: () => set('') }),
+        el('button', { textContent: 'Отмена', onclick: close }),
+        el('button', { class: 'primary', textContent: 'Применить', onclick: () => set(input.value) })),
+    );
+    input.select();
+  });
+}
+
 function changePage(next: Partial<PageSetup>): void {
   const sec = curSection();
   const updated = { ...sec.page, ...next };

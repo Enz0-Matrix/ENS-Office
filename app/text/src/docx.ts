@@ -12,7 +12,11 @@ import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
 
-export interface PageSetup { w: number; h: number; top: number; bottom: number; left: number; right: number }
+export interface PageSetup {
+  w: number; h: number; top: number; bottom: number; left: number; right: number;
+  /** Колонки раздела (w:cols): число и промежуток, pt. Пока показываются одной полосой, но сохраняются. */
+  cols?: number; colSpace?: number;
+}
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
 /** Содержимое колонтитула — документ ProseMirror в виде JSON (null — пусто). */
 export type HfDoc = Record<string, unknown> | null;
@@ -35,6 +39,10 @@ export interface DocMeta {
   hf: HeaderFooter;
   /** Что при открытии не удалось перенести (человекочитаемо, с количеством). */
   lossy: string[];
+  /** Автоматический перенос слов (w:autoHyphenation). */
+  hyphenate?: boolean;
+  /** Подложка — надпись по диагонали на каждой странице (в DOCX: WordArt в колонтитуле, как у Word). */
+  watermark?: string | null;
 }
 
 /** A4, поля 2 / 2 / 3 / 1,5 см — привычные для российских документов. */
@@ -943,6 +951,7 @@ export function importDocx(bytes: Uint8Array): Imported {
   if (last.type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
 
   const hf = emptyHf();
+  let watermark: string | null = null;
   const finalSect = kid(body, 'sectPr');
   const allSects = [...ctx.sects, ...(finalSect ? [finalSect] : [])];
   const pageOf = (sect: Element | null | undefined): PageSetup => {
@@ -962,6 +971,9 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.bottom = mv('bottom', page.bottom);
     page.left = mv('left', page.left);
     page.right = mv('right', page.right);
+    const cols = kid(sect, 'cols');
+    const n = num(attr(cols, 'num')) ?? 1;
+    if (n > 1) { page.cols = Math.min(n, 12); const sp = num(attr(cols, 'space')); if (sp != null) page.colSpace = sp / 20; }
     return page;
   };
   // Разделы: у каждого свои размер и поля. Разрыв ставится между разделами и хранит страницу следующего за ним.
@@ -979,7 +991,6 @@ export function importDocx(bytes: Uint8Array): Imported {
     while (blocks.length && blocks[blocks.length - 1].type === schema.nodes.section_break) blocks.pop();
     if (!blocks.length) blocks = [schema.nodes.paragraph.create()];
     if (allSects.slice(1).some((x) => ['continuous', 'evenPage', 'oddPage'].includes(attr(kid(x, 'type'), 'val') ?? 'nextPage'))) lose(ctx, 'разделы «на той же странице» или «с чётной/нечётной» (все начинаются с новой страницы)');
-    if (allSects.slice(1).some((x) => kids(x, 'cols').some((c) => (num(attr(c, 'num')) ?? 1) > 1))) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   // Колонтитулы берём у первого раздела, где они заданы (у остальных Word наследует их).
   const sect = allSects.find((x) => kids(x, 'headerReference').length || kids(x, 'footerReference').length) ?? finalSect;
@@ -993,11 +1004,22 @@ export function importDocx(bytes: Uint8Array): Imported {
       const rel = ref ? ctx.rels.get(relAttr(ref, 'id') ?? '') : undefined;
       if (!rel || !files[rel.target]) return null;
       const sub: Ctx = { ...ctx, rels: readRels(files, rel.target), fields: [], sects: [] };
-      const blocks = walkBlocks(sub, parseXml(strFromU8(files[rel.target])).documentElement);
+      let xml = strFromU8(files[rel.target]);
+      // Подложка Word: WordArt (v:textpath) с id «PowerPlusWaterMarkObject…» в колонтитуле — читаем текст и убираем рисунок.
+      const wm = /<w:pict\b(?:(?!<\/w:pict>)[\s\S])*?PowerPlusWaterMarkObject(?:(?!<\/w:pict>)[\s\S])*?<\/w:pict>/.exec(xml);
+      if (wm) {
+        const text = /<v:textpath\b[^>]*\bstring="([^"]*)"/.exec(wm[0])?.[1];
+        if (text) watermark = text.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+        xml = xml.replace(wm[0], '');
+      }
+      const blocks = walkBlocks(sub, parseXml(xml).documentElement);
       if (!blocks.length) return null;
       if (blocks[blocks.length - 1].type === schema.nodes.table) blocks.push(schema.nodes.paragraph.create());
       const d = schema.nodes.doc.create(null, blocks);
-      return d.childCount === 1 && d.firstChild!.content.size === 0 ? null : (d.toJSON() as HfDoc);
+      // Колонтитул из одних пустых абзацев (например, остался только носитель подложки) — пустой.
+      let empty = true;
+      d.forEach((b) => { if (b.type !== schema.nodes.paragraph || b.content.size > 0) empty = false; });
+      return empty ? null : (d.toJSON() as HfDoc);
     };
     hf.header = part('headerReference', 'default');
     hf.footer = part('footerReference', 'default');
@@ -1006,11 +1028,15 @@ export function importDocx(bytes: Uint8Array): Imported {
     hf.firstFooter = part('footerReference', 'first');
     if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
     if (allSects.some((x) => x !== sect && (kids(x, 'headerReference').length || kids(x, 'footerReference').length) && kids(x, 'headerReference').map((r) => relAttr(r, 'id')).join() !== kids(sect, 'headerReference').map((r) => relAttr(r, 'id')).join())) lose(ctx, 'колонтитулы разных разделов (всюду — колонтитулы первого раздела)');
-    const c0 = kid(allSects[0] ?? sect, 'cols');
-    if (c0 && (num(attr(c0, 'num')) ?? 1) > 1) lose(ctx, 'колонки (текст идёт в одну колонку)');
   }
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
-  return { doc: schema.nodes.doc.create(null, blocks), meta: { page, defaults: ctx.defaults, hf, lossy }, history: readHistoryPart(files) };
+  const settingsXml = files['word/settings.xml'] ? strFromU8(files['word/settings.xml']) : '';
+  const hy = /<w:autoHyphenation\b([^>]*)\/?>/.exec(settingsXml);
+  const hyphenate = !!hy && !/w:val="(false|0|off)"/.test(hy[1]);
+  const meta: DocMeta = { page, defaults: ctx.defaults, hf, lossy };
+  if (hyphenate) meta.hyphenate = true;
+  if (watermark) meta.watermark = watermark;
+  return { doc: schema.nodes.doc.create(null, blocks), meta, history: readHistoryPart(files) };
 }
 
 const HISTORY_NS = 'urn:ens-office:text:history';
@@ -1029,6 +1055,23 @@ function readHistoryPart(files: Record<string, Uint8Array>): string {
 }
 
 // ---------------------------------------------------------------- экспорт
+
+/** Подложка, как её пишет Word: WordArt (VML textpath) по центру страницы под углом 45°, серый, полупрозрачный. */
+function watermarkXml(text: string, n: number): string {
+  const t = esc(text);
+  // WordArt растягивает надпись на рамку: ширина рамки ≈ 0,62 высоты буквы на символ, иначе буквы вытягиваются.
+  const len = Math.max(3, [...text].length);
+  const width = Math.min(460, 0.62 * 80 * len);
+  const height = Math.round(width / (0.62 * len));
+  return '<w:p><w:pPr><w:pStyle w:val="Header"/></w:pPr><w:r><w:rPr><w:noProof/></w:rPr><w:pict>' +
+    '<v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" path="m@7,l@8,m@5,21600l@6,21600e"><v:formulas>' +
+    ['sum #0 0 10800', 'prod #0 2 1', 'sum 21600 0 @1', 'sum 0 0 @2', 'sum 21600 0 @3', 'if @0 @3 0', 'if @0 21600 @1', 'if @0 0 @2', 'if @0 @4 21600', 'mid @5 @6', 'mid @8 @5', 'mid @7 @8', 'mid @6 @7', 'sum @6 0 @5']
+      .map((f) => `<v:f eqn="${f}"/>`).join('') +
+    '</v:formulas><v:path textpathok="t" o:connecttype="custom" o:connectlocs="@9,0;@10,10800;@11,21600;@12,10800" o:connectangles="270,180,90,0"/>' +
+    '<v:textpath on="t" fitshape="t"/><v:handles><v:h position="#0,bottomRight" xrange="6629,14971"/></v:handles><o:lock v:ext="edit" text="t" shapetype="t"/></v:shapetype>' +
+    `<v:shape id="PowerPlusWaterMarkObject${1000 + n}" o:spid="_x0000_s${2049 + n}" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:${Math.round(width)}pt;height:${height}pt;rotation:315;z-index:-251657216;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="silver" stroked="f">` +
+    `<v:fill opacity=".5"/><v:textpath style="font-family:&quot;Times New Roman&quot;;font-size:1pt" string="${t}"/><w10:wrap anchorx="margin" anchory="margin"/></v:shape></w:pict></w:r></w:p>`;
+}
 
 const esc = (s: string) => s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const tw = (pt: number) => Math.round(pt * 20);
@@ -1400,12 +1443,17 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
   const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
+  const wmText = meta.watermark?.trim() || '';
+  const emptyHfDoc = (): HfDoc => schema.nodes.doc.create(null, [schema.nodes.paragraph.create()]).toJSON() as HfDoc;
   const hfRef = (json: HfDoc, kind: 'header' | 'footer', type: 'default' | 'first'): string => {
+    // Подложка живёт в верхнем колонтитуле: если его нет, создаём пустой.
+    if (!json && kind === 'header' && wmText) json = emptyHfDoc();
     if (!json) return '';
     const node = schema.nodeFromJSON(json);
     const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1 };
     let inner = blocksXml(sub, node);
     if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
+    if (kind === 'header' && wmText) inner = watermarkXml(wmText, parts.length + 1) + inner;
     const tag = kind === 'header' ? 'hdr' : 'ftr';
     const n = parts.filter((x) => x.kind === kind).length + 1;
     const path = `word/${kind}${n}.xml`;
@@ -1413,7 +1461,8 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
       path, tag, kind, rels: sub.rels,
       xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
         `<w:${tag} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
-        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" ' +
+        'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w10="urn:schemas-microsoft-com:office:word">' +
         `${inner}</w:${tag}>`,
     });
     const id = relId(ctx, `${REL_BASE}/${kind}`, `${kind}${n}.xml`);
@@ -1423,6 +1472,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
   const sectOf = (p: PageSetup, first: boolean): string => `<w:sectPr>${first ? refs : ''}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
     `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
+    (p.cols && p.cols > 1 ? `<w:cols w:num="${p.cols}" w:space="${tw(p.colSpace ?? 35.4)}"/>` : '') +
     `${first && hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
   // Колонтитулы описаны в первом разделе, остальные их наследуют (так делает и Word).
   const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');
@@ -1465,7 +1515,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     'word/document.xml': strToU8(docXml),
     'word/_rels/document.xml.rels': strToU8(relsXml),
     'word/styles.xml': strToU8(stylesXml(meta)),
-    'word/settings.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="${NS.w}"><w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`),
+    'word/settings.xml': strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="${NS.w}">${meta.hyphenate ? '<w:autoHyphenation/>' : ''}<w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`),
     'docProps/core.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">' +
       `<dc:title>${esc(title)}</dc:title><dc:creator>ENS-Text</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`),
     'docProps/app.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>ENS-Text</Application></Properties>'),
