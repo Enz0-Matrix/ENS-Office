@@ -1,11 +1,14 @@
 // Значки ENS-Text: Fluent UI System Icons (MIT). Добавляются к набору ENS-Table (ICONS).
 
 import { ICONS } from '../../table/src/icons';
+import { CRISP } from './icons-crisp';
 import bullets20 from '@fluentui/svg-icons/icons/text_bullet_list_ltr_20_regular.svg?raw';
 import numbers20 from '@fluentui/svg-icons/icons/text_number_list_ltr_20_regular.svg?raw';
 import indentMore20 from '@fluentui/svg-icons/icons/text_indent_increase_20_regular.svg?raw';
 import indentLess20 from '@fluentui/svg-icons/icons/text_indent_decrease_20_regular.svg?raw';
 import table24 from '@fluentui/svg-icons/icons/table_24_regular.svg?raw';
+import docTable24 from '@fluentui/svg-icons/icons/document_table_24_regular.svg?raw';
+import changeCase20 from '@fluentui/svg-icons/icons/text_change_case_20_regular.svg?raw';
 import table20 from '@fluentui/svg-icons/icons/table_20_regular.svg?raw';
 import image24 from '@fluentui/svg-icons/icons/image_24_regular.svg?raw';
 import link24 from '@fluentui/svg-icons/icons/link_24_regular.svg?raw';
@@ -65,6 +68,8 @@ Object.assign(ICONS, {
   text_indent_less_20: indentLess20,
   table_24: table24,
   table_20: table20,
+  text_change_case_20: changeCase20,
+  excel_table_24: docTable24,
   image_24: image24,
   link_24: link24,
   page_break_24: pageBreak24,
@@ -84,3 +89,13 @@ Object.assign(ICONS, {
   highlight_20: highlight20,
   document_text_24: docText24,
 });
+
+// Чёткие значки ленты: значок 24 px, растянутый до 32 px, размыт и тонок. В строку значка кладём три рисунка —
+// под большую кнопку (32/28 px, ic-l), исходный (ic-o) и под 20 px (ic-m); text.css показывает нужный по размеру
+// кнопки. Вне ленты виден исходный, как раньше.
+const tag = (svg: string, cls: string) => svg.replace('<svg ', `<svg class="${cls}" `);
+for (const [key, v] of Object.entries(CRISP)) {
+  const orig = ICONS[key];
+  if (!orig || orig.includes('ic-o')) continue;
+  ICONS[key] = tag(v.l ?? orig, 'ic-l') + tag(orig, 'ic-o') + tag(v.m ?? orig, 'ic-m');
+}

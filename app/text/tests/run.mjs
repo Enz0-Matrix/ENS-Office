@@ -48,6 +48,8 @@ function ok(c, what) {
   if (!c) throw new Error(what);
 }
 async function test(name, f) {
+  // ONLY=подстрока — запустить только подходящие тесты (для отладки).
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
   try {
     await f();
     console.log(`  ✓ ${name}`);
@@ -2593,6 +2595,12 @@ await test('выбор шрифта: образец своим начертан�
   ok(tnr && tnr.family.includes('Times New Roman') && tnr.family.includes('Tinos'), `имя показано своим шрифтом (с аналогом): ${tnr?.family}`);
   ok(tnr.tags.includes('кириллица'), `Times New Roman: кириллица: ${tnr.tags}`);
   ok(rows.every((r) => r.tags.length >= 1), 'у каждого шрифта есть пометка');
+  // Шрифты системы находятся сами, без окна разрешения (queryLocalFonts не вызывается).
+  const heads = await p.$$eval('.font-picker .fp-head', (h) => h.map((x) => x.textContent));
+  ok(heads.includes('Шрифты системы'), `раздел «Шрифты системы» сразу: ${heads}`);
+  ok(rows.some((r) => r.font === 'DejaVu Sans'), 'найден установленный DejaVu Sans');
+  ok(!rows.some((r) => r.font === 'Segoe Fluent Icons'), 'неустановленные шрифты каталога не показаны');
+  eq(await p.$eval('.font-picker .fp-more', (b) => b.textContent), 'Найти остальные шрифты…', 'полный список — только по кнопке');
   // Поиск: несуществующий шрифт — «нет в системе», но выбрать можно.
   await p.fill('.font-picker .fp-search', 'Нетакогошрифта');
   const missing = await p.$$eval('.font-picker .fp-row', (r) => r.map((x) => [x.dataset.font, x.textContent]));
@@ -2609,6 +2617,58 @@ await test('выбор шрифта: образец своим начертан�
   eq(await p.$eval('.font-picker .fp-row', (r) => r.dataset.font), 'Arial', 'последний выбранный — первым');
   await p.keyboard.press('Escape');
   ok(!(await p.$('.font-picker')), 'Esc закрывает окно');
+  await p.context().close();
+});
+
+await test('чёткие значки ленты: большие — рисунок 32/28 px, средние и малые — 20 px, виден один рисунок', async () => {
+  const p = await page();
+  await p.click('#tabs .tab:has-text("Вставка")');
+  const info = (sel) => p.$eval(sel, (b) => [...b.querySelectorAll('svg')].filter((s) => getComputedStyle(s).display !== 'none').map((s) => [s.getAttribute('viewBox'), Math.round(s.getBoundingClientRect().width)]));
+  eq(await info('.btn.large[data-command="insert.table"]'), [['0 0 32 32', 32]], 'Таблица: значок под 32 px');
+  await p.click('#tabs .tab:has-text("Главная")');
+  const small = await p.$$eval('#ribbon .btn.small, #ribbon .btn.medium', (bs) => bs.map((b) => [...b.querySelectorAll('svg')].filter((s) => getComputedStyle(s).display !== 'none').map((s) => [s.getAttribute('viewBox'), Math.round(s.getBoundingClientRect().width)])).filter((x) => x.length));
+  ok(small.every((x) => x.length === 1), 'у каждой кнопки виден один рисунок');
+  ok(small.every((x) => x[0][0] === `0 0 ${x[0][1]} ${x[0][1]}`), `рисунок не растянут: ${JSON.stringify(small.filter((x) => x[0][0] !== `0 0 ${x[0][1]} ${x[0][1]}`))}`);
+  await p.context().close();
+});
+
+await test('регистр (Aa, Shift+F3) и межстрочный интервал кнопкой с меню', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('пРИВЕТ, КАК ДЕЛА? всё хорошо.');
+  const text = () => p.evaluate(() => window.ens.view.state.doc.textContent);
+  // Часть текста жирная: оформление при смене регистра сохраняется.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.addMark(1, 7, E.schema.marks.strong.create())); });
+  await p.keyboard.press('Control+KeyA');
+  const pick = async (label) => { await p.click('[data-command="format.caseMenu"]'); await p.click(`.case-menu button:has-text("${label}")`); return text(); };
+  eq(await pick('иЗМЕНИТЬ'), 'Привет, как дела? ВСЁ ХОРОШО.', 'инверсия (случайный Caps Lock)');
+  eq(await pick('Как в предложениях'), 'Привет, как дела? Всё хорошо.', 'как в предложениях');
+  eq(await pick('ВСЕ ПРОПИСНЫЕ'), 'ПРИВЕТ, КАК ДЕЛА? ВСЁ ХОРОШО.', 'все прописные');
+  eq(await pick('все строчные'), 'привет, как дела? всё хорошо.', 'все строчные');
+  eq(await pick('Начинать С Прописных'), 'Привет, Как Дела? Всё Хорошо.', 'каждое слово с прописной');
+  const bold = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.isText && n.marks.length) out.push(n.text); }); return out; });
+  eq(bold, ['Привет'], 'жирный остался на том же слове');
+  // Shift+F3 по кругу: смешанный → ПРОПИСНЫЕ → строчные → Как в предложениях.
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'ПРИВЕТ, КАК ДЕЛА? ВСЁ ХОРОШО.', 'Shift+F3: прописные');
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'привет, как дела? всё хорошо.', 'Shift+F3: строчные');
+  await p.keyboard.press('Shift+F3'); eq(await text(), 'Привет, как дела? Всё хорошо.', 'Shift+F3: как в предложениях');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await text(), 'привет, как дела? всё хорошо.', 'отмена — на шаг');
+  // Без выделения — слово под курсором.
+  await p.evaluate(() => { const E = window.ens; const at = E.view.state.doc.content.size - 4; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, at))); });
+  await p.keyboard.press('Shift+F3');
+  eq(await text(), 'привет, как дела? всё Хорошо.', 'слово под курсором (строчное → с прописной)');
+  await p.keyboard.press('Shift+F3');
+  eq(await text(), 'привет, как дела? всё ХОРОШО.', 'и дальше по кругу — прописные');
+  // Межстрочный интервал: значок с меню вместо широкого списка.
+  ok(!(await p.$('select[data-command="para.line"]')), 'широкого списка больше нет');
+  await p.click('[data-command="para.lineMenu"]');
+  eq(await p.$eval('.line-menu button[aria-checked="true"]', (b) => b.textContent), '✓1,0', 'отмечен текущий 1,0');
+  await p.click('.line-menu button:has-text("1,5")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.line), 1.5, 'интервал 1,5');
+  await p.click('[data-command="para.lineMenu"]');
+  await p.click('.line-menu button:has-text("Добавить интервал перед абзацем")');
+  eq(await p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.before), 12, 'интервал перед абзацем');
   await p.context().close();
 });
 
@@ -2685,6 +2745,64 @@ await test('правки линейки: граница поля берётся 
   ok(/поле/.test(await p.$eval('#hr-inner .ri-left', (e) => e.title)), 'подсказка у маркера отступа');
   await p.context().close();
 });
+await test('таблица из файла Excel (.xlsx): формулы из файла, общие формулы, неподдержанное — значением; Ctrl+V значений — итоги формулами', async () => {
+  const { zipSync, strToU8 } = createRequire(import.meta.url)('fflate');
+  // Книга как у пользователя: A1:E3, E1 = C1+B1+A1, E2 = C2+B2-A2, строка 3 — СУММ (общая формула), D — пусто.
+  // На втором листе — функция, которой в тексте нет (ВПР): остаётся значением.
+  const sheet1 = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+    <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c><c r="C1"><v>3</v></c><c r="D1" s="2"/><c r="E1"><f>C1+B1+A1</f><v>6</v></c></row>
+    <row r="2"><c r="A2"><v>7</v></c><c r="B2"><v>9</v></c><c r="C2"><v>11</v></c><c r="E2"><f>C2+B2-A2</f><v>13</v></c></row>
+    <row r="3"><c r="A3"><f t="shared" ref="A3:C3" si="0">SUM(A1:A2)</f><v>8</v></c><c r="B3"><f t="shared" si="0"/><v>11</v></c><c r="C3"><f t="shared" si="0"/><v>14</v></c><c r="E3"><f>SUM(E1:E2)</f><v>19</v></c></row>
+  </sheetData></worksheet>`;
+  const sheet2 = `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+    <row r="2"><c r="B2" t="s"><v>0</v></c><c r="C2"><v>5</v></c></row>
+    <row r="3"><c r="B3" t="inlineStr"><is><t>Код</t></is></c><c r="C3"><f>VLOOKUP(1,Лист1!A1:B2,2)</f><v>2</v></c></row>
+  </sheetData></worksheet>`;
+  const xlsx = zipSync({
+    'xl/workbook.xml': strToU8('<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/><sheet name="Цены" sheetId="2" r:id="rId2"/></sheets></workbook>'),
+    'xl/_rels/workbook.xml.rels': strToU8('<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/></Relationships>'),
+    'xl/sharedStrings.xml': strToU8('<sst><si><t>Цена &amp; НДС</t></si></sst>'),
+    'xl/worksheets/sheet1.xml': strToU8(sheet1), 'xl/worksheets/sheet2.xml': strToU8(sheet2),
+  });
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.click('#tabs .tab:has-text("Вставка")');
+  ok(await p.$('[data-command="insert.excel"]'), 'кнопка «Из Excel» на ленте «Вставка»');
+  await p.setInputFiles('#xlsx-input', { name: 'книга.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
+  await p.waitForSelector('.sheet-pick');
+  eq(await p.$$eval('.sheet-pick', (b) => b.map((x) => x.textContent)), ['Лист1 — 3×5', 'Цены — 2×2'], 'выбор листа');
+  await p.click('.sheet-pick');
+  const formulas = () => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  const grid = () => p.evaluate(() => [...window.ens.view.dom.querySelectorAll('table')].map((t) => [...t.querySelectorAll('tr')].map((r) => [...r.children].map((c) => c.textContent))));
+  eq(await formulas(), ['=C1+B1+A1', '=C2+B2-A2', '=SUM(A1:A2)', '=SUM(B1:B2)', '=SUM(C1:C2)', '=SUM(E1:E2)'], 'все формулы, общие — развёрнуты');
+  eq((await grid())[0], [['1', '2', '3', '', '6'], ['7', '9', '11', '', '13'], ['8', '11', '14', '', '19']], 'значения');
+  // Правка числа: A1 1 → 4 — пересчитываются E1, A3 и E3 (E2 от A1 не зависит).
+  await p.waitForTimeout(700);
+  await p.evaluate(() => { const E = window.ens; let pos = null; E.view.state.doc.descendants((n, q) => { if (pos == null && n.isText && n.text === '1') pos = q; }); E.view.dispatch(E.view.state.tr.insertText('4', pos, pos + 1)); });
+  const g = (await grid())[0];
+  eq([g[0][4], g[1][4], g[2][0], g[2][4]], ['9', '13', '11', '22'], 'пересчёт как в Excel');
+  // Второй лист: строка из общих строк, ВПР со ссылкой на другой лист — значением.
+  await p.keyboard.press('Control+End');
+  await p.setInputFiles('#xlsx-input', { name: 'книга.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(xlsx) });
+  await p.waitForSelector('.sheet-pick');
+  await p.click('.sheet-pick >> nth=1');
+  eq((await grid())[1], [['Цена & НДС', '5'], ['Код', '2']], 'второй лист значениями');
+  ok(/Значениями оставлены 1/.test(await p.$eval('#toast', (t) => t.textContent)), 'сообщение: одна формула оставлена значением');
+  await p.context().close();
+
+  // Ctrl+V из Excel: в буфере только значения (HTML без x:fmla) — итоги становятся формулами.
+  const q = await page();
+  await q.click('.ProseMirror');
+  const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table>
+    <tr><td x:num>1</td><td x:num>2</td><td x:num>3</td><td></td><td x:num>6</td></tr>
+    <tr><td x:num>7</td><td x:num>9</td><td x:num>11</td><td></td><td x:num>13</td></tr>
+    <tr><td x:num>8</td><td x:num>11</td><td x:num>14</td><td></td><td x:num>19</td></tr></table></body></html>`;
+  await q.evaluate((h) => { const dt = new DataTransfer(); dt.setData('text/html', h); dt.setData('text/plain', '1\t2'); window.ens.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }, html);
+  const f2 = await q.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.attrs.formula) out.push(n.attrs.formula); }); return out; });
+  eq(f2, ['=SUM(LEFT)', '=SUM(ABOVE)', '=SUM(ABOVE)', '=SUM(ABOVE)', '=SUM(ABOVE)'], 'итоги строки и столбца распознаны (E2 = C2+B2−A2 — не сумма, осталась числом)');
+  await q.context().close();
+});
+
 await test('вставка из Excel: таблица с живыми формулами (смещение адресов подбирается), пересчёт, DOCX, специальная вставка', async () => {
   const p = await page();
   await p.click('.ProseMirror');

@@ -59,7 +59,10 @@ import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './di
 import { initFileMenu, rememberFile, showFileMenu } from './backstage-ui';
 import { attachFontPicker } from '../../table/src/font-picker';
 import { formulasPlugin } from './table-formulas';
-import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode } from './paste-special';
+import { isSpreadsheetHtml, parseSpreadsheetHtml, parseTsv, tableNode, type PastedTable } from './paste-special';
+import { guessTotals, readXlsx } from './xlsx-import';
+import { changeCase, type CaseMode } from './textcase';
+import { popMenu } from './popmenu';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
@@ -483,6 +486,8 @@ const view = new EditorView($('sheet'), {
     return false;
   },
   handleDrop(v, event) {
+    const xlsx = [...(event.dataTransfer?.files ?? [])].find((f) => /\.xlsx$/i.test(f.name));
+    if (xlsx) { void insertXlsxFile(xlsx); return true; }
     const files = [...(event.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'));
     if (!files.length) return false;
     void insertImageFile(files[0]);
@@ -520,6 +525,43 @@ document.addEventListener('keyup', ctrlHeld, true);
 document.addEventListener('mousemove', ctrlHeld, { passive: true });
 window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
 
+// ---------------------------------------------------------------- регистр и межстрочный интервал
+
+const ribbonButton = (id: string): HTMLElement | null => document.querySelector(`#ribbon [data-command="${id}"]`);
+
+function applyCase(mode: CaseMode): void {
+  const v = active();
+  const tr = changeCase(v.state, mode);
+  if (tr) v.dispatch(tr.scrollIntoView());
+  v.focus();
+}
+
+function caseMenu(): void {
+  const at = ribbonButton('format.caseMenu') ?? { x: 200, y: 120 };
+  popMenu(at, [
+    { label: 'Как в предложениях.', run: () => applyCase('sentence') },
+    { label: 'все строчные', run: () => applyCase('lower') },
+    { label: 'ВСЕ ПРОПИСНЫЕ', run: () => applyCase('upper') },
+    { label: 'Начинать С Прописных', run: () => applyCase('title') },
+    { label: 'иЗМЕНИТЬ рЕГИСТР', run: () => applyCase('toggle') },
+    '-',
+    { label: 'По кругу', keys: 'Shift+F3', run: () => applyCase('cycle') },
+  ], 'case-menu');
+}
+
+function lineSpacingMenu(): void {
+  const st = active().state;
+  const line = paraAttr<number>(st, 'line') ?? meta.defaults.line ?? 1;
+  const before = paraAttr<number>(st, 'before') ?? 0, after = paraAttr<number>(st, 'after') ?? meta.defaults.after ?? 0;
+  const at = ribbonButton('para.lineMenu') ?? { x: 400, y: 120 };
+  popMenu(at, [
+    ...[1, 1.15, 1.5, 2, 2.5, 3].map((x) => ({ label: x.toLocaleString('ru-RU', { minimumFractionDigits: 1 }), checked: Math.abs(line - x) < 0.01, run: () => run('para.line', String(x)) })),
+    '-',
+    before ? { label: 'Удалить интервал перед абзацем', run: () => dispatchCmd(setParaAttrs({ before: 0 })) } : { label: 'Добавить интервал перед абзацем', run: () => dispatchCmd(setParaAttrs({ before: 12 })) },
+    after ? { label: 'Удалить интервал после абзаца', run: () => dispatchCmd(setParaAttrs({ after: 0 })) } : { label: 'Добавить интервал после абзаца', run: () => dispatchCmd(setParaAttrs({ after: 8 })) },
+  ], 'line-menu');
+}
+
 // ---------------------------------------------------------------- специальная вставка и формулы таблиц
 
 type PasteMode = 'keep' | 'text' | 'table' | 'values';
@@ -541,13 +583,43 @@ function pasteAs(mode: PasteMode, html: string, text: string): boolean {
   const t = (html && isSpreadsheetHtml(html) ? parseSpreadsheetHtml(html) : null) ?? parseTsv(text) ?? (html ? parseSpreadsheetHtml(html) : null);
   if (!t) { toast('В буфере нет таблицы: вставьте как текст.'); return false; }
   if (mode === 'values') for (const c of t.rows.flat()) if (c) c.formula = null;
-  const node = tableNode(schema, t);
-  v.dispatch(v.state.tr.replaceSelectionWith(node).scrollIntoView());
-  v.focus();
-  toast(mode === 'table' && t.withFormulas
-    ? `Таблица вставлена с формулами (${t.withFormulas}): поменяйте число — итоги пересчитаются. Формула ячейки — правый щелчок → «Формула…».`
-    : 'Таблица вставлена значениями. Специальная вставка — Ctrl+Alt+V.');
+  // Excel отдаёт в буфер только значения: итоговые строку и столбец делаем формулами =SUM(ABOVE)/=SUM(LEFT).
+  const guessed = mode === 'table' && !t.withFormulas ? guessTotals(t) : 0;
+  insertPastedTable(t);
+  toast(guessed
+    ? `Excel передаёт через буфер только числа. Итоги (${guessed}) распознаны и стали формулами — пересчитаются. Все формулы как в Excel: Вставка → «Из Excel» (файл .xlsx).`
+    : mode === 'table' && t.withFormulas
+      ? `Таблица вставлена с формулами (${t.withFormulas}): поменяйте число — итоги пересчитаются. Формула ячейки — правый щелчок → «Формула…».`
+      : 'Таблица вставлена значениями. С формулами: Вставка → «Из Excel» (файл .xlsx).');
   return true;
+}
+
+function insertPastedTable(t: PastedTable): void {
+  const v = active();
+  v.dispatch(v.state.tr.replaceSelectionWith(tableNode(schema, t)).scrollIntoView());
+  v.focus();
+}
+
+/** Таблица из файла .xlsx: формулы из файла, проверенные пересчётом. Несколько листов — выбрать лист. */
+async function insertXlsxFile(file: File): Promise<void> {
+  let sheets;
+  try { sheets = readXlsx(new Uint8Array(await file.arrayBuffer())).filter((x) => x.table.rows.length); }
+  catch { toast('Не удалось прочитать файл Excel (.xlsx).'); return; }
+  if (!sheets.length) { toast('В книге Excel нет данных.'); return; }
+  const put = (sh: (typeof sheets)[number]) => {
+    if (sh.table.rows.length * (sh.table.rows[0]?.length ?? 0) > 5000) { toast('Лист слишком большой для таблицы в тексте (больше 5000 ячеек).'); return; }
+    insertPastedTable(sh.table);
+    const f = sh.table.withFormulas;
+    toast(`Таблица «${sh.name}» вставлена${f ? `, формул: ${f} — пересчитываются` : ''}.${sh.dropped ? ` Значениями оставлены ${sh.dropped} (функции или ссылки, которых в тексте нет).` : ''}`);
+  };
+  if (sheets.length === 1) { put(sheets[0]); return; }
+  dialog((box, close) => {
+    box.append(
+      el('h2', { textContent: 'Какой лист вставить?' }),
+      el('div', { class: 'paste-opts' }, ...sheets.map((sh) => el('button', { class: 'sheet-pick', textContent: `${sh.name} — ${sh.table.rows.length}×${sh.table.rows[0]?.length ?? 0}`, onclick: () => { close(); put(sh); } }))),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close })),
+    );
+  });
 }
 
 function pasteSpecialDialog(): void {
@@ -743,12 +815,21 @@ register(
   { id: 'indent.inc', label: 'Увеличить отступ', keys: ['Ctrl+KeyM'], run: () => dispatchCmd(indent(1)) },
   { id: 'indent.dec', label: 'Уменьшить отступ', keys: ['Ctrl+Shift+KeyM'], run: () => dispatchCmd(indent(-1)) },
   { id: 'para.line', label: 'Межстрочный интервал', run: (v) => dispatchCmd(setParaAttrs({ line: v && v !== '1' ? parseFloat(v) : null })) },
+  { id: 'para.lineMenu', label: 'Интервал между строками и абзацами', keywords: ['межстрочный', 'интервал', 'полуторный', 'двойной', 'перед абзацем', 'после абзаца'], run: () => lineSpacingMenu() },
+  { id: 'format.case', label: 'Регистр: следующий вариант', keywords: ['регистр', 'прописные', 'строчные', 'caps', 'капс'], keys: ['Shift+F3'], run: () => applyCase('cycle') },
+  { id: 'format.caseMenu', label: 'Регистр', keywords: ['регистр', 'прописные', 'заглавные', 'строчные', 'caps lock', 'капс', 'как в предложении'], run: () => caseMenu() },
+  { id: 'format.caseUpper', label: 'Регистр: ВСЕ ПРОПИСНЫЕ', keywords: ['заглавные', 'капс'], run: () => applyCase('upper') },
+  { id: 'format.caseLower', label: 'Регистр: все строчные', run: () => applyCase('lower') },
+  { id: 'format.caseSentence', label: 'Регистр: Как в предложениях', run: () => applyCase('sentence') },
+  { id: 'format.caseTitle', label: 'Регистр: Начинать С Прописных', run: () => applyCase('title') },
+  { id: 'format.caseToggle', label: 'Регистр: иЗМЕНИТЬ рЕГИСТР (после Caps Lock)', keywords: ['caps lock', 'инверсия'], run: () => applyCase('toggle') },
   { id: 'para.after', label: 'Интервал после абзаца', run: (v) => dispatchCmd(setParaAttrs({ after: v === '' || v === undefined ? null : parseFloat(v) })) },
   { id: 'para.style', label: 'Стиль абзаца', run: (v) => dispatchCmd(setStyle(+(v ?? 0))) },
   { id: 'edit.find', label: 'Найти', keys: ['Ctrl+KeyF'], run: () => openFind(false) },
   { id: 'edit.replace', label: 'Заменить', keys: ['Ctrl+KeyH'], run: () => openFind(true) },
   { id: 'insert.table', label: 'Таблица', run: () => tableDialog() },
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
+  { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
@@ -1023,9 +1104,6 @@ const MARGINS = [
   { value: 'normal', label: 'Поля: обычные' }, { value: 'narrow', label: 'Поля: узкие' },
   { value: 'moderate', label: 'Поля: средние' }, { value: 'wide', label: 'Поля: широкие' },
 ];
-const LINES = [
-  { value: '1', label: 'Интервал 1,0' }, { value: '1.15', label: 'Интервал 1,15' }, { value: '1.5', label: 'Интервал 1,5' }, { value: '2', label: 'Интервал 2,0' },
-];
 const STYLES = [
   { value: '0', label: 'Обычный' }, { value: '1', label: 'Заголовок 1' }, { value: '2', label: 'Заголовок 2' }, { value: '3', label: 'Заголовок 3' },
   { value: '4', label: 'Заголовок 4' }, { value: '5', label: 'Заголовок 5' }, { value: '6', label: 'Заголовок 6' },
@@ -1056,6 +1134,7 @@ const TABS: RibbonTab[] = [
         items: [
           { type: 'select', command: 'format.fontName', options: FONTS, width: 150 },
           { type: 'select', command: 'format.fontSize', options: FONT_SIZES, width: 56 },
+          { type: 'small', command: 'format.caseMenu', icon: 'text_change_case' },
           { type: 'small', command: 'format.bold', icon: 'text_bold' },
           { type: 'small', command: 'format.italic', icon: 'text_italic' },
           { type: 'small', command: 'format.underline', icon: 'text_underline' },
@@ -1074,12 +1153,12 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'list.ordered', icon: 'text_number_list' },
           { type: 'small', command: 'indent.dec', icon: 'text_indent_less' },
           { type: 'small', command: 'indent.inc', icon: 'text_indent_more' },
-          { type: 'select', command: 'para.line', options: LINES, width: 120 },
+          { type: 'small', command: 'view.marks', icon: 'paragraph' },
           { type: 'small', command: 'align.left', icon: 'text_align_left' },
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
-          { type: 'small', command: 'view.marks', icon: 'paragraph' },
+          { type: 'small', command: 'para.lineMenu', icon: 'line_spacing' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
@@ -1113,6 +1192,7 @@ const TABS: RibbonTab[] = [
         name: 'Таблицы и рисунки',
         items: [
           { type: 'large', command: 'insert.table', icon: 'table', label: 'Таблица' },
+          { type: 'large', command: 'insert.excel', icon: 'excel_table', label: 'Из Excel' },
           { type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' },
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
@@ -1642,6 +1722,13 @@ async function insertImageFile(file: File): Promise<void> {
   const k = dim.w > maxW ? maxW / dim.w : 1;
   dispatchCmd(insertImage(src, Math.round(dim.w * k), Math.round(dim.h * k), file.name.replace(/\.[^.]+$/, '')));
 }
+
+$('xlsx-input').addEventListener('change', (e) => {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (f) void insertXlsxFile(f);
+});
 
 $('image-input').addEventListener('change', (e) => {
   const input = e.target as HTMLInputElement;
@@ -2185,6 +2272,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
