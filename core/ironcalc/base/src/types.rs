@@ -149,6 +149,19 @@ pub struct Workbook {
     pub ens_lost_features: Vec<String>,
     /// ENS-Office: `<workbookPr codeName>` — имя книги для макросов («ЭтаКнига»).
     pub ens_code_name: String,
+    /// ENS-Office: книги-источники внешних ссылок, по порядку (`[1]` в формулах xlsx — первая).
+    /// Их листы — скрытые служебные листы `[Книга.xlsx]Лист` в конце `worksheets`.
+    pub ens_external_books: Vec<ExternalBook>,
+}
+
+/// ENS-Office: книга-источник внешних ссылок.
+#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct ExternalBook {
+    /// Путь, как он записан в xlsx (`Цены.xlsx`, `../Папка/Цены.xlsx`, `file:///C:\…`)
+    /// или как его написали в формуле.
+    pub target: String,
+    /// Имя файла: `Цены.xlsx`.
+    pub file: String,
 }
 
 /// ENS-Office: часть zip-пакета xlsx, перенесённая без разбора.

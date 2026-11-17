@@ -1844,13 +1844,14 @@ impl<'a> Model<'a> {
             Ok(lang) => lang,
             Err(_) => return Err("Invalid language".to_string()),
         };
-        let parser = Parser::new(
+        let mut parser = Parser::new(
             worksheet_names,
             defined_names,
             workbook.tables.clone(),
             locale,
             language,
         );
+        parser.set_external_books(workbook.ens_external_books.iter().map(|b| b.file.clone()).collect());
         let mut shared_strings = HashMap::new();
         for (index, s) in workbook.shared_strings.iter().enumerate() {
             // ENS-Office: a rich string belongs to its cell only, plain input must not reuse it.
@@ -2534,6 +2535,8 @@ impl<'a> Model<'a> {
     ) -> Result<(), String> {
         // first we make sure we can write in the cell and clear the spills.
         self.prepare_cell_for_user_input(sheet, row, column)?;
+        // ENS-Office: ссылки на другие книги — книги и их листы появляются в модели.
+        self.register_external_refs(&value);
         if value.is_empty() {
             // If the value is empty we just clear the cell.
             // Deleting the contents of a cell also removes its link.
