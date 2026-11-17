@@ -51,7 +51,7 @@ import { PX, geometry, layout, pageBoxes, pageCount, pagination, replan, stats a
 import { sectionAt, sectionsOf, sectionsSig } from './sections';
 import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
-import { initRuler, rulerVisible, setRulerVisible, updateRuler } from './ruler';
+import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
   addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
@@ -432,7 +432,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -1608,7 +1608,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -1856,6 +1856,14 @@ document.documentElement.toggleAttribute('data-night-sheet', nightSheet);
 initRuler({
   view: () => view, papers: () => $('papers'), zoom: () => zoom, pageIndex: () => Math.max(0, currentPage() - 1), page: () => curPage(),
   changePage: (next) => changePage(next), locked: () => !!hfSession,
+  previewPage: (next) => {
+    // Предпросмотр боковых полей: строки сразу перетекают. Только для документа из одного раздела;
+    // верхнее и нижнее поле меняют разбиение на страницы — их показывают линейка и направляющая.
+    if (sectionsOf(view.state.doc, meta.page).length > 1) return;
+    const p = { ...effPage(), ...(next ?? {}) };
+    view.dom.style.paddingLeft = `${p.left}pt`;
+    view.dom.style.paddingRight = `${p.right}pt`;
+  },
 });
 initImageTools({
   view: () => view, sheet: $('sheet'), boxes: () => pageBoxes(view), scale: () => zoom, relayout: layoutFloats, locked: () => !!hfSession,

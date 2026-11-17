@@ -1,9 +1,12 @@
 // Линейки сверху и слева: поля страницы, отступы абзаца (первая строка, выступ, слева, справа), границы столбцов таблицы.
 // Ноль — у границы текста; единица — сантиметр; масштаб учитывается. Показывают страницу, на которой стоит курсор.
+// Перетаскивание «живое»: метка, поля, отступы, столбцы и строки меняются на экране за мышью (декорации, без шагов
+// в документе), а в документ изменение записывается один раз при отпускании — одна запись в истории отмены.
 
 import type { Node as PMNode } from 'prosemirror-model';
+import { Plugin, PluginKey } from 'prosemirror-state';
 import { TableMap } from 'prosemirror-tables';
-import type { EditorView } from 'prosemirror-view';
+import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { PageSetup } from './docx';
 import { schema } from './schema';
 import { columnWidths, setColumnWidths, tableAt } from './tables-ui';
@@ -17,8 +20,40 @@ export interface RulerHost {
   pageIndex: () => number;
   page: () => PageSetup;
   changePage: (next: Partial<PageSetup>) => void;
+  /** Показать поля страницы до записи (null — вернуть как в документе). */
+  previewPage?: (next: Partial<PageSetup> | null) => void;
   locked: () => boolean;
 }
+
+// ---------------------------------------------------------------- предпросмотр перетаскивания
+
+const previewKey = new PluginKey<DecorationSet>('ruler-preview');
+
+/** Декорации предпросмотра: пока тянем метку, абзацы и строки таблицы показываются с новыми размерами. */
+export const rulerPreviewPlugin = new Plugin<DecorationSet>({
+  key: previewKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, set) => {
+      const m = tr.getMeta(previewKey) as DecorationSet | null | undefined;
+      if (m !== undefined) return m ?? DecorationSet.empty;
+      return tr.docChanged ? DecorationSet.empty : set;
+    },
+  },
+  props: { decorations: (st) => previewKey.getState(st) },
+});
+
+/** Обновить предпросмотр без dispatch: в историю и в «изменено» это не попадает. */
+function preview(decos: Decoration[] | null): void {
+  const v = H.view();
+  if (!previewKey.getState(v.state)) return; // плагина нет (окно колонтитула) — без предпросмотра
+  const tr = v.state.tr.setMeta(previewKey, decos ? DecorationSet.create(v.state.doc, decos) : null).setMeta('addToHistory', false);
+  v.updateState(v.state.apply(tr));
+}
+
+/** Временные значения для самой линейки во время перетаскивания. */
+let livePage: Partial<PageSetup> | null = null;
+let liveIndent: ParaInfo | null = null
 
 const PX_CM = 96 / 2.54;
 const PX_PT = 4 / 3;
@@ -102,7 +137,17 @@ function track(e: MouseEvent, move: (dx: number, dy: number, ev: MouseEvent) => 
   const sx = e.clientX, sy = e.clientY;
   let dx = 0, dy = 0;
   const mv = (ev: MouseEvent) => { dx = ev.clientX - sx; dy = ev.clientY - sy; move(dx, dy, ev); };
-  const end = () => { document.removeEventListener('mousemove', mv); dragging = false; hideTip(); up(dx, dy); updateRuler(); };
+  const end = () => {
+    document.removeEventListener('mousemove', mv);
+    dragging = false;
+    hideTip();
+    livePage = null;
+    liveIndent = null;
+    // Сначала снять предпросмотр, затем записать итог одной транзакцией.
+    preview(null);
+    up(dx, dy);
+    updateRuler();
+  };
   document.addEventListener('mousemove', mv);
   document.addEventListener('mouseup', end, { once: true });
 }
@@ -139,7 +184,7 @@ function doUpdate(): void {
   const hrr = hr.getBoundingClientRect();
   const vrr = vr.getBoundingClientRect();
   const z = H.zoom();
-  const page = H.page();
+  const page = { ...H.page(), ...livePage };
   const ml = page.left * PX_PT * z, mr = page.right * PX_PT * z, mt = page.top * PX_PT * z, mb = page.bottom * PX_PT * z;
   const W = pr.width, Hh = pr.height;
 
@@ -176,12 +221,13 @@ function doUpdate(): void {
   const para = !H.locked() && !tbl ? paraAtCursor() : null;
   for (const m of [iFirst, iHang, iLeft, iRight]) m.hidden = !para;
   if (para) {
-    const { L, F, R } = para.info;
+    const { L, F, R } = liveIndent ?? para.info;
     iFirst.style.left = `${ml + (L + F) * PX_PT * z}px`;
     iHang.style.left = `${ml + L * PX_PT * z}px`;
     iLeft.style.left = `${ml + L * PX_PT * z}px`;
     iRight.style.left = `${W - mr - R * PX_PT * z}px`;
   }
+  if (dragging) return; // метки столбцов и строк не пересоздаём под мышью
   for (const m of colMarks) m.remove();
   for (const m of rowMarks) m.remove();
   colMarks = [];
@@ -250,6 +296,18 @@ function dragColumn(e: MouseEvent, edge: number, tablePos: number, z: number): v
   if (!cols.length) return;
   const orig = [...cols];
   const hrr = hin.getBoundingClientRect();
+  const mark = colMarks[edge];
+  const mark0 = mark ? parseFloat(mark.style.left) : 0;
+  // Ширины столбцов на экране: <col> внутри colgroup (вид таблицы не реагирует на их правку), ширина таблицы — сумма.
+  const tdom = (v.nodeDOM(tablePos) as HTMLElement | null)?.querySelector('table') ?? null;
+  const colEls = tdom ? [...tdom.querySelectorAll<HTMLElement>(':scope > colgroup > col')] : [];
+  const saved = { cols: colEls.map((c) => c.style.width), table: tdom?.style.width ?? '', minW: tdom?.style.minWidth ?? '' };
+  const live = (next: number[] | null) => {
+    if (!tdom || colEls.length !== orig.length) return;
+    colEls.forEach((c, k) => { c.style.width = next ? `${next[k]}px` : saved.cols[k]; });
+    tdom.style.width = next ? `${next.reduce((a, b) => a + b, 0)}px` : saved.table;
+    tdom.style.minWidth = next ? '' : saved.minW;
+  };
   track(e, (dx, _dy, ev) => {
     const d = dx / z;
     const next = [...orig];
@@ -258,9 +316,12 @@ function dragColumn(e: MouseEvent, edge: number, tablePos: number, z: number): v
     const w = Math.max(20, orig[i] + d);
     next[i] = w;
     if (edge < orig.length) next[edge] = Math.max(20, orig[edge] - (w - orig[i]));
+    live(next);
+    if (mark) mark.style.left = `${mark0 + (w - orig[i]) * z}px`;
     showGuide(hrr, ev.clientX, null);
     showTip(ev.clientX, ev.clientY, `${Math.round(next[i])} px`);
   }, (dx) => {
+    live(null);
     const d = dx / z;
     if (!d || edge === 0) return;
     const i = edge - 1;
@@ -281,7 +342,13 @@ function dragRow(e: MouseEvent, edge: number, tablePos: number, z: number): void
   const row = tbl.child(rowIdx);
   const dom = v.nodeDOM(tablePos + 1 + (() => { let o = 0; for (let i = 0; i < rowIdx; i++) o += tbl.child(i).nodeSize; return o; })()) as HTMLElement | null;
   const h0 = dom ? dom.getBoundingClientRect().height / z : 20;
+  const rowPos = tablePos + 1 + (() => { let o = 0; for (let i = 0; i < rowIdx; i++) o += tbl.child(i).nodeSize; return o; })();
+  const mark = rowMarks[edge];
+  const mark0 = mark ? parseFloat(mark.style.top) : 0;
   track(e, (dx, dy, ev) => {
+    const h = Math.max(12, h0 + dy / z);
+    preview([Decoration.node(rowPos, rowPos + row.nodeSize, { style: `height:${h}px` })]);
+    if (mark) mark.style.top = `${mark0 + (h - h0) * z}px`;
     showGuide(vin.getBoundingClientRect(), null, ev.clientY);
     showTip(ev.clientX, ev.clientY, cmText((h0 + dy / z) / PX_PT));
   }, (_dx, dy) => {
@@ -336,7 +403,11 @@ export function initRuler(host: RulerHost): void {
       const pos = (key === 'left' ? pr.left + val * PX_PT * z : key === 'right' ? pr.right - val * PX_PT * z : key === 'top' ? pr.top + val * PX_PT * z : pr.bottom - val * PX_PT * z);
       showGuide(pr, horizontal ? pos : null, horizontal ? null : pos);
       showTip(ev.clientX, ev.clientY, cmText(val));
+      livePage = { [key]: val };
+      H.previewPage?.(livePage);
+      doUpdate();
     }, (dx, dy) => {
+      H.previewPage?.(null);
       const d = horizontal ? dx : dy;
       if (Math.abs(d) < 1) return;
       H.changePage({ [key]: value(d) } as Partial<PageSetup>);
@@ -385,8 +456,21 @@ export function initRuler(host: RulerHost): void {
       if (kind === 'left') return { L: snap(Math.max(0, Math.min(textW - 20, L + d))), F, R };
       return { L, F, R: snap(Math.max(0, Math.min(textW - 20 - L, R - d))) };
     };
+    const v = H.view();
+    const { from, to } = v.state.selection;
+    const paras: { pos: number; end: number }[] = [];
+    v.state.doc.nodesBetween(from, to, (n, pos) => {
+      if (n.type !== schema.nodes.paragraph && n.type !== schema.nodes.heading) return true;
+      const $p = v.state.doc.resolve(pos);
+      for (let d = $p.depth; d > 0; d--) if ($p.node(d).type === schema.nodes.list_item) return false;
+      paras.push({ pos, end: pos + n.nodeSize });
+      return false;
+    });
     track(e, (dx, _dy, ev) => {
       const n = calc(dx);
+      liveIndent = n;
+      preview(paras.map((q) => Decoration.node(q.pos, q.end, { style: `margin-left:${n.L}pt;text-indent:${n.F}pt;margin-right:${n.R}pt` })));
+      doUpdate();
       const x = kind === 'right' ? pr.right - (page.right + n.R) * PX_PT * z : pr.left + (page.left + (kind === 'first' ? n.L + n.F : n.L)) * PX_PT * z;
       showGuide(pr, x, null);
       showTip(ev.clientX, ev.clientY, cmText(kind === 'first' ? n.L + n.F : kind === 'right' ? n.R : n.L));

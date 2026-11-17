@@ -1980,6 +1980,103 @@ await test('рисунок «за текстом»: обычный щелчок 
   eq(await kind(), 'text', 'щелчок по букве — курсор в тексте');
   await p.context().close();
 });
+await test('линейки «живые»: отступ, поле и столбец двигаются за мышью, в истории одна запись', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const long = 'Длинный абзац для проверки отступов, который переносится на несколько строк. '.repeat(4);
+    const cell = (t) => s.nodes.table_cell.create(null, s.nodes.paragraph.create(null, s.text(t)));
+    const row = () => s.nodes.table_row.create(null, [cell('а'), cell('б'), cell('в')]);
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text(long)), s.nodes.table.create({ borders: true }, [row(), row()])]), E.getMeta(), 'live');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 3)));
+    E.view.focus();
+  });
+  await p.waitForSelector('#hr-inner .ri-left:not([hidden])');
+  const paraLeft = () => p.evaluate(() => window.ens.view.dom.querySelector('p').getBoundingClientRect().left);
+  const indent = () => p.evaluate(() => window.ens.view.state.doc.firstChild.attrs.indent);
+  const x0 = await paraLeft();
+  // Отступ слева: во время перетаскивания абзац уже сдвинут, документ ещё не изменён.
+  const m = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  await p.mouse.move(m.x + m.width / 2, m.y + m.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(m.x + m.width / 2 + 30, m.y + m.height / 2, { steps: 3 });
+  await p.mouse.move(m.x + m.width / 2 + 60, m.y + m.height / 2, { steps: 3 });
+  const mid = await paraLeft();
+  ok(mid - x0 > 50, `абзац двигается за мышью: ${x0} → ${mid}`);
+  eq(await indent(), null, 'до отпускания документ не меняется');
+  const m2 = await (await p.$('#hr-inner .ri-left')).boundingBox();
+  ok(m2.x - m.x > 50, 'метка отступа едет за мышью');
+  await p.mouse.up();
+  const ind = await indent();
+  ok(ind > 40, `после отпускания отступ записан: ${ind}`);
+  // Одна запись в истории: одна отмена возвращает исходное, вторая ничего не меняет.
+  await p.keyboard.press('Control+KeyZ');
+  eq(await indent(), null, 'одна отмена — исходный отступ');
+  const t = await text(p);
+  await p.keyboard.press('Control+KeyZ');
+  eq(await text(p), t, 'вторая отмена ничего не меняет');
+  ok(Math.abs((await paraLeft()) - x0) < 1, 'предпросмотр снят');
+  // Левое поле: текст перетекает до отпускания.
+  const pageLeft = () => p.evaluate(() => window.ens.getMeta().page.left);
+  const L0 = await pageLeft();
+  const lm = await (await p.$('#hr-inner .rm[aria-label="Левое поле"]')).boundingBox();
+  await p.mouse.move(lm.x + lm.width / 2, lm.y + lm.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(lm.x + lm.width / 2 + 40, lm.y + lm.height / 2, { steps: 4 });
+  ok((await paraLeft()) - x0 > 30, 'поле: текст сдвинулся до отпускания');
+  eq(await pageLeft(), L0, 'поле: документ не изменён до отпускания');
+  await p.mouse.up();
+  ok((await pageLeft()) - L0 > 20, 'поле записано');
+  // Столбец таблицы: ширина меняется за мышью, запись — одна.
+  await p.evaluate(() => {
+    const E = window.ens; let pos = 0;
+    E.view.state.doc.descendants((n, q) => { if (!pos && n.type.name === 'table_cell') pos = q + 2; });
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, pos)));
+  });
+  await p.waitForSelector('#hr-inner .rc');
+  const cellW = () => p.evaluate(() => window.ens.view.dom.querySelector('td').getBoundingClientRect().width);
+  const colw = () => p.evaluate(() => { let c = null; window.ens.view.state.doc.descendants((n) => { if (!c && n.type.name === 'table_cell') c = n.attrs.colwidth; }); return c; });
+  const w0 = await cellW();
+  const c0 = await colw();
+  const rc = (await p.$$('#hr-inner .rc'))[1];
+  const b = await rc.boundingBox();
+  await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await p.mouse.down();
+  await p.mouse.move(b.x + b.width / 2 + 40, b.y + b.height / 2, { steps: 4 });
+  ok((await cellW()) - w0 > 30, `столбец шире до отпускания: ${w0} → ${await cellW()}`);
+  eq(await colw(), c0, 'ширина в документе не изменена до отпускания');
+  await p.mouse.up();
+  ok((await colw())?.[0] > w0 + 20, `ширина записана: ${JSON.stringify(await colw())}`);
+  await p.keyboard.press('Control+KeyZ');
+  eq(await colw(), c0, 'одна отмена возвращает ширину');
+  await p.context().close();
+});
+
+await test('обрезка рисунка: во время перетаскивания видна отрезаемая часть', async () => {
+  const p = await page();
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC';
+  await p.evaluate((png) => {
+    const E = window.ens, s = E.schema;
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('А '), s.nodes.image.create({ src: png, width: 200, height: 100 })])]), E.getMeta(), 'crop');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(E.view.state.doc, 3)));
+    E.run('image.crop');
+  }, PNG);
+  await p.waitForSelector('.img-ov.crop:not([hidden]) .img-h-e');
+  const e = await (await p.$('.img-h-e')).boundingBox();
+  const img0 = await (await p.$('.ProseMirror img[src^="data:"]')).boundingBox();
+  await p.mouse.move(e.x + 4, e.y + 4);
+  await p.mouse.down();
+  await p.mouse.move(e.x - 56, e.y + 4, { steps: 4 });
+  const g = await p.$('.crop-ghost');
+  ok(g, 'полупрозрачный полный рисунок показан');
+  const gb = await g.boundingBox();
+  ok(Math.abs(gb.x - img0.x) < 2 && Math.abs(gb.width - img0.width) < 2, `призрак на месте исходного рисунка: ${JSON.stringify([gb, img0])}`);
+  await p.mouse.up();
+  ok(!(await p.$('.crop-ghost')), 'после отпускания призрак убран');
+  const crop = await p.evaluate(() => { let c = null; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') c = n.attrs.crop; }); return c; });
+  ok(crop && crop[2] > 0.2, `обрезано справа: ${JSON.stringify(crop)}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
