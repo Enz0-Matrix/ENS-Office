@@ -2831,6 +2831,11 @@ await test('пункт 10: перенос слов, подложка на каж
   eq(await p.$$eval('.paper .watermark', (w) => w.length), 0, 'подложка убрана');
   await p.context().close();
 });
+await test('новый документ не считается изменённым (нет вопроса «Сохранить изменения?»)', async () => {
+  const p = await page();
+  eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

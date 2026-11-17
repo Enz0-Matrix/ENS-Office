@@ -74,7 +74,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 // ---------------------------------------------------------------- состояние документа
 
 let meta: DocMeta = newMeta();
-let savedMeta = JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf);
+// Та же формула, что metaKey() ниже (она объявлена позже): иначе новый документ сразу считается изменённым.
+let savedMeta = JSON.stringify(meta.page) + JSON.stringify(meta.defaults) + JSON.stringify(meta.hf) + JSON.stringify([!!meta.hyphenate, meta.watermark ?? '']);
 let docName = 'Документ1';
 let savedDoc: PMNode = schema.nodes.doc.createAndFill()!;
 const docId = `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
