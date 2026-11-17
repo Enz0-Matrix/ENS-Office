@@ -228,7 +228,13 @@ impl<'a> Lexer<'a> {
                     '@' => TokenType::At,
                     '\\' => TokenType::Backslash,
                     ',' => {
-                        if self.locale.numbers.symbols.decimal == "," {
+                        let digit_next = self.peek_char().is_some_and(|c| c.is_ascii_digit());
+                        if self.locale.numbers.symbols.decimal == "," && !digit_next {
+                            // ENS-Office: «всеядность». В русской локали запятая без цифры после
+                            // неё не может быть дробной частью: это разделитель аргументов,
+                            // как его пишут по привычке из английского Excel (СЦЕПИТЬ(G3," л")).
+                            TokenType::Semicolon
+                        } else if self.locale.numbers.symbols.decimal == "," {
                             match self.consume_number(',') {
                                 Ok(number) => TokenType::Number(number),
                                 Err(error) => TokenType::Illegal(error),
