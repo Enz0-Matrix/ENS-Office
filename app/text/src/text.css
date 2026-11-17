@@ -66,6 +66,7 @@
 .ProseMirror li.numbered > .num { grid-column: 1; padding-right: 6pt; white-space: nowrap; user-select: none; }
 .ProseMirror li.numbered > :not(.num) { grid-column: 2; min-width: 0; }
 .ProseMirror a { color: #0563c1; text-decoration: underline; cursor: text; }
+body.ctrl-held .ProseMirror a { cursor: pointer; }
 .ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; }
 .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
 

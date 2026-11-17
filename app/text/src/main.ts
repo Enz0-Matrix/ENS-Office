@@ -488,6 +488,13 @@ function syncImageTab(): void {
   else if (!on && active === 'Рисунок') click('Главная');
 }
 
+// Пока нажат Ctrl, ссылки в тексте показывают «руку»: видно, что Ctrl+щелчок откроет ссылку (как в Word).
+const ctrlHeld = (e: KeyboardEvent | MouseEvent) => document.body.classList.toggle('ctrl-held', e.ctrlKey || e.metaKey);
+document.addEventListener('keydown', ctrlHeld, true);
+document.addEventListener('keyup', ctrlHeld, true);
+document.addEventListener('mousemove', ctrlHeld, { passive: true });
+window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
+
 /** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
 function openHref(href: string): void {
   if (desktop.isDesktop) {
@@ -937,7 +944,7 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
-          { type: 'small', command: 'view.marks', icon: 'paragraph_20' },
+          { type: 'small', command: 'view.marks', icon: 'paragraph' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },

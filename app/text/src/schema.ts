@@ -292,7 +292,7 @@ const marks: Record<string, MarkSpec> = {
     attrs: { href: {} },
     inclusive: false,
     parseDOM: [{ tag: 'a[href]', getAttrs: (d) => ({ href: (d as HTMLElement).getAttribute('href') }) }],
-    toDOM: (m) => ['a', { href: m.attrs.href, title: m.attrs.href }, 0],
+    toDOM: (m) => ['a', { href: m.attrs.href, title: `${m.attrs.href}\nCtrl+щелчок — открыть ссылку` }, 0],
   },
   strong: {
     parseDOM: [{ tag: 'strong' }, { tag: 'b' }, { style: 'font-weight', getAttrs: (v) => /^(bold(er)?|[5-9]\d\d)$/.test(v as string) && null }],

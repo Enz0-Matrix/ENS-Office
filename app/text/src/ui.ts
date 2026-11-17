@@ -53,6 +53,9 @@ export function dialog(build: (box: HTMLElement, close: () => void) => void, sma
   const close = () => { ov.hidden = true; ov.replaceChildren(); document.removeEventListener('keydown', onKey, true); restoreFocus(); };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   document.addEventListener('keydown', onKey, true);
+  // Enter в однострочном поле подтверждает окно, но сам не должен «доехать» до документа: окно закрывается,
+  // фокус возвращается в текст, и браузер выполнил бы Enter уже там — выделенный текст заменился бы переводом строки.
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target instanceof HTMLInputElement) e.preventDefault(); }, true);
   build(box, close);
   ov.replaceChildren(box);
   ov.hidden = false;
