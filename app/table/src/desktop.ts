@@ -40,6 +40,8 @@ export interface Host {
   toast(text: string): void;
   /** Перейти к листу и диапазону (журнал изменений). */
   goTo(sheet: string, area: string): void;
+  /** Перерисовать лист, строку формул и строку состояния (значения изменились). */
+  refresh?(): void;
 }
 
 const newId = () => `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -216,6 +218,7 @@ export async function openPath(path: string): Promise<void> {
     await track();
     try { model.clearEnsChanges(); } catch { /* старый движок */ } // подготовка листа после открытия — не правка
     onOpened(model, path, await currentUser(), host);
+    await updateLinks(true); // как Excel: значения из закрытых книг-источников — свежие
     if (info.readonly) host.toast('Файл только для чтения: изменения можно сохранить под другим именем.');
     if (lost.length) {
       host.toast(`В книге есть то, что ENS-Table пока не сохраняет: ${lost.join(', ')}. ` +
@@ -224,6 +227,82 @@ export async function openPath(path: string): Promise<void> {
   } catch (e) {
     host.toast(String(e));
   }
+}
+
+// --- Связи с другими книгами ---
+
+/** Где искать книгу-источник: путь как записан, он же относительно папки книги, файл рядом с книгой. */
+export function linkCandidates(target: string, file: string, bookPath: string): string[] {
+  const sep = bookPath.includes('\\') ? '\\' : '/';
+  const dir = bookPath.replace(/[\\/][^\\/]*$/, '');
+  let t = target.replace(/^file:\/\/\/?/i, '');
+  try { t = decodeURIComponent(t); } catch { /* путь без %-кодов */ }
+  const out: string[] = [];
+  if (/^([a-z]:[\\/]|[\\/])/i.test(t)) out.push(t);
+  else if (dir) out.push(dir + sep + t.replace(/[\\/]/g, sep));
+  if (dir) out.push(dir + sep + file); // всеядность: испорченный путь — ищем рядом с книгой
+  return [...new Set(out)];
+}
+
+/** «Данные → Обновить связи»: значения ссылок на другие книги читаются из файлов-источников
+ *  на диске (запускать их не нужно). `auto` — при открытии книги: без лишних сообщений. */
+export async function updateLinks(auto = false): Promise<void> {
+  const m = host.model();
+  let books: { file: string; target: string }[] = [];
+  try { books = m.externalBooks?.() ?? []; } catch { /* старый движок */ }
+  if (!books.length) { if (!auto) host.toast('В книге нет ссылок на другие книги.'); return; }
+  if (!isDesktop) { if (!auto) await pickSources(books); return; }
+  const doc = host.doc();
+  const ok: string[] = [], notFound: string[] = [], noSheets: string[] = [];
+  for (const b of books) {
+    let done = false;
+    for (const p of linkCandidates(b.target, b.file, doc.path)) {
+      let bytes: Uint8Array;
+      try { bytes = await readFile(p); } catch { continue; }
+      try {
+        const missing = m.updateExternalBook!(b.file, bytes);
+        noSheets.push(...missing.map((s) => `«${s}» в «${b.file}»`));
+        ok.push(b.file);
+      } catch (e) {
+        host.toast(`«${b.file}» не удалось прочитать: ${String(e)}`);
+      }
+      done = true;
+      break;
+    }
+    if (!done) notFound.push(b.file);
+  }
+  host.refresh?.();
+  if (ok.length && !auto) doc.dirty = true;
+  const parts: string[] = [];
+  if (ok.length) parts.push(`Связи обновлены: ${ok.join(', ')}.`);
+  if (notFound.length) parts.push(`Не найдены: ${notFound.join(', ')} — остались значения, сохранённые в книге.`);
+  if (noSheets.length) parts.push(`Нет листов: ${noSheets.join(', ')}.`);
+  if (!auto || notFound.length || noSheets.length) host.toast(parts.join(' '));
+}
+
+/** В браузере файлы с диска сами не читаются: пользователь выбирает книги-источники. */
+function pickSources(books: { file: string; target: string }[]): Promise<void> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.xlsx,.xlsm';
+    input.addEventListener('change', async () => {
+      const m = host.model();
+      const ok: string[] = [];
+      for (const f of Array.from(input.files ?? [])) {
+        const book = books.find((b) => b.file.toLowerCase() === f.name.toLowerCase());
+        if (!book) { host.toast(`«${f.name}» — на эту книгу нет ссылок.`); continue; }
+        try { m.updateExternalBook!(book.file, new Uint8Array(await f.arrayBuffer())); ok.push(book.file); }
+        catch (e) { host.toast(`«${f.name}» не удалось прочитать: ${String(e)}`); }
+      }
+      host.refresh?.();
+      if (ok.length) { host.doc().dirty = true; host.onDocChanged(); host.toast(`Связи обновлены: ${ok.join(', ')}.`); }
+      resolve();
+    });
+    host.toast(`Выберите книги-источники: ${books.map((b) => b.file).join(', ')}.`);
+    input.click();
+  });
 }
 
 // --- Сохранение ---

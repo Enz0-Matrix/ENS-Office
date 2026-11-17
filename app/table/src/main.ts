@@ -5,7 +5,7 @@ import { allCommands, handleKey, keyLabel, matchScore, register, run } from './c
 import { CHART_TEMPLATES, parseRange, type ChartAxes, type ChartLook } from './chart';
 import { addRangePicker, initRangePicker } from './rangepick';
 import { newShape, SHAPE_NAMES } from './shapes';
-import { type BorderType, type CellStyle, type RichRun, columnName, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
+import { type BorderType, type CellStyle, type RichRun, columnName, isExternalSheet, realSheetCount, columnNumber, fromBytes, loadEngine, newBookFont, newWorkbook, nextSheetName, openXlsx, type Area, type CellLinkInfo, type Model, type Validation } from './engine';
 import { fontStack, loadFonts } from './fonts';
 import { initFind, showFind } from './findreplace';
 import { boltApply, boltCell } from './bolt';
@@ -978,7 +978,8 @@ const SHEET_COLORS = ['', '#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050',
 function sheetMenu(index: number, x: number, y: number): void {
   const props = model.getWorksheetsProperties();
   const visible = props.filter((p) => p.state === 'visible').length;
-  const hidden = props.map((p, i) => ({ p, i })).filter(({ p }) => p.state !== 'visible');
+  // veryHidden (и служебные листы других книг) Excel не предлагает показать
+  const hidden = props.map((p, i) => ({ p, i })).filter(({ p }) => p.state === 'hidden');
   const items: { label: string; run: () => void; disabled?: boolean }[] = [
     { label: 'Вставить лист', run: () => run('sheet.new') },
     { label: 'Удалить', disabled: visible <= 1, run: () => {
@@ -988,7 +989,7 @@ function sheetMenu(index: number, x: number, y: number): void {
     { label: 'Переименовать', run: () => renameSheet(index) },
     { label: 'Копировать лист', run: () => { model.duplicateSheet(index); setSheet(index + 1); } },
     { label: 'Переместить влево', disabled: index === 0, run: () => { model.moveSheet(index, index - 1); setSheet(index - 1, false); } },
-    { label: 'Переместить вправо', disabled: index >= props.length - 1, run: () => { model.moveSheet(index, index + 1); setSheet(index + 1, false); } },
+    { label: 'Переместить вправо', disabled: index >= realSheetCount(model) - 1, run: () => { model.moveSheet(index, index + 1); setSheet(index + 1, false); } },
     { label: 'Скрыть', disabled: visible <= 1, run: () => {
       model.hideSheet(index);
       const next = model.getWorksheetsProperties().findIndex((p) => p.state === 'visible');
@@ -1454,7 +1455,7 @@ function linkDialog(): void {
     <p><label>Текст: <input data-f="text" style="width:70%" placeholder="как будет выглядеть в ячейке"></label></p>
     <div data-row="ext"><p><label>Адрес: <input data-f="target" style="width:70%" placeholder="https://… , имя@почта или путь к файлу"></label>
       ${isDesktop ? '<button data-act="browse">Файл…</button>' : ''}</p></div>
-    <div data-row="int"><p><label>Лист: <select data-f="sheet">${props.map((p) => `<option>${p.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('')}</select></label>
+    <div data-row="int"><p><label>Лист: <select data-f="sheet">${props.filter((p) => !isExternalSheet(p.name)).map((p) => `<option>${p.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('')}</select></label>
       <label style="margin-left:10px">Ячейка: <input data-f="cell" style="width:90px" placeholder="A1"></label></p>
       <p><label>или имя диапазона: <input data-f="name" list="lk-names" style="width:40%"></label><datalist id="lk-names">${names.map((n) => `<option value="${n}">`).join('')}</datalist></p></div>
     <p><label>Подсказка: <input data-f="tip" style="width:70%" placeholder="показывается при наведении"></label></p>
@@ -3508,7 +3509,7 @@ register(
   { id: 'sheet.new', label: 'Новый лист', keywords: ['new sheet', 'лист'], keys: ['Shift+F11'], run: () => {
     const name = nextSheetName(model);
     model.newSheet();
-    const index = model.getWorksheetsProperties().length - 1;
+    const index = realSheetCount(model) - 1; // новый лист — последний из настоящих
     model.renameSheet(index, name);
     setSheet(index);
   } },
@@ -3537,6 +3538,8 @@ register(
     run: () => sortBy(grid.sel.column, true) },
   { id: 'data.sortCustom', label: 'Настраиваемая сортировка…', keywords: ['custom sort', 'сортировка по нескольким столбцам', 'уровни сортировки'],
     run: () => sortBy(grid.sel.column, false, true) },
+  { id: 'data.updateLinks', label: 'Обновить связи', keywords: ['внешние ссылки', 'другие книги', 'связи', 'обновить значения', 'edit links', 'update links', 'refresh'],
+    run: () => { void desk.updateLinks(false); } },
   { id: 'data.filter', label: 'Фильтр', keywords: ['filter', 'автофильтр', 'отбор'], keys: ['Ctrl+Shift+KeyL'],
     checked: () => !!filterAt(grid.sheet, grid.sel.row, grid.sel.column), run: toggleFilter },
   { id: 'clipboard.pasteSpecial', label: 'Специальная вставка', keywords: ['paste special', 'вставить значения', 'транспонировать'],
@@ -3626,7 +3629,7 @@ function createExampleSheet(ex: FunctionExample): void {
   let name = `Пример ${ex.fn}`;
   for (let i = 2; names.includes(name.toLowerCase()); i++) name = `Пример ${ex.fn} (${i})`;
   model.newSheet();
-  const sh = model.getWorksheetsProperties().length - 1;
+  const sh = realSheetCount(model) - 1;
   model.renameSheet(sh, name);
   const set = (r: number, c: number, v: string) => model.setUserInput(sh, r, c, v);
   const text = (v: string) => (/^[=+\-]/.test(v) ? `'${v}` : v); // показать формулу как текст
@@ -3976,4 +3979,5 @@ await desk.start({
   onDocChanged: syncDocTitle,
   toast: showToast,
   goTo: goToArea,
+  refresh: () => { grid.render(); updateFormulaBar(); updateStatus(); },
 });

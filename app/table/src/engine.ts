@@ -286,12 +286,21 @@ export interface Model {
   hasMacros?(): boolean;
   /** Что было в открытом файле и не будет сохранено (по-русски). */
   lostFeatures?(): string[];
+  /** Книги-источники внешних ссылок: [{ file: «Цены.xlsx», target: путь как записан }]. */
+  externalBooks?(): { file: string; target: string }[];
+  /** Обновить значения ссылок на книгу `file` из байтов её xlsx; вернуть листы, которых в ней нет. */
+  updateExternalBook?(file: string, bytes: Uint8Array): string[];
   toBytes(): Uint8Array;
   flushSendQueue(): Uint8Array;
   applyExternalDiffs(diffs: Uint8Array): void;
   evaluate(): void;
   free(): void;
 }
+
+/** Служебный лист другой книги (`[Цены.xlsx]Лист`): не показывается пользователю. */
+export const isExternalSheet = (name: string) => name.startsWith('[');
+/** Сколько в книге настоящих листов (служебные листы других книг идут после них). */
+export const realSheetCount = (m: Model) => m.getWorksheetsProperties().filter((p) => !isExternalSheet(p.name)).length;
 
 // Собирается scripts/build-engine.sh (в git не хранится).
 import init, { Model as EngineModel } from './engine-pkg/engine.js';

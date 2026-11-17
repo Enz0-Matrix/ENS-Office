@@ -65,7 +65,7 @@ export function defineFromSelection(name: string): boolean {
 export function openNameManager(): void {
   const overlay = document.getElementById('recovery')!;
   const m = host.model();
-  const sheets = m.getWorksheetsProperties().map((p) => p.name);
+  const sheets = m.getWorksheetsProperties().map((p) => p.name).filter((n) => !n.startsWith('['));
   let selected = -1;
   const list = () => m.getDefinedNameList().filter((d) => !hidden(d.name));
 

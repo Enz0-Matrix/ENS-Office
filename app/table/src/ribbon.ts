@@ -275,6 +275,7 @@ export const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Проверка данных', items: [{ type: 'large', command: 'data.validation', icon: 'dropdown_list', label: 'Проверка' }] },
+      { name: 'Связи', items: [{ type: 'large', command: 'data.updateLinks', icon: 'link', label: 'Обновить связи' }] },
       {
         name: 'Структура',
         items: [
