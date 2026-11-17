@@ -2208,6 +2208,9 @@ await test('контекстные меню: текст, выделение, с�
   ok((await kind()).startsWith('table'), `меню таблицы: ${await kind()}`);
   l = await labels();
   ok(l.includes('Вставить строку ниже') && l.includes('Удалить столбец') && l.includes('Свойства таблицы…'), `пункты таблицы: ${l}`);
+  // Фоновая служебная транзакция (пересчёт страниц) не закрывает открытое меню.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setMeta('addToHistory', false)); });
+  ok((await kind()).startsWith('table'), `меню пережило служебную транзакцию: ${await kind()}`);
   await p.click('.context-menu.ctx-text button:has-text("Вставить строку ниже")');
   eq(await p.$$eval('.ProseMirror tr', (r) => r.length), 3, 'строка добавлена из меню');
   // Клавиатура: Shift+F10, стрелки, Enter.

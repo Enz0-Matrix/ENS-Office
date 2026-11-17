@@ -495,7 +495,8 @@ function openHref(href: string): void {
 }
 
 function afterChange(docChanged: boolean): void {
-  hideContextMenu();
+  // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
+  if (docChanged) hideContextMenu();
   updateUi();
   updateOverlay();
   updateTableMove();
