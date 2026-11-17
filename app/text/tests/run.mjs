@@ -2504,6 +2504,52 @@ await test('шаблоны: каждый встроенный шаблон со�
   ok(r.length >= 9, `шаблонов: ${r.length}`);
   await p.context().close();
 });
+await test('шаблон «Письмо на бланке»: поля, шапка-таблица, шрифты, исполнитель внизу первого листа, DOCX', async () => {
+  const p = await page();
+  await p.keyboard.press('Alt+KeyF');
+  await p.click('.text-backstage [data-go="new"]');
+  await p.click('.text-backstage .bs-tile:has-text("Письмо на бланке")');
+  await p.waitForFunction(() => window.ens.view.state.doc.textContent.includes('Исполнитель:'));
+  await p.waitForTimeout(600);
+  const r = await p.evaluate(() => {
+    const E = window.ens, d = E.view.state.doc, m = E.getMeta();
+    const t = d.firstChild;
+    const cells = []; t.descendants((n) => { if (n.type.name === 'table_cell') cells.push(n.textContent); });
+    const marks = (text) => { let out = null; d.descendants((n) => { if (n.isText && n.text.includes(text) && !out) out = n.marks.map((x) => x.type.name + (x.attrs.size ? ':' + x.attrs.size : '')); }); return out; };
+    const paraOf = (text) => { let a = null; d.descendants((n) => { if (n.type.name === 'paragraph' && n.textContent.startsWith(text) && !a) a = n.attrs; }); return a; };
+    // Низ блока «Исполнитель» и низ текста первой страницы.
+    const sheet = document.getElementById('sheet').getBoundingClientRect();
+    const last = E.view.dom.lastElementChild.getBoundingClientRect();
+    const box = E.pageBoxes()[0];
+    const limit = box.top + box.H - box.eff.bottom * E.PX;
+    const lineH = E.view.dom.lastElementChild.getBoundingClientRect().height;
+    return {
+      page: [m.page.top, m.page.bottom, m.page.left, m.page.right].map((x) => Math.round(x / 28.3465 * 100) / 100),
+      font: [m.defaults.font, m.defaults.size],
+      cols: cells.length, logo: cells[0], middle: cells[1], addr: cells[2],
+      addrMarks: marks('Генеральному директору'), subj: marks('О выплате премии'), appeal: marks('Уважаемый'),
+      bodyFirst: paraOf('[Основной текст')?.first, attach: paraOf('Приложение:')?.first, item: paraOf('1. ')?.first,
+      sign: marks('[Должность]'),
+      gap: limit - (last.bottom - sheet.top), lineH, pages: E.pageCount(),
+      lastText: d.lastChild.textContent,
+      docx: (() => { const b = E.importDocx(E.exportDocx(d, m, 'x')); return [b.doc.childCount === d.childCount, b.meta.lossy.length]; })(),
+    };
+  });
+  eq(r.page, [2, 2, 2.5, 1.5], 'поля: верх 2, низ 2, лево 2,5, право 1,5 см');
+  eq(r.font, ['Times New Roman', 14], 'Times New Roman 14');
+  eq(r.cols, 3, 'шапка — таблица на 3 столбца');
+  ok(r.logo.includes('Логотип') && r.middle === '' && r.addr.startsWith('Генеральному директору'), `ячейки: ${r.logo} | ${r.middle} | ${r.addr}`);
+  eq(r.addrMarks, ['strong'], 'адресат жирный');
+  ok(r.subj.includes('em') && r.subj.includes('textStyle:12'), `тема курсивом 12: ${r.subj}`);
+  ok(r.appeal.includes('strong'), 'обращение жирным');
+  ok(Math.abs(r.bodyFirst - 35.4) < 0.1 && r.attach == null && Math.abs(r.item - 35.4) < 0.1, `абзацы 1,25 см, «Приложение» без отступа: ${r.bodyFirst} ${r.attach} ${r.item}`);
+  ok(r.sign.includes('strong'), 'должность подписанта жирным');
+  eq(r.pages, 1, 'одна страница');
+  ok(r.gap >= -1 && r.gap < r.lineH + 2, `исполнитель в последних строках листа: до низа ${r.gap.toFixed(1)} px при строке ${r.lineH.toFixed(1)} px`);
+  ok(r.lastText.includes('(000)'), 'последняя строка — телефон исполнителя');
+  ok(r.docx[0], 'DOCX туда и обратно: блоки на месте');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

@@ -1707,9 +1707,39 @@ function newDocument(): void {
 }
 
 const templateHost: TemplateHost = {
-  create: (doc, newMetaValue, name) => newFromWizard(doc, newMetaValue, name),
+  create: (doc, newMetaValue, name, fill) => { newFromWizard(doc, newMetaValue, name); if (fill) void fillToPageBottom(fill); },
   current: () => ({ bytes: exportDocx(view.state.doc, meta, docName), name: docName.replace(/\.docx$/i, '') }),
 };
+
+/** Пустыми строками перед последними `last` блоками прижать их к низу первой страницы (блок «Исполнитель» письма).
+ *  Считается по вёрстке после отрисовки; в историю отмены не попадает — это часть шаблона. */
+async function fillToPageBottom(last: number): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const doc = view.state.doc;
+  if (doc.childCount <= last) return;
+  let pos = 0;
+  for (let i = 0; i < doc.childCount - last; i++) pos += doc.child(i).nodeSize;
+  const lastDom = view.nodeDOM(doc.content.size - doc.lastChild!.nodeSize); // низ последнего блока
+  const box = pageBoxes(view)[0];
+  if (!(lastDom instanceof HTMLElement) || !box) return;
+  const k = zoom;
+  const sheet = $('sheet').getBoundingClientRect();
+  const bottom = (lastDom.getBoundingClientRect().bottom - sheet.top) / k;
+  const limit = box.top + box.H - box.eff.bottom * PX;
+  // Высота пустой строки — по пустому абзацу шаблона с теми же настройками (вставляем и замеряем).
+  const probe = schema.nodes.paragraph.create();
+  const tr0 = view.state.tr.insert(pos, probe).setMeta('addToHistory', false);
+  view.dispatch(tr0);
+  const pDom = view.nodeDOM(pos) as HTMLElement | null;
+  const lineH = pDom ? pDom.getBoundingClientRect().height / k : 0;
+  const free = limit - bottom - lineH; // одна строка уже вставлена
+  const more = lineH > 0 ? Math.max(0, Math.floor(free / lineH + 0.02)) : 0;
+  let tr = view.state.tr.setMeta('addToHistory', false);
+  if (more > 0) tr = tr.insert(pos, Array.from({ length: more }, () => schema.nodes.paragraph.create()));
+  // Если исполнитель не поместился и с одной строкой — убираем пробную.
+  if (free < -0.5) tr = tr.delete(pos, pos + probe.nodeSize);
+  if (tr.docChanged) view.dispatch(tr);
+}
 
 function newFromWizard(doc: PMNode, newMetaValue: DocMeta, name: string): void {
   void clearRecovery(docId);
@@ -1919,7 +1949,7 @@ initFileMenu({
     if (id == null) { run('file.new'); return; }
     const t = builtInTemplates().find((x) => x.id === id);
     if (!t) return;
-    void guardUnsaved(() => { const b = t.build(); templateHost.create(b.doc, b.meta, b.name); });
+    void guardUnsaved(() => { const b = t.build(); templateHost.create(b.doc, b.meta, b.name, b.fillBeforeLast); });
   },
   liveQuotes: () => liveQuotesOn,
   setLiveQuotes: (on) => { if (on !== liveQuotesOn) run('typo.live'); },
