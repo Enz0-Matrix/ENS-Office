@@ -10,6 +10,7 @@ import { CellSelection } from 'prosemirror-tables';
 import type { EditorView } from 'prosemirror-view';
 import { command, keyLabel, run } from '../../table/src/commands';
 import { schema } from './schema';
+import { addWords, isKnownWord, wordAt } from './dict';
 
 export interface CtxHost {
   view: () => EditorView;
@@ -118,6 +119,10 @@ function items(kinds: CtxKind[]): Entry[] {
   }
   if (!kinds.includes('link')) out.push('-', cmd('insert.link', 'Ссылка…'));
   out.push(cmd('list.bullet', 'Маркированный список'), cmd('list.ordered', 'Нумерованный список'), '-', cmd('review.inspector', 'Рентген форматирования'));
+  const word = wordAt(v.state);
+  if (word && !isKnownWord(word)) {
+    out.push('-', { label: `Добавить «${word}» в словарь`, run: () => { addWords(v, word, true); } });
+  }
   out.push('-', { label: 'Орфография: Shift + правый щелчок по слову', run: () => undefined, disabled: true, hint: true });
   return out;
 }

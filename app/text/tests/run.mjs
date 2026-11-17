@@ -2269,6 +2269,178 @@ await test('вёрстка: в документе из нескольких ра
   ok(marginX(r.neg) >= -0.5, `отрицательный отступ не за краем листа: ${marginX(r.neg).toFixed(1)} pt`);
   await p.context().close();
 });
+await test('табуляция как в Word: стопы через 1,27 см от поля, неявный стоп на выступе; документ не меняется', async () => {
+  const p = await page();
+  const r = await p.evaluate(async () => {
+    const E = window.ens, s = E.schema;
+    const P = (a, t) => s.nodes.paragraph.create(a, s.text(t));
+    const doc = s.nodes.doc.create(null, [
+      P(null, 'а\tб\tв'),
+      // Отступ 18 pt: браузер считал бы шаг от отступа, Word — от поля.
+      P({ indent: 18 }, 'Слово\tдалее'),
+      // Как в образце: отступ 3 см, выступ 3 см, слово шире выступа, две табуляции.
+      P({ indent: 85.05, first: -85.05, align: 'justify' }, 'шжроьроьбромьроьь\t\tПриложение'),
+      // Короткое слово при выступе: табуляция встаёт на отступ (неявный стоп).
+      P({ indent: 85.05, first: -85.05 }, '1.\tПункт'),
+    ]);
+    E.loadDoc(doc, E.getMeta(), 'tabs');
+    await new Promise((res) => setTimeout(res, 600));
+    const pt = 3 / 4;
+    const ps = [...E.view.dom.querySelectorAll(':scope > p')];
+    // Поле — левый край текста страницы: левый край абзаца без отступа.
+    const margin = ps[0].getBoundingClientRect().left;
+    const ends = ps.map((el) => [...el.querySelectorAll('span.tab')].map((t) => {
+      const b = t.getBoundingClientRect();
+      return Math.round(((b.right + parseFloat(getComputedStyle(t).marginRight) - margin) * pt) * 10) / 10;
+    }));
+    // Конец первого слова образца — от него Word считает следующий стоп.
+    const t3 = ps[2].querySelector('span.tab').previousSibling ?? ps[2].firstChild;
+    const rg = document.createRange(); rg.selectNodeContents(t3);
+    const wordEnd = Math.round((rg.getBoundingClientRect().right - margin) * pt * 10) / 10;
+    const json = JSON.stringify(E.view.state.doc.toJSON());
+    return { ends, wordEnd, same: json === JSON.stringify(doc.toJSON()) };
+  });
+  const near = (a, b) => Math.abs(a - b) < 1;
+  ok(near(r.ends[0][0], 36) && near(r.ends[0][1], 72), `простые табуляции на 36 и 72 pt: ${r.ends[0]}`);
+  const onGrid = (x) => { const m = x % 36; return m < 1 || 36 - m < 1; };
+  ok(onGrid(r.ends[1][0]), `от поля, а не от отступа (кратно 36 pt): ${r.ends[1]}`);
+  // Слово шире выступа (85 pt): табуляции идут на ближайшие стопы сетки 36 pt после конца слова.
+  const after = 36 * (Math.floor(r.wordEnd / 36) + 1);
+  ok(r.wordEnd > 85 && near(r.ends[2][0], after) && near(r.ends[2][1], after + 36), `образец: слово до ${r.wordEnd} pt, табуляции ${r.ends[2]}, ждём ${after} и ${after + 36}`);
+  ok(near(r.ends[3][0], 85.05), `короткий номер при выступе — табуляция до отступа: ${r.ends[3]}`);
+  ok(r.same, 'документ не изменился (табуляция — только вид)');
+  await p.context().close();
+});
+await test('версия: один номер — из package.json в «О программе», в tauri.conf.json и в Cargo.toml', async () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  const conf = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8')).version;
+  eq(conf, '../package.json', 'tauri.conf.json берёт версию из package.json');
+  for (const f of ['src-tauri/Cargo.toml', 'redos7/Cargo.toml']) {
+    const m = /^version\s*=\s*"([^"]+)"/m.exec(readFileSync(join(root, f), 'utf8'));
+    eq(m?.[1], pkg, `${f}: версия совпадает с package.json`);
+  }
+  const p = await page();
+  await p.click('.tab.file');
+  await p.waitForSelector('#dialog:not([hidden])');
+  await p.click('#dialog button:has-text("О программе")');
+  await p.waitForSelector('#dialog h2:has-text("ENS-Text")');
+  eq(await p.$eval('#dialog h2', (h) => h.textContent), `ENS-Text ${pkg}`, '«О программе» показывает версию из package.json');
+  await p.context().close();
+});
+await test('скрытые символы: Ctrl+* показывает ¶ · ° → ↵, вёрстка и документ не меняются, при печати не видны', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (c) => s.nodes.paragraph.create(null, c);
+    E.loadDoc(s.nodes.doc.create(null, [
+      P([s.text('Один два\tтри'), s.nodes.hard_break.create(), s.text('№ 5')]),
+      P(),
+      P(s.text('Длинный абзац для проверки переносов строк, который не должен сдвинуться от знаков. '.repeat(3))),
+    ]), E.getMeta(), 'marks');
+  });
+  await p.waitForTimeout(400);
+  // Положение каждой буквы текста (по текстовым узлам): знаки не должны сдвигать ни одну.
+  const geom = () => p.evaluate(() => {
+    const out = [];
+    const d = window.ens.view.dom, o = d.getBoundingClientRect();
+    const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT);
+    let n = 0;
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (t.parentElement.closest('.hm-w')) continue;
+      for (let i = 0; i < t.length; i++, n++) {
+        if (n % 7) continue;
+        const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 1);
+        const b = r.getBoundingClientRect(); out.push([Math.round((b.left - o.left) * 2) / 2, Math.round((b.top - o.top) * 2) / 2]);
+      }
+    }
+    return out;
+  });
+  const before = await geom();
+  const doc0 = await p.evaluate(() => JSON.stringify(window.ens.view.state.doc.toJSON()));
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Shift+Digit8');
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => {
+    const d = window.ens.view.dom;
+    const content = (sel) => [...d.querySelectorAll(sel)].map((e) => getComputedStyle(e, '::after').content);
+    return {
+      on: d.classList.contains('show-marks'),
+      para: content('.hm-para'), sp: content('.hm-sp'), nb: content('.hm-nb'), tab: content('span.tab'), br: content('.hm-br'),
+    };
+  });
+  ok(r.on, 'режим включён');
+  eq(r.para, ['"¶"', '"¶"', '"¶"'], '¶ в конце каждого абзаца, и пустого тоже');
+  ok(r.sp.length >= 10 && r.sp.every((c) => c === '"·"'), `· на пробелах: ${r.sp.length}`);
+  eq(r.nb, ['"°"'], '° на неразрывном пробеле');
+  eq(r.tab, ['"→"'], '→ на табуляции');
+  eq(r.br, ['"↵"'], '↵ на разрыве строки');
+  const after = await geom();
+  // Допуск 1 px: обёртки пробелов меняют субпиксельную расстановку, но не строки.
+  ok(after.length === before.length && after.every((q, i) => Math.abs(q[0] - before[i][0]) <= 1 && q[1] === before[i][1]), 'буквы на своих местах, строки не перенеслись иначе');
+  eq(await p.evaluate(() => JSON.stringify(window.ens.view.state.doc.toJSON())), doc0, 'документ не изменился');
+  ok(await p.$eval('[data-command="view.marks"]', (b) => b.classList.contains('on')), 'кнопка ¶ на ленте нажата');
+  // Ввод при включённых знаках: новые пробелы тоже с точкой.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.keyboard.type('А Б ');
+  ok((await p.$$('.ProseMirror .hm-sp')).length >= r.sp.length + 2, 'знаки появляются на новых пробелах');
+  // Печать: знаков не видно.
+  await p.emulateMedia({ media: 'print' });
+  const printed = await p.evaluate(() => [...document.querySelectorAll('.ProseMirror .hm-para, .ProseMirror .hm-sp')].slice(0, 3).map((e) => e.classList.contains('hm-para') ? getComputedStyle(e).display : getComputedStyle(e, '::after').content));
+  ok(printed.every((x) => x === 'none'), `при печати знаков нет: ${printed}`);
+  await p.emulateMedia({ media: 'screen' });
+  // Выбор запоминается; повторное нажатие выключает.
+  await p.reload();
+  await p.waitForFunction(() => window.ens);
+  ok(await p.evaluate(() => window.ens.view.dom.classList.contains('show-marks')), 'после перезапуска знаки снова видны');
+  // Окно восстановления несохранённого документа — закрываем.
+  if (await p.$('#dialog:not([hidden])')) { await p.keyboard.press('Escape'); await p.waitForSelector('#dialog', { state: 'hidden' }); }
+  await p.click('.ProseMirror');
+  await p.keyboard.press('Control+Shift+Digit8');
+  ok(await p.evaluate(() => !window.ens.view.dom.classList.contains('show-marks') && !document.querySelector('.hm-para')), 'выключено');
+  await p.context().close();
+});
+await test('словарь: фамилия Едренников во всех формах не проверяется; свои слова — окно и контекстное меню', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [
+      P('Едренников, Едренникову, Едренниковой, Едренниковыми и едренникова — все формы.'),
+      P('Слово Зюзюкинцев проверяется, пока его нет в словаре.'),
+    ]), E.getMeta(), 'dict');
+  });
+  await p.waitForTimeout(200);
+  const ok1 = () => p.$$eval('.ProseMirror .dict-word[spellcheck="false"]', (a) => a.map((x) => x.textContent));
+  eq(await ok1(), ['Едренников', 'Едренникову', 'Едренниковой', 'Едренниковыми', 'едренникова'], 'встроенные формы фамилии не проверяются');
+  // Контекстное меню: «Добавить в словарь» для слова под курсором.
+  const pt = await p.evaluate(() => {
+    const t = window.ens.view.dom.querySelectorAll('p')[1].firstChild;
+    const i = t.textContent.indexOf('Зюзюкинцев') + 3;
+    const r = document.createRange(); r.setStart(t, i); r.setEnd(t, i + 1);
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  });
+  await p.mouse.click(pt.x, pt.y, { button: 'right' });
+  await p.click('.context-menu.ctx-text button:has-text("Добавить «Зюзюкинцев» в словарь")');
+  ok((await ok1()).includes('Зюзюкинцев'), 'слово из меню больше не проверяется');
+  // Набор новой формы: тоже из словаря (фамилия на -ев — добавлены все формы).
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.insertText(' Зюзюкинцевым', E.view.state.doc.content.size - 1)); });
+  ok((await ok1()).includes('Зюзюкинцевым'), 'форма фамилии тоже в словаре');
+  // Окно «Словарь»: свои слова, удаление, добавление без форм.
+  await p.evaluate(() => window.ens.run('review.dictionary'));
+  await p.waitForSelector('#dialog .dict-list');
+  ok((await p.$$eval('#dialog .dict-row span', (a) => a.map((x) => x.textContent))).includes('Зюзюкинцева'), 'в окне видны добавленные формы');
+  await p.fill('#dialog input[type=text]', 'ЕНСОфис');
+  await p.keyboard.press('Enter');
+  ok((await p.$$eval('#dialog .dict-row span', (a) => a.map((x) => x.textContent))).includes('ЕНСОфис'), 'слово добавлено из окна');
+  await p.click('#dialog .dict-row:has-text("Зюзюкинцев") >> nth=0 >> button');
+  await p.keyboard.press('Escape');
+  const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('ens-text.dict')));
+  ok(saved.includes('ЕНСОфис') && !saved.includes('Зюзюкинцев'), `словарь сохранён у пользователя: ${saved.length} слов`);
+  ok(!(await ok1()).includes('Зюзюкинцев'), 'удалённое слово снова проверяется');
+  eq(await p.evaluate(() => window.ens.view.state.doc.textContent.includes('Зюзюкинцевым')), true, 'текст документа не тронут');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

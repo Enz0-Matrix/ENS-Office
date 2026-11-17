@@ -53,6 +53,9 @@ import { placeFloats, type Float } from './floats';
 import { frameViews } from './frameview';
 import { initTableMove, updateTableMove } from './table-move';
 import { hideContextMenu, initContextMenu } from './contextmenu';
+import { tabsPlugin, tabShifts } from './tabs';
+import { hiddenMarksOn, hiddenMarksPlugin, setHiddenMarks } from './marks';
+import { BUILTIN_WORDS, addWords, dictPlugin, removeWord, userWords } from './dict';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
 import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
@@ -435,7 +438,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -629,6 +632,7 @@ register(
   { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
   { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
   { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  { id: 'view.marks', label: 'Отобразить все знаки', keywords: ['скрытые символы', 'непечатаемые', 'знаки абзаца', 'пробелы', 'табуляция', '¶'], keys: ['Ctrl+Shift+Digit8'], checked: () => hiddenMarksOn(view.state), run: () => { setHiddenMarks(view, !hiddenMarksOn(view.state)); updateUi(); view.focus(); } },
   { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
   { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
   { id: 'frame.select', label: 'Выделить надпись', keywords: ['надпись', 'выделить рамку'], run: () => selectFrame() },
@@ -698,6 +702,7 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  { id: 'review.dictionary', label: 'Словарь…', keywords: ['словарь', 'орфография', 'фамилия', 'не подчёркивать', 'исключения'], run: () => dictDialog() },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
   { id: 'review.readability', label: 'Читаемость', keywords: ['читаемость', 'канцеляризмы', 'повторы', 'время чтения', 'длинные предложения', 'флеш', 'стиль'], run: () => readabilityDialog({ view: () => view }) },
@@ -917,6 +922,7 @@ const TABS: RibbonTab[] = [
           { type: 'small', command: 'align.center', icon: 'text_align_center' },
           { type: 'small', command: 'align.right', icon: 'text_align_right' },
           { type: 'small', command: 'align.justify', icon: 'text_align_justify' },
+          { type: 'small', command: 'view.marks', icon: 'paragraph_20' },
         ],
       },
       { name: 'Стили', items: [{ type: 'select', command: 'para.style', options: STYLES, width: 130 }] },
@@ -1052,6 +1058,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'review.mergeCopies', icon: 'document_text', label: 'Объединить копии' },
           { type: 'large', command: 'review.compat', icon: 'document_text', label: 'Совместимость с Word' },
           { type: 'large', command: 'review.readability', icon: 'paragraph', label: 'Читаемость' },
+          { type: 'large', command: 'review.dictionary', icon: 'document_text', label: 'Словарь' },
         ],
       },
       { name: 'Чтение', items: [{ type: 'large', command: 'view.focusPara', icon: 'target', label: 'Фокус абзаца' }, { type: 'large', command: 'view.night', icon: 'paint_brush', label: 'Ночной лист' }] },
@@ -1352,6 +1359,42 @@ function tableDialog(): void {
   });
 }
 
+/** Окно «Словарь»: свои слова, которые проверка орфографии не подчёркивает; для фамилий — сразу все формы. */
+function dictDialog(): void {
+  dialog((box, close) => {
+    const input = el('input', { type: 'text', placeholder: 'Слово или фамилия' });
+    const forms = el('input', { type: 'checkbox', checked: true });
+    const list = el('div', { class: 'dict-list' });
+    const draw = () => {
+      const words = userWords();
+      list.replaceChildren(...(words.length ? words.map((w) => el('div', { class: 'dict-row' },
+        el('span', { textContent: w }),
+        el('button', { textContent: 'Удалить', title: `Удалить «${w}» из словаря`, onclick: () => { removeWord(view, w); draw(); } }))) : [el('p', { class: 'dict-empty', textContent: 'Своих слов пока нет.' })]));
+    };
+    const add = () => {
+      const w = input.value.trim();
+      if (!w) return;
+      const added = addWords(view, w, forms.checked);
+      toast(added.length ? `В словарь добавлено: ${added.join(', ')}` : 'Это слово уже есть в словаре');
+      input.value = '';
+      input.focus();
+      draw();
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    box.append(
+      el('h2', { textContent: 'Словарь' }),
+      el('p', { textContent: 'Слова из словаря проверка орфографии не подчёркивает. Словарь хранится на этом компьютере.' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Новое слово' }), input, el('button', { class: 'primary', textContent: 'Добавить', onclick: add })),
+      el('label', { class: 'dict-forms' }, forms, ' Для фамилии на -ов, -ев, -ин добавить все формы (Иванов, Иванова, Иванову…)'),
+      list,
+      el('p', { class: 'dict-builtin', textContent: `Встроено в программу: ${BUILTIN_WORDS.slice(0, 3).join(', ')} и другие формы (${BUILTIN_WORDS.length}).` }),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Закрыть', onclick: close })),
+    );
+    draw();
+    input.focus();
+  });
+}
+
 function linkDialog(): void {
   dialog((box, close) => {
     const url = el('input', { type: 'text', value: linkAt(active().state) ?? 'https://', placeholder: 'Адрес ссылки' });
@@ -1619,7 +1662,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -1928,6 +1971,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
