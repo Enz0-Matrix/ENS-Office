@@ -251,6 +251,7 @@ function commitEdit(dRow: number, dCol: number): void {
   const value = activeValue();
   if (isEnsEgg(value)) { cancelEdit(); showToast(ensMessage()); return; }
   const before = model.getCellStyle(s.sheet, s.row, s.column).style.num_fmt;
+  const mark = model.undoMark();
   const notice = value.startsWith('=') ? null : model.getValidationNotice(s.sheet, s.row, s.column, value);
   if (notice && !confirm(`${notice.title ? `${notice.title}\n\n` : ''}${notice.message}\n\n${notice.style === 1 ? 'Продолжить?' : 'ОК — оставить значение, Отмена — править.'}`)) {
     (editor.classList.contains('away') ? formula : editor).focus();
@@ -279,6 +280,7 @@ function commitEdit(dRow: number, dCol: number): void {
     if (!value.startsWith('=') && value.includes('\n') && !model.getCellStyle(s.sheet, s.row, s.column).style.alignment?.wrap_text) {
       model.updateRangeStyle({ sheet: s.sheet, row: s.row, column: s.column, width: 1, height: 1 }, 'alignment.wrap_text', 'true');
     }
+    widenForNumber(s.sheet, s.row, s.column, value, mark);
   } catch (err) {
     const text = String((err as Error)?.message ?? err).replace(/^Error: /, '');
     showToast(/защищ/.test(text) ? 'Доступ к ячейке запрещён' : `Не удалось записать значение: ${text}`);
@@ -305,6 +307,24 @@ function commitEdit(dRow: number, dCol: number): void {
   grid.render();
   grid.move(dRow, dCol, false);
   focusGrid();
+}
+
+/** Как Excel: введённое число в «Общем» формате не влезло в столбец стандартной ширины — столбец
+ *  расширяется, чтобы число было видно целиком, а не «1,0101E+12». Одна отмена вместе с вводом. */
+function widenForNumber(sheet: number, row: number, column: number, value: string, mark: number): void {
+  if (value.startsWith('=') || model.getCellType(sheet, row, column) !== 1) return;
+  if (model.getCellStyle(sheet, row, column).style.num_fmt.toLowerCase() !== 'general') return;
+  if (Math.abs(model.getColumnWidth(sheet, column) - 90) > 0.5) return; // ширину задавали вручную
+  const shown = model.getFormattedCellValue(sheet, row, column);
+  if (!/E[+-]\d+$/.test(shown)) return;
+  const full = model.formatCellValueAs(sheet, row, column, '0.##############').replace(/[.,]$/, '');
+  const f = model.getCellStyle(sheet, row, column).style.font;
+  measure.font = `${f.i ? 'italic ' : ''}${f.b ? 'bold ' : ''}${Math.round((f.sz ?? 11) * 1.33)}px ${fontStack(f.name)}`;
+  const px = Math.ceil(measure.measureText(full).width + 12);
+  if (px <= 90 || px > 400) return;
+  model.setColumnsWidth(sheet, column, column, px);
+  model.mergeUndoSince(mark);
+  grid.invalidateLayout();
 }
 
 /** Текст ввода: при работе с другим листом он в строке формул. */

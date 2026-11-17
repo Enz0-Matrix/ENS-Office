@@ -1277,7 +1277,7 @@ export class Grid {
         if (/E[+-]\d+$/.test(text) && (style?.num_fmt ?? 'general').toLowerCase() === 'general') {
           try {
             const full = model.formatCellValueAs(this.sheet, cell.r, cell.c, '0.##############').replace(/[.,]$/, '');
-            if (/^-?\d+([.,]\d+)?$/.test(full) && full.replace(/\D/g, '').replace(/^0+/, '').length <= 15) wide = full;
+            if (/^-?\d+([.,]\d+)?$/.test(full) && full.replace(/\D/g, '').replace(/^0+/, '').replace(/0+$/, '').length <= 15) wide = full;
           } catch { /* оставляем как есть */ }
         }
         this.drawText(text, shownStyle, align, tc, Math.max(spillL, tc.x), spillR, wide);

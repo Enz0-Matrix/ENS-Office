@@ -4171,17 +4171,15 @@ fn is_long_digit_string(value: &str) -> bool {
     if !t.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return false;
     }
-    let mut significant = 0;
-    let mut leading = true;
+    let mut digits = String::new();
     for c in t.chars() {
         if c.is_ascii_digit() {
-            if c != '0' || !leading {
-                leading = false;
-                significant += 1;
-            }
+            digits.push(c);
         } else if !matches!(c, ' ' | '\u{a0}' | '\u{202f}' | '\u{2009}' | '\u{2007}' | '\u{2008}' | '\u{200a}') {
             return false;
         }
     }
-    significant > 15
+    // Значащие цифры: без ведущих и хвостовых нулей. 654785313541516000 — 15 значащих,
+    // число хранится без потерь и остаётся числом; 20-значный счёт — уже нет.
+    digits.trim_start_matches('0').trim_end_matches('0').len() > 15
 }

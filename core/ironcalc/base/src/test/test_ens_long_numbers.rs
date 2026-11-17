@@ -11,7 +11,7 @@ use crate::UserModel;
 fn ens_long_numbers() {
     let mut m = UserModel::new_empty("Книга", "ru", "UTC", "ru").unwrap();
     let text = |s: &str| CellValue::String(s.to_string());
-    let cases: [(&str, CellValue, &str); 8] = [
+    let cases: [(&str, CellValue, &str); 9] = [
         ("40817810099910004312", text("40817810099910004312"), "'40817810099910004312"),
         ("4081 7810 0999 1000 4312", text("4081 7810 0999 1000 4312"), "'4081 7810 0999 1000 4312"),
         ("1234567890123456", text("1234567890123456"), "'1234567890123456"),
@@ -20,6 +20,8 @@ fn ens_long_numbers() {
         ("0012345", CellValue::Number(12345.0), "12345"),
         ("1e17", CellValue::Number(1e17), "100000000000000000"),
         ("-1,5e18", CellValue::Number(-1.5e18), "-1500000000000000000"),
+        // 15 значащих цифр и нули в хвосте — число без потерь, остаётся числом
+        ("654785313541516000", CellValue::Number(654785313541516000.0), "654785313541516000"),
     ];
     for (r, (input, value, content)) in cases.iter().enumerate() {
         let row = r as i32 + 1;
