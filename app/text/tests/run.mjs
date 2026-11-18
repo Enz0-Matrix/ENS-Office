@@ -23,7 +23,9 @@ await new Promise((res, rej) => {
   setTimeout(() => rej(new Error('vite: таймаут запуска')), 30000);
 });
 
-const browser = await pw.chromium.launch();
+// ENS_CHROMIUM=путь — гонять на другом Chromium (например, 128, как на РЕД ОС 7).
+const browser = await pw.chromium.launch(process.env.ENS_CHROMIUM ? { executablePath: process.env.ENS_CHROMIUM } : {});
+if (process.env.ENS_CHROMIUM) console.log(`Chromium ${browser.version()}`);
 let failed = 0;
 const errors = [];
 async function page(url = `http://localhost:${PORT}/`) {
@@ -558,6 +560,330 @@ await test('печать: страницы вплотную, колонтиту�
   await p.context().close();
 });
 
+// ---- Колонки ----
+const COLS_JS = `
+  // Знаки вне своих колонок: каждый знак должен лежать внутри прямоугольника одной из колонок своего листа.
+  window.__colBad = () => {
+    const E = window.ens, v = E.view, boxes = E.pageBoxes(), papers = [...document.querySelectorAll('.paper')];
+    const scale = v.dom.getBoundingClientRect().width / v.dom.offsetWidth;
+    const rects = [];
+    boxes.forEach((b, i) => {
+      const pr = papers[i].getBoundingClientRect();
+      const top = pr.top + b.eff.top * E.PX * scale, bottom = pr.top + (b.H - b.eff.bottom * E.PX) * scale;
+      const left = pr.left + b.page.left * E.PX * scale;
+      if (!b.cols) { rects.push({ i, k: 0, l: left, r: pr.left + (b.W - b.page.right * E.PX) * scale, top, bottom }); return; }
+      b.cols.x.forEach((x, k) => rects.push({ i, k, l: left + x * scale, r: left + (x + b.cols.w[k]) * scale, top, bottom }));
+    });
+    const bad = [], used = new Set();
+    v.state.doc.descendants((node, pos) => {
+      if (!node.isTextblock) return true;
+      const start = pos + 1, end = pos + 1 + node.content.size;
+      for (let q = start; q < end; q++) {
+        const c = v.coordsAtPos(q, 1), x = c.left + 1, y = (c.top + c.bottom) / 2;
+        const r = rects.find((r) => x >= r.l - 2 && x <= r.r + 2 && y >= r.top - 2 && y <= r.bottom + 2);
+        if (!r) bad.push({ q, x: Math.round(x), y: Math.round(y) }); else used.add(r.i + ':' + r.k);
+      }
+      return false;
+    });
+    return { bad: bad.slice(0, 5), used: [...used].sort() };
+  };
+  window.__cols = (n, extra) => {
+    const E = window.ens, m = E.getMeta();
+    m.page = { ...m.page, cols: n, colSpace: 35.4, ...(extra || {}) };
+    E.loadDoc(E.view.state.doc, m, 'long');
+  };
+`;
+async function colPage(n, count = 60, extra) {
+  const p = await longPage(count === 60 ? (s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))) : (s, P) => Array.from({ length: 70 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
+  await p.evaluate(COLS_JS);
+  await p.evaluate(([n, extra]) => window.__cols(n, extra), [n, extra]);
+  await p.waitForTimeout(400);
+  return p;
+}
+
+await test('колонки: текст перетекает из колонки в колонку и со страницы на страницу, знаки внутри колонок', async () => {
+  const one = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
+  const single = await one.evaluate(() => window.ens.pageCount());
+  await one.context().close();
+  for (const [n, count] of [[2, 60], [3, 60], [2, 70]]) {
+    const p = await colPage(n, count);
+    const r = await p.evaluate(() => window.__colBad());
+    eq(r.bad, [], `знаки вне колонок (${n})`);
+    eq(await p.evaluate(() => window.ens.pagStats.stuck), false, `расчёт сошёлся (${n}, ${count})`);
+    // Каждая колонка первых двух листов начинается ровно у верхнего поля.
+    const tops = await p.evaluate(() => {
+      const E = window.ens, v = E.view, boxes = E.pageBoxes(), papers = [...document.querySelectorAll('.paper')];
+      const out = {};
+      v.state.doc.descendants((node, pos) => {
+        if (!node.isTextblock) return true;
+        for (let q = pos + 1; q < pos + 1 + node.content.size; q += 3) {
+          const c = v.coordsAtPos(q, 1);
+          papers.slice(0, 2).forEach((pp, i) => {
+            const r = pp.getBoundingClientRect(), b = boxes[i];
+            if (c.top < r.top || c.top > r.bottom) return;
+            const k = b.cols.x.findIndex((x, j) => c.left - r.left - b.page.left * E.PX >= x - 2 && c.left - r.left - b.page.left * E.PX <= x + b.cols.w[j] + 2);
+            const key = i + ':' + k, d = c.top - (r.top + b.eff.top * E.PX);
+            if (!(key in out) || d < out[key]) out[key] = Math.round(d);
+          });
+        }
+        return false;
+      });
+      return out;
+    });
+    ok(Object.values(tops).every((d) => Math.abs(d) <= 4), `колонки начинаются не у верхнего поля (${n}, ${count}): ${JSON.stringify(tops)}`);
+    const pages = await p.evaluate(() => window.ens.pageCount());
+    for (let k = 0; k < n; k++) ok(r.used.includes(`0:${k}`) && r.used.includes(`1:${k}`), `колонка ${k + 1} на листах 1 и 2 занята (${n}): ${r.used}`);
+    ok(pages >= 2 && pages <= single + 1, `листов ${pages}, одной полосой ${single}`);
+    eq(await p.evaluate(() => document.querySelectorAll('.paper').length), pages, 'подложек столько же, сколько листов');
+    // Поток не длиннее листов: внизу нет пустого места после последнего листа.
+    const tail = await p.evaluate(() => { const b = window.ens.pageBoxes().at(-1); return Math.round(window.ens.view.dom.offsetHeight - (b.top + b.H)); });
+    ok(tail <= 2, `лишняя высота после последнего листа: ${tail}`);
+    const sig = await p.evaluate(() => window.__sig() + [...document.querySelectorAll('.pg-col')].map((e) => e.style.cssText).join('|'));
+    await p.evaluate(() => window.ens.run('view.zoomIn'));
+    await p.waitForTimeout(150);
+    eq(await p.evaluate(() => window.__sig() + [...document.querySelectorAll('.pg-col')].map((e) => e.style.cssText).join('|')), sig, `расчёт устойчив (${n})`);
+    eq(await p.evaluate(() => window.ens.isDirty()), false, 'документ не «грязный» от вёрстки');
+    await p.context().close();
+  }
+});
+
+await test('колонки: абзац на стыке колонок — щелчок и ввод в хвосте во второй колонке, выделение', async () => {
+  const p = await colPage(2);
+  // Абзац, начатый в первой колонке и продолженный во второй: позиция в хвосте.
+  const q = await p.evaluate(() => {
+    const seg = document.querySelector('.pg-colseg');
+    const v = window.ens.view;
+    return seg ? v.posAtDOM(seg.firstChild, 3) : null;
+  });
+  ok(q != null, 'нет абзаца, перетекающего в другую колонку');
+  const at = await p.evaluate((q) => { const c = window.ens.view.coordsAtPos(q, 1); return { x: c.left + 1, y: (c.top + c.bottom) / 2 }; }, q);
+  await p.mouse.click(at.x, at.y);
+  const head = await p.evaluate(() => window.ens.view.state.selection.head);
+  ok(Math.abs(head - q) <= 1, `курсор после щелчка: ${head}, ожидалось около ${q}`);
+  await p.keyboard.type('ВСТАВКА');
+  const t = await p.evaluate((h) => window.ens.view.state.doc.textBetween(h - 1, h + 9), head);
+  ok(t.includes('ВСТАВКА'), `введено не там: ${t}`);
+  await p.waitForTimeout(200);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки внутри колонок после ввода');
+  // Выделение протаскиванием из первой колонки во вторую.
+  const a = await p.evaluate(() => { const v = window.ens.view; const c = v.coordsAtPos(5, 1); return { x: c.left + 1, y: (c.top + c.bottom) / 2 }; });
+  await p.mouse.move(a.x, a.y);
+  await p.mouse.down();
+  await p.mouse.move(at.x + 20, at.y, { steps: 5 });
+  await p.mouse.up();
+  const sel = await p.evaluate(() => { const s = window.ens.view.state.selection; return [s.from, s.to]; });
+  ok(sel[0] <= 6 && sel[1] > q, `выделение через колонки: ${sel}`);
+  await p.context().close();
+});
+
+await test('колонки: меню «Колонки», разрыв колонки Ctrl+Shift+Enter, «Другие колонки…» с разделителем', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 12 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(2))));
+  await p.evaluate(COLS_JS);
+  await p.click('.tab:has-text("Макет")');
+  await p.click('#ribbon [data-command="layout.columns"]');
+  await p.click('.columns-menu button:has-text("Две")');
+  eq(await p.evaluate(() => window.ens.getMeta().page.cols), 2, 'две колонки');
+  await p.waitForTimeout(200);
+  // Разрыв колонки перед третьим абзацем: он начинает вторую колонку.
+  const pos3 = await p.evaluate(() => { let r = 0, k = 0; window.ens.view.state.doc.forEach((n, off) => { if (k++ === 2) r = off + 1; }); return r; });
+  await p.evaluate((q) => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, q))); E.view.focus(); }, pos3);
+  await p.keyboard.press('Control+Shift+Enter');
+  await p.waitForTimeout(200);
+  const r = await p.evaluate(() => {
+    const v = window.ens.view, els = [];
+    v.state.doc.forEach((n, off) => els.push({ col: !!n.attrs.colBreakBefore, r: v.nodeDOM(off).getBoundingClientRect() }));
+    const i = els.findIndex((e) => e.col);
+    return { i, firstLeft: els[0].r.left, brokeLeft: els[i].r.left, brokeTop: els[i].r.top, firstTop: els[0].r.top };
+  });
+  ok(r.i === 3, `разрыв колонки у нового абзаца: ${r.i}`);
+  ok(r.brokeLeft > r.firstLeft + 100 && Math.abs(r.brokeTop - r.firstTop) < 2, `абзац после разрыва — вверху второй колонки: ${JSON.stringify(r)}`);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки внутри колонок');
+  // «Другие колонки…»: три колонки, промежуток 1 см, разделитель.
+  await p.click('#ribbon [data-command="layout.columns"]');
+  await p.click('.columns-menu button:has-text("Другие колонки")');
+  await p.fill('.modal input[type=number]', '3');
+  await p.locator('.modal input[type=number]').dispatchEvent('input');
+  await p.fill('.modal .dlg-row:has-text("Промежуток") input', '1');
+  await p.check('.modal .dlg-row:has-text("Разделитель") input');
+  await p.click('.modal button:has-text("ОК")');
+  await p.waitForTimeout(300);
+  const m = await p.evaluate(() => window.ens.getMeta().page);
+  ok(m.cols === 3 && m.colSep && Math.abs(m.colSpace - 28.35) < 0.1, `параметры: ${JSON.stringify(m)}`);
+  eq(await p.evaluate(() => document.querySelectorAll('.paper:first-child .col-sep').length), 2, 'две линии-разделителя на первом листе');
+  // Обратно одна колонка.
+  await p.click('#ribbon [data-command="layout.columns"]');
+  await p.click('.columns-menu button:has-text("Одна")');
+  await p.waitForTimeout(200);
+  eq(await p.evaluate(() => document.querySelectorAll('.pg-col, .col-sep').length), 0, 'одна колонка — без смещений и линий');
+  await p.context().close();
+});
+
+await test('колонки: неравные (слева), docx — ширины, разделитель и разрыв колонки туда и обратно', async () => {
+  const p = await colPage(2, 60, { colW: [1, 2], colSep: true });
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки внутри неравных колонок');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Один')), s.nodes.paragraph.create({ colBreakBefore: true }, s.text('Два'))]);
+    const m = { ...E.getMeta(), page: { ...E.getMeta().page, cols: 2, colSpace: 20, colW: [150, 300], colSep: true } };
+    const bytes = E.exportDocx(doc, m, 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    return { xml, page: back.meta.page, br: back.doc.child(1).attrs.colBreakBefore, n: back.doc.childCount, t: back.doc.textContent };
+  });
+  ok(/<w:cols w:num="2" w:space="400" w:sep="1" w:equalWidth="0"><w:col w:w="3000" w:space="400"\/><w:col w:w="6000"\/><\/w:cols>/.test(r.xml), `w:cols: ${r.xml.match(/<w:cols.*?(\/>|<\/w:cols>)/)?.[0]}`);
+  ok(r.xml.includes('<w:br w:type="column"/>'), 'разрыв колонки в файле');
+  eq([r.page.cols, r.page.colSpace, r.page.colW, r.page.colSep], [2, 20, [150, 300], true], 'колонки после чтения');
+  eq([r.br, r.n, r.t], [true, 2, 'ОдинДва'], 'разрыв колонки после чтения, лишних абзацев нет');
+  await p.context().close();
+});
+await test('колонки: раздел с колонками между разделами в одну полосу; список и таблица в колонках', async () => {
+  const p = await longPage((s, P) => {
+    const F = 'Съешь ещё этих мягких французских булок, да выпей же чаю. ';
+    const A4 = { w: 595.3, h: 841.9, top: 56.7, bottom: 56.7, left: 85, right: 42.5 };
+    const item = (t) => s.nodes.list_item.create(null, [P(t)]);
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const rows = Array.from({ length: 40 }, (_, r) => s.nodes.table_row.create(null, [cell(`Ячейка ${r}.1`), cell(`Ячейка ${r}.2`)]));
+    return [
+      ...Array.from({ length: 5 }, (_, i) => P(`Вступление ${i + 1}. ` + F.repeat(3))),
+      s.nodes.section_break.create({ page: { ...A4, cols: 2, colSpace: 35.4 } }),
+      ...Array.from({ length: 30 }, (_, i) => P(`Колонки ${i + 1}. ` + F.repeat(1 + (i % 4)))),
+      s.nodes.bullet_list.create(null, Array.from({ length: 12 }, (_, i) => item(`Пункт ${i + 1}. ` + F))),
+      s.nodes.table.create({ borders: true }, rows),
+      ...Array.from({ length: 30 }, (_, i) => P(`Ещё ${i + 1}. ` + F.repeat(1 + (i % 3)))),
+      s.nodes.section_break.create({ page: { ...A4 } }),
+      ...Array.from({ length: 5 }, (_, i) => P(`Заключение ${i + 1}. ` + F.repeat(3))),
+    ];
+  });
+  await p.evaluate(COLS_JS);
+  await p.waitForTimeout(300);
+  const r = await p.evaluate(() => window.__colBad());
+  eq(r.bad, [], 'знаки вне колонок и полей');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
+  ok(r.used.includes('1:0') && r.used.includes('1:1'), `второй лист — в две колонки: ${r.used}`);
+  // Заключение — с нового листа, вверху, а не там, где кончился поток колонок.
+  const c = await p.evaluate(() => {
+    const E = window.ens, v = E.view, boxes = E.pageBoxes(), papers = [...document.querySelectorAll('.paper')];
+    let pos = 0; v.state.doc.forEach((n, off) => { if (n.textContent.startsWith('Заключение 1')) pos = off; });
+    const top = v.nodeDOM(pos).getBoundingClientRect().top, last = papers.length - 1;
+    const pr = papers[last].getBoundingClientRect();
+    return { d: Math.round(top - (pr.top + boxes[last].eff.top * E.PX)), tail: Math.round(v.dom.offsetHeight - (boxes[last].top + boxes[last].H)) };
+  });
+  ok(Math.abs(c.d) <= 2, `заключение не вверху последнего листа: ${c.d}`);
+  ok(c.tail <= 2, `лишняя высота после последнего листа: ${c.tail}`);
+  await p.context().close();
+});
+
+
+await test('колонки: плавающий рисунок в абзаце второй колонки стоит по координатам листа', async () => {
+  const p = await colPage(2);
+  const r = await p.evaluate(async () => {
+    const E = window.ens, v = E.view, s = E.schema;
+    // Абзац, целиком стоящий во второй колонке первого листа.
+    let pos = -1;
+    v.state.doc.forEach((n, off) => { const st = v.nodeDOM(off).style; if (pos < 0 && st.left && parseFloat(st.left) > 100) pos = off; });
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const float = { mode: 'behind', hRel: 'page', hOff: 200, hAlign: null, vRel: 'page', vOff: 300, vAlign: null, dist: [0, 0, 8, 8] };
+    v.dispatch(v.state.tr.insert(pos + 1, s.nodes.image.create({ src: png, width: 40, height: 40, float })));
+    await new Promise((res) => setTimeout(res, 500));
+    const img = document.querySelector('.ProseMirror img.fl-behind').getBoundingClientRect();
+    const paper = document.querySelector('.paper').getBoundingClientRect();
+    return { pos, dx: Math.round(img.left - paper.left), dy: Math.round(img.top - paper.top) };
+  });
+  ok(r.pos > 0, 'нет абзаца во второй колонке');
+  ok(Math.abs(r.dx - 200) <= 2 && Math.abs(r.dy - 300) <= 2, `рисунок не на месте: ${JSON.stringify(r)}`);
+  await p.context().close();
+});
+
+await test('колонки: печать в PDF — текст в две колонки, листов столько же', async () => {
+  const p = await colPage(2);
+  const sheets = await p.evaluate(() => window.ens.pageCount());
+  await p.evaluate(() => window.ens.printPrepare());
+  await p.waitForTimeout(200);
+  await p.emulateMedia({ media: 'print' });
+  const pdf = join(mkdtempSync(join(tmpdir(), 'ens-pdf-')), 'cols.pdf');
+  await p.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
+  const n = +/Pages:\s+(\d+)/.exec(execSync(`pdfinfo "${pdf}"`).toString())[1];
+  eq(n, sheets, 'страниц в PDF');
+  // Левая и правая половины первой страницы: в каждой — своя колонка (A4 — 595 пт в ширину).
+  const half = (x) => execSync(`pdftotext -f 1 -l 1 -x ${x} -y 0 -W 297 -H 842 "${pdf}" -`).toString();
+  const nums = (t) => [...t.matchAll(/Абзац (\d+)\./g)].map((m) => +m[1]);
+  const L = nums(half(0)), R = nums(half(298));
+  ok(L.includes(1) && R.length > 3 && Math.min(...R) > Math.max(...L), `левая колонка ${L}, правая ${R}`);
+  await p.evaluate(() => window.ens.printRestore());
+  await p.context().close();
+});
+
+
+// ---- Вид: несколько страниц ----
+await test('вид: «Несколько страниц» — листы рядами, текст на своих листах, правка и печать', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 70 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
+  await p.evaluate(COLS_JS);
+  const pages = await p.evaluate(() => window.ens.pageCount());
+  await p.click('.tab:has-text("Вид")');
+  await p.click('#ribbon [data-command="view.multiPage"]');
+  await p.waitForTimeout(500);
+  const r = await p.evaluate(() => ({ boxes: window.ens.pageBoxes().map((b) => [Math.round(b.left ?? 0), Math.round(b.top)]), stuck: window.ens.pagStats.stuck }));
+  ok(r.boxes.length === pages, `листов столько же: ${r.boxes.length} и ${pages}`);
+  ok(r.boxes[1][0] > 500 && r.boxes[1][1] === r.boxes[0][1], `второй лист справа от первого: ${JSON.stringify(r.boxes)}`);
+  eq(r.stuck, false, 'расчёт сошёлся');
+  const c = await p.evaluate(() => window.__colBad());
+  eq(c.bad, [], 'знаки вне полей своих листов');
+  ok(c.used.includes('1:0') && c.used.includes('2:0'), `текст на листах 2 и 3: ${c.used}`);
+  // Подложки на местах листов, лишней высоты под последним рядом нет.
+  const geo = await p.evaluate(() => {
+    const papers = [...document.querySelectorAll('.paper')], v = window.ens.view, b = window.ens.pageBoxes();
+    const last = b.at(-1);
+    return { left: papers[1].offsetLeft, tail: Math.round(v.dom.offsetHeight - (last.top + last.H)) };
+  });
+  ok(geo.left > 500, `подложка второго листа справа: ${geo.left}`);
+  ok(geo.tail <= 2, `лишняя высота: ${geo.tail}`);
+  // Щелчок и ввод на втором листе.
+  const q = await p.evaluate(() => { const v = window.ens.view; let q = 0; v.state.doc.forEach((n, off) => { if (!q && n.textContent.startsWith('Абзац 30.')) q = off + 3; }); return q; });
+  const at = await p.evaluate((q) => { const c = window.ens.view.coordsAtPos(q, 1); return { x: c.left + 1, y: (c.top + c.bottom) / 2 }; }, q);
+  await p.mouse.click(at.x, at.y);
+  ok(Math.abs((await p.evaluate(() => window.ens.view.state.selection.head)) - q) <= 1, 'курсор после щелчка');
+  await p.keyboard.type('Ж');
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('АбЖзац 30') || (await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('АбзЖац 30'), 'ввод на втором листе');
+  // Мельче масштаб — больше листов в ряду.
+  for (let i = 0; i < 3; i++) await p.evaluate(() => window.ens.run('view.zoomOut'));
+  await p.waitForTimeout(400);
+  const row = await p.evaluate(() => window.ens.pageBoxes().filter((b) => b.top === 0).length);
+  ok(row >= 3, `при уменьшении масштаба в ряду листов: ${row}`);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки на своих листах после смены масштаба');
+  // Печать — столбиком, после печати снова рядами.
+  await p.evaluate(() => window.ens.printPrepare());
+  ok(await p.evaluate(() => window.ens.pageBoxes().every((b) => !b.left)), 'при печати листы столбиком');
+  await p.evaluate(() => window.ens.printRestore());
+  await p.waitForTimeout(300);
+  ok(await p.evaluate(() => window.ens.pageBoxes()[1].left > 0), 'после печати снова рядами');
+  // «Одна страница» и «По ширине»: листы столбиком, масштаб вписывает лист.
+  await p.click('#ribbon [data-command="view.onePage"]');
+  await p.waitForTimeout(400);
+  const one = await p.evaluate(() => { const b = document.querySelector('.paper').getBoundingClientRect(), d = document.getElementById('desk').getBoundingClientRect(); return { h: b.height, dh: d.height, left: window.ens.pageBoxes()[1].left ?? 0 }; });
+  ok(one.left === 0 && one.h <= one.dh && one.h > one.dh * 0.8, `одна страница: ${JSON.stringify(one)}`);
+  await p.click('#ribbon [data-command="view.pageWidth"]');
+  await p.waitForTimeout(400);
+  const wid = await p.evaluate(() => { const b = document.querySelector('.paper').getBoundingClientRect(), d = document.getElementById('desk'); return { w: b.width, dw: d.clientWidth }; });
+  ok(wid.w <= wid.dw && wid.w > wid.dw * 0.85, `по ширине: ${JSON.stringify(wid)}`);
+  await p.context().close();
+});
+
+await test('вид: «Несколько страниц» с колонками и разделами разного размера', async () => {
+  const p = await colPage(2, 70);
+  await p.evaluate(() => {
+    const E = window.ens, v = E.view, s = E.schema;
+    const A4L = { w: 841.9, h: 595.3, top: 56.7, bottom: 56.7, left: 56.7, right: 56.7 };
+    let pos = 0, k = 0; v.state.doc.forEach((n, off) => { if (k++ === 40) pos = off; });
+    v.dispatch(v.state.tr.insert(pos, s.nodes.section_break.create({ page: A4L })));
+  });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => window.ens.run('view.multiPage'));
+  await p.waitForTimeout(600);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки вне колонок и полей');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
+  await p.context().close();
+});
 
 // ---- Версии, журнал, защита от потерь ----
 await test('версии: сохранение записывает версию и журнал, история едет внутри docx и читается обратно', async () => {
@@ -3026,6 +3352,176 @@ await test('примечания в docx: comments.xml и commentsExtended.xml (
   eq(r.lossy, [], 'без потерь');
   eq(r.threads, [['Иванов И.', 'Проверить\nдва абзаца', ['Петров П.:Проверил'], true, 'отмечено'], ['Сидорова', 'Через абзац', [], false, 'здесьпродолжение']], 'ветки после круга');
   eq(r.text, 'Начало отмечено и здесь|продолжение конец', 'текст');
+  await p.context().close();
+});
+
+// --- Сравнение документов и исправления
+const REV_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+  const A = s.nodes.doc.create(null, [P('Мама мыла раму вчера.'), P('Этот абзац удалят.'), P('Общий конец.')]);
+  const B = s.nodes.doc.create(null, [P('Мама мыла окно вчера вечером.'), P('Общий конец.'), P('Новый абзац.')]);
+  const m = E.getMeta();
+  window.__rev = { A, B, meta: m };
+  const res = E.compareSides({ doc: A, meta: m, name: 'a.docx' }, { doc: B, meta: m, name: 'b.docx' }, 'Рецензент', new Date('2026-11-17T10:00:00Z'));
+  E.loadDoc(res.doc, res.meta, res.name);
+  return { ins: res.inserted, del: res.deleted };
+};
+const docText = (p) => p.evaluate(() => { const d = window.ens.view.state.doc; return d.textBetween(0, d.content.size, '|'); });
+await test('сравнение: правки по словам, целые абзацы, «было / стало» совпадают с исходниками', async () => {
+  const p = await page();
+  const n = await p.evaluate(REV_SETUP);
+  ok(n.ins >= 2 && n.del >= 2, `исправлений мало: ${JSON.stringify(n)}`);
+  const r = await p.evaluate(() => {
+    const E = window.ens, revs = E.listRevisions(), doc = E.view.state.doc;
+    const text = (x) => doc.textBetween(x.from, x.to, '|');
+    return { revs: revs.map((x) => [x.kind, text(x), x.author]),
+      ins: [...document.querySelectorAll('.ProseMirror ins.rev-ins')].map((e) => e.textContent),
+      del: [...document.querySelectorAll('.ProseMirror del.rev-del')].map((e) => e.textContent),
+      blocks: [...document.querySelectorAll('.ProseMirror [data-rev-block]')].map((e) => e.dataset.revBlock) };
+  });
+  ok(r.revs.some(([k, t]) => k === 'del' && t === 'раму') && r.revs.some(([k, t]) => k === 'ins' && t === 'окно'), `по словам: ${JSON.stringify(r.revs)}`);
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.includes('вечером')), 'вставка в конце абзаца');
+  ok(r.revs.every(([, , a]) => a === 'Рецензент'), 'автор правок');
+  eq(r.blocks.sort(), ['del', 'ins'], 'удалённый и новый абзацы помечены целиком');
+  ok(!r.revs.some(([, t]) => t.includes('Мама')), 'общие слова не помечены');
+  // «Было» и «Стало»: видимый текст листа совпадает с исходниками.
+  const visible = () => p.evaluate(() => [...document.querySelectorAll('.ProseMirror > *')].filter((e) => e.offsetParent !== null || getComputedStyle(e).display !== 'none').map((e) => e.innerText.trim()).filter(Boolean).join('|'));
+  await p.evaluate(() => window.ens.run('rev.view', 'original'));
+  eq(await visible(), 'Мама мыла раму вчера.|Этот абзац удалят.|Общий конец.', 'было');
+  await p.evaluate(() => window.ens.run('rev.view', 'final'));
+  eq(await visible(), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'стало');
+  await p.evaluate(() => window.ens.run('rev.view', 'markup'));
+  eq(await p.evaluate(() => window.ens.revView()), 'markup', 'режим исправлений');
+  await p.context().close();
+});
+await test('исправления: принять и отклонить по одной, принять все = новая редакция, отклонить все = старая', async () => {
+  const p = await page();
+  await p.evaluate(REV_SETUP);
+  const count = () => p.evaluate(() => window.ens.listRevisions().length);
+  const total = await count();
+  // Курсор в начало: первое исправление — удаление «раму». Отклоняем его — слово остаётся без пометки.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.evaluate(() => window.ens.run('rev.reject'));
+  eq(await count(), total - 1, 'одно исправление снято');
+  ok((await docText(p)).startsWith('Мама мыла раму'), `«раму» осталось: ${await docText(p)}`);
+  // Следующее (выделено автоматически) — вставка «окно»; принимаем.
+  const sel = await p.evaluate(() => { const E = window.ens, { from, to } = E.view.state.selection; return E.view.state.doc.textBetween(from, to); });
+  eq(sel, 'окно', 'после решения выделено следующее исправление');
+  await p.keyboard.press('Control+Alt+KeyA');
+  eq(await count(), total - 2, 'Ctrl+Alt+A принимает');
+  ok((await docText(p)).startsWith('Мама мыла рамуокно'), await docText(p)); // пробел общий: «раму» отклонено, «окно» принято
+  await p.keyboard.press('Control+KeyZ');
+  eq(await count(), total - 1, 'отмена возвращает исправление');
+  // Все сразу.
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await count(), 0, 'исправлений не осталось');
+  eq(await docText(p), 'Мама мыла рамуокно вчера вечером.|Общий конец.|Новый абзац.', 'принято всё (кроме отклонённого)');
+  await p.evaluate(REV_SETUP);
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await docText(p), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'принять все = новая редакция');
+  await p.evaluate(REV_SETUP);
+  await p.evaluate(() => window.ens.run('rev.rejectAll'));
+  eq(await docText(p), 'Мама мыла раму вчера.|Этот абзац удалят.|Общий конец.', 'отклонить все = старая редакция');
+  eq(await p.evaluate(() => window.ens.view.state.doc.toJSON()), await p.evaluate(() => window.__rev.A.toJSON()), 'старая редакция совпадает узел в узел');
+  await p.context().close();
+});
+await test('исправления: таблицы и списки сравниваются по ячейкам, целиком новая таблица отклоняется целиком', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const row = (...t) => s.nodes.table_row.create(null, t.map(cell));
+    const T = (...rows) => s.nodes.table.create(null, rows);
+    const li = (t) => s.nodes.list_item.create(null, P(t));
+    const A = s.nodes.doc.create(null, [P('Начало'), T(row('Яблоко', '10'), row('Груша', '5')), s.nodes.bullet_list.create(null, [li('первый'), li('второй')])]);
+    const B = s.nodes.doc.create(null, [P('Начало'), T(row('Яблоко', '12'), row('Груша', '5'), row('Слива', '7')), s.nodes.bullet_list.create(null, [li('первый пункт'), li('второй')]), T(row('Новая', 'таблица'))]);
+    const m = E.getMeta();
+    const res = E.compareSides({ doc: A, meta: m, name: 'a' }, { doc: B, meta: m, name: 'b' }, 'Я');
+    E.loadDoc(res.doc, res.meta, res.name);
+    const doc = E.view.state.doc, revs = E.listRevisions().map((x) => [x.kind, doc.textBetween(x.from, x.to, '|')]);
+    const tables = () => { let n = 0; E.view.state.doc.descendants((x) => { if (x.type.name === 'table') n++; }); return n; };
+    const before = tables();
+    E.run('rev.rejectAll');
+    return { revs, before, after: tables(), text: E.view.state.doc.textBetween(0, E.view.state.doc.content.size, '|'), A: A.toJSON(), now: E.view.state.doc.toJSON() };
+  });
+  ok(r.revs.some(([k, t]) => k === 'del' && t === '10') && r.revs.some(([k, t]) => k === 'ins' && t === '12'), `правка в ячейке: ${JSON.stringify(r.revs)}`);
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.includes('Слива')), 'новая строка');
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.trim() === 'пункт'), 'правка в пункте списка');
+  eq([r.before, r.after], [2, 1], 'новая таблица убрана целиком при отклонении');
+  eq(r.now, r.A, 'отклонить все = исходный документ');
+  await p.context().close();
+});
+await test('исправления в docx: w:ins/w:del туда и обратно, исправления Word читаются', async () => {
+  const p = await page();
+  await p.evaluate(REV_SETUP);
+  const r = await p.evaluate(() => {
+    const E = window.ens, before = E.listRevisions().map((x) => [x.kind, x.author, E.view.state.doc.textBetween(x.from, x.to, '|')]);
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    E.loadDoc(back.doc, back.meta, 'back');
+    const after = E.listRevisions().map((x) => [x.kind, x.author, E.view.state.doc.textBetween(x.from, x.to, '|')]);
+    return { xml, before, after, lossy: back.meta.lossy, same: back.doc.eq(window.__cmpDoc ?? back.doc) };
+  });
+  ok(/<w:ins w:id="\d+" w:author="Рецензент" w:date="2026-11-17T10:00:00Z">/.test(r.xml), 'w:ins с автором и датой');
+  ok(/<w:del [^>]*><w:r>(<w:rPr>.*?<\/w:rPr>)?<w:delText xml:space="preserve">раму<\/w:delText>/.test(r.xml), 'удалённое — w:delText');
+  ok(/<w:pPr><w:rPr><w:del [^>]*\/><\/w:rPr><\/w:pPr>/.test(r.xml), 'знак удалённого абзаца');
+  eq(r.lossy, [], 'без потерь');
+  eq(r.after, r.before, 'исправления те же после открытия');
+  // Принять все в прочитанном файле — новая редакция.
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await docText(p), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'после круга принимаются как раньше');
+  await p.context().close();
+});
+await test('сравнение: окно «Сравнить» с двумя файлами DOCX открывает новый документ, текущий не меняется', async () => {
+  const p = await page();
+  const files = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const m = E.getMeta();
+    const a = E.exportDocx(s.nodes.doc.create(null, [P('Договор поставки № 1'), P('Срок — десять дней.')]), m, 'a');
+    const b = E.exportDocx(s.nodes.doc.create(null, [P('Договор поставки № 2'), P('Срок — пять дней.')]), m, 'b');
+    return { a: [...a], b: [...b] };
+  });
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Мой текущий текст');
+  await p.evaluate(() => window.ens.run('review.compare'));
+  await p.waitForSelector('#dialog:not([hidden]) .compare-dialog, #dialog:not([hidden]).compare-dialog, .compare-dialog');
+  await p.selectOption('select[data-compare="older"]', 'file');
+  await p.setInputFiles('input[data-compare="older-file"]', { name: 'Договор v1.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files.a) });
+  await p.selectOption('select[data-compare="newer"]', 'file');
+  await p.setInputFiles('input[data-compare="newer-file"]', { name: 'Договор v2.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files.b) });
+  await p.click('.compare-dialog button.primary');
+  // Текущий документ изменён: программа спрашивает о сохранении — не сохраняем.
+  const btn = await p.waitForSelector('#dialog:not([hidden]) button:has-text("Не сохранять")', { timeout: 3000 }).catch(() => null);
+  if (btn) await btn.click();
+  await p.waitForFunction(() => window.ens.listRevisions().length > 0);
+  const r = await p.evaluate(() => ({ name: document.title, revs: window.ens.listRevisions().map((x) => [x.kind, window.ens.view.state.doc.textBetween(x.from, x.to)]) }));
+  ok(r.name.includes('Сравнение — Договор v1 и Договор v2'), r.name);
+  eq(r.revs, [['del', '1'], ['ins', '2'], ['del', 'десять'], ['ins', 'пять']], 'правки по словам');
+  // Кнопки ленты: «Принять» на вкладке «Проверка».
+  await p.click('#tabs button.tab:text-is("Проверка")');
+  await p.click('button[data-command="rev.accept"]');
+  eq(await p.evaluate(() => window.ens.listRevisions().length), 3, 'кнопка «Принять»');
+  await p.context().close();
+});
+await test('сравнение: версия из истории против текущего документа', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Первая редакция текста');
+  await p.evaluate(() => window.ens.snap('named', 'черновик'));
+  await p.keyboard.press('End');
+  await p.keyboard.type(' с дополнением');
+  await p.evaluate(() => window.ens.run('ver.history'));
+  await p.click('#dialog button:has-text("Сравнить с исправлениями")');
+  await p.waitForSelector('.compare-dialog');
+  eq(await p.$eval('select[data-compare="newer"]', (s) => s.value), 'current', 'новая сторона — текущий документ');
+  ok((await p.$eval('select[data-compare="older"]', (s) => s.value)).startsWith('v:'), 'старая сторона — версия');
+  await p.click('.compare-dialog button.primary');
+  const btn = await p.waitForSelector('#dialog:not([hidden]) button:has-text("Не сохранять")', { timeout: 3000 }).catch(() => null);
+  if (btn) await btn.click();
+  await p.waitForFunction(() => window.ens.listRevisions().length > 0);
+  const r = await p.evaluate(() => window.ens.listRevisions().map((x) => [x.kind, window.ens.view.state.doc.textBetween(x.from, x.to)]));
+  eq(r, [['ins', ' с дополнением']], 'вставка относительно версии');
   await p.context().close();
 });
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
