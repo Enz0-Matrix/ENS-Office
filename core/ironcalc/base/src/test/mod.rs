@@ -135,6 +135,7 @@ mod test_ens_language_ru;
 mod test_ens_long_numbers;
 mod test_ens_paste_numbers;
 mod test_ens_external;
+mod test_ens_sheet_transfer;
 mod test_ens_user_formulas;
 mod test_ens_top50_ru;
 mod test_ens_recovery;

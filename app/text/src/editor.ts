@@ -120,7 +120,7 @@ const enter: Command = chainCommands(
       const pos = tr.mapping.map($from.pos);
       const atEnd = tr.doc.resolve(pos).parentOffset === tr.doc.resolve(pos).parent.content.size;
       // Заголовок, оборвавшийся в конце, продолжается обычным абзацем.
-      const next = type === heading && atEnd ? { type: paragraph, attrs: { ...$from.parent.attrs, level: undefined, pageBreakBefore: false } } : { type, attrs: { ...$from.parent.attrs, pageBreakBefore: false } };
+      const next = type === heading && atEnd ? { type: paragraph, attrs: { ...$from.parent.attrs, level: undefined, pageBreakBefore: false, colBreakBefore: false } } : { type, attrs: { ...$from.parent.attrs, pageBreakBefore: false, colBreakBefore: false } };
       tr = tr.split(pos, 1, [next]);
       dispatch(tr.scrollIntoView());
     }
@@ -338,6 +338,20 @@ export function listKind(state: EditorState): 'bullet' | 'ordered' | null {
   return null;
 }
 
+/** Разрыв колонки: абзац после курсора начинается с новой колонки (без колонок — с новой страницы). */
+export const insertColumnBreak: Command = (state, dispatch) => {
+  const { $from } = state.selection;
+  if (!$from.parent.isTextblock) return false;
+  if (dispatch) {
+    let tr = state.tr;
+    if (!state.selection.empty) tr = tr.deleteSelection();
+    const pos = tr.mapping.map(state.selection.from);
+    tr = tr.split(pos, 1, [{ type: paragraph, attrs: { ...$from.parent.attrs, level: undefined, pageBreakBefore: false, colBreakBefore: true } }]);
+    dispatch(tr.scrollIntoView());
+  }
+  return true;
+};
+
 /** Разрыв страницы: абзац после курсора начинается с новой страницы. */
 export const insertPageBreak: Command = (state, dispatch) => {
   const { $from } = state.selection;
@@ -346,7 +360,7 @@ export const insertPageBreak: Command = (state, dispatch) => {
     let tr = state.tr;
     if (!state.selection.empty) tr = tr.deleteSelection();
     const pos = tr.mapping.map(state.selection.from);
-    tr = tr.split(pos, 1, [{ type: paragraph, attrs: { ...$from.parent.attrs, level: undefined, pageBreakBefore: true } }]);
+    tr = tr.split(pos, 1, [{ type: paragraph, attrs: { ...$from.parent.attrs, level: undefined, pageBreakBefore: true, colBreakBefore: false } }]);
     dispatch(tr.scrollIntoView());
   }
   return true;
@@ -579,6 +593,7 @@ export function createState(doc: PMNode, extra: Plugin[] = []): EditorState {
         'Shift-Tab': shiftTab,
         Escape: selectParentNode,
         'Mod-Enter': insertPageBreak,
+        'Mod-Shift-Enter': insertColumnBreak,
         'Mod-[': lift,
       }),
       keymap(baseKeymap),
