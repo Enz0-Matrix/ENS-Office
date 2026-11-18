@@ -2954,6 +2954,117 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Конструктор и макет таблиц
+const TBL_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+  const cell = (t) => s.nodes.table_cell.create({ colwidth: [150] }, P(t));
+  const row = (...t) => s.nodes.table_row.create(null, t.map(cell));
+  E.loadDoc(s.nodes.doc.create(null, [P('Перед'), s.nodes.table.create({ borders: true }, [row('Город', 'Жители'), row('Тула', '466'), row('Азов', '79'), row('Омск', '1110'), row('Итого', '1655')]), P('После')]), E.getMeta(), 't');
+  E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 12)));
+};
+const cellInfo = (p) => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') { out.push([n.textContent, n.attrs.background, n.firstChild.firstChild?.marks.some((m) => m.type.name === 'strong') ?? false]); } return n.type.name !== 'table_cell'; }); return out; });
+await test('конструктор таблиц: стиль с параметрами (заголовок, итоги, чередование), заливка, повтор заголовка', async () => {
+  const p = await page();
+  await p.evaluate(TBL_SETUP);
+  await p.evaluate(() => window.ens.run('table.style', 'blue'));
+  let c = await cellInfo(p);
+  eq(c[0], ['Город', '#2F5496', true], 'заголовок: заливка и полужирный');
+  eq([c[2][1], c[4][1], c[6][1]], [null, '#D9E2F3', null], 'чередование строк');
+  ok(await p.evaluate(() => { let h; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_row') { h ??= n.attrs.header; return false; } return true; }); return h; }), 'строка заголовка повторяется');
+  await p.evaluate(() => window.ens.run('table.look.total'));
+  c = await cellInfo(p);
+  eq(c[8], ['Итого', '#B4C6E7', true], 'строка итогов');
+  await p.evaluate(() => window.ens.run('table.look.header'));
+  c = await cellInfo(p);
+  eq(c[0][2], false, 'без заголовка полужирный снят');
+  eq(await p.evaluate(() => { let l; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table') { l = n.attrs.look; return false; } return true; }); return l; }), { style: 'blue', header: false, total: true, banded: true, firstCol: false }, 'параметры стиля в таблице');
+  // Заливка выделенной ячейки.
+  await p.evaluate(() => window.ens.run('table.shade', '#FFFF00'));
+  ok((await cellInfo(p)).some((x) => x[1] === '#FFFF00'), 'заливка ячейки');
+  await p.keyboard.press('Control+KeyZ');
+  ok(!(await cellInfo(p)).some((x) => x[1] === '#FFFF00'), 'отмена заливки');
+  await p.context().close();
+});
+await test('макет таблицы: выделение, выравнивание в ячейке, направление текста, поля, сортировка, автоподбор, в текст', async () => {
+  const p = await page();
+  await p.evaluate(TBL_SETUP);
+  await p.evaluate(() => window.ens.run('table.selRow'));
+  eq(await p.evaluate(() => { const s = window.ens.view.state.selection; let n = 0; s.forEachCell?.(() => n++); return n; }), 2, 'строка выделена');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 12))); });
+  await p.evaluate(() => window.ens.run('table.selCol'));
+  eq(await p.evaluate(() => { const s = window.ens.view.state.selection; let n = 0; s.forEachCell?.(() => n++); return n; }), 5, 'столбец выделен');
+  await p.evaluate(() => window.ens.run('table.cellAlign', 'center-middle'));
+  eq(await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') out.push([n.attrs.valign, n.firstChild.attrs.align]); return n.type.name !== 'table_cell'; }); return out.filter((_, i) => i % 2 === 0); }),
+    Array(5).fill(['middle', 'center']), 'по центру по обеим осям в столбце');
+  await p.evaluate(() => window.ens.run('table.textDir'));
+  ok(await p.$('.ProseMirror td.dir-btLr'), 'текст снизу вверх');
+  // Сортировка по второму столбцу (числа), первая строка — заголовок.
+  await p.evaluate(() => window.ens.run('table.sort'));
+  await p.waitForSelector('#dialog:not([hidden]) select[aria-label="Столбец"]');
+  await p.check('#dialog input[type=checkbox]');
+  await p.selectOption('#dialog select[aria-label="Столбец"]', '1');
+  await p.click('#dialog button.primary');
+  eq((await cellInfo(p)).filter((_, i) => i % 2 === 0).map((x) => x[0]), ['Город', 'Азов', 'Тула', 'Омск', 'Итого'], 'числа по возрастанию, заголовок на месте');
+  // Автоподбор по содержимому: ширины столбцов сняты.
+  await p.evaluate(() => window.ens.run('table.autofit', 'content'));
+  eq(await p.evaluate(() => { let w = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') w.push(n.attrs.colwidth); return n.type.name !== 'table_cell'; }); return [...new Set(w.map(String))]; }), ['null'], 'ширины сняты');
+  ok(await p.$('.ProseMirror table.autofit'), 'таблица по содержимому');
+  // Поля ячеек.
+  await p.evaluate(() => window.ens.run('table.margins'));
+  await p.waitForSelector('#dialog input[aria-label="Левое"]');
+  await p.fill('#dialog input[aria-label="Левое"]', '0.5');
+  await p.click('#dialog button.primary');
+  eq(await p.evaluate(() => { let v; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table') { v = n.attrs.pad; return false; } return true; }); return v[3]; }), 14.2, 'левое поле 0,5 см');
+  // В текст.
+  await p.evaluate(() => window.ens.run('table.toText'));
+  await p.waitForSelector('#dialog select[aria-label="Разделитель"]');
+  await p.selectOption('#dialog select[aria-label="Разделитель"]', '; ');
+  await p.click('#dialog button.primary');
+  eq(await text(p), 'Перед|Город; Жители|Азов; 79|Тула; 466|Омск; 1110|Итого; 1655|После', 'таблица стала текстом');
+  await p.context().close();
+});
+await test('таблица: перо рисует границу, ластик стирает (с соседней ячейкой), Esc выключает', async () => {
+  const p = await page();
+  await p.evaluate(TBL_SETUP);
+  await p.evaluate(() => window.ens.run('table.penStyle', 'solid:1.5'));
+  await p.evaluate(() => window.ens.run('table.penColor', '#C00000'));
+  await p.evaluate(() => window.ens.run('table.penDraw'));
+  ok(await p.$('.ProseMirror.pen-draw'), 'режим пера');
+  const box = await p.$eval('.ProseMirror td >> nth=2', (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.bottom - 2 }; });
+  await p.mouse.click(box.x, box.y);
+  const b = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') out.push(n.attrs.borders); return n.type.name !== 'table_cell'; }); return out; });
+  eq(b[2].b, { w: 1.5, s: 'solid', c: '#C00000' }, 'нижняя граница ячейки');
+  eq(b[4].t, { w: 1.5, s: 'solid', c: '#C00000' }, 'верхняя граница соседа снизу');
+  await p.evaluate(() => window.ens.run('table.penErase'));
+  await p.mouse.click(box.x, box.y);
+  const e = await p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'table_cell') out.push(n.attrs.borders); return n.type.name !== 'table_cell'; }); return out; });
+  eq([e[2].b.s, e[4].t.s], ['none', 'none'], 'ластик стёр общую границу');
+  await p.keyboard.press('Escape');
+  ok(!(await p.$('.ProseMirror.pen-erase')), 'Esc выключил ластик');
+  await p.context().close();
+});
+await test('таблицы в docx: стиль и параметры, поля ячеек, повтор заголовка, направление текста, автоподбор — туда и обратно', async () => {
+  const p = await page();
+  await p.evaluate(TBL_SETUP);
+  await p.evaluate(() => window.ens.run('table.style', 'green'));
+  await p.evaluate(() => window.ens.run('table.textDir'));
+  await p.evaluate(() => window.ens.run('table.autofit', 'content'));
+  await p.evaluate(() => { const E = window.ens; let pos = 0, node; E.view.state.doc.descendants((n, ps) => { if (n.type.name === 'table') { pos = ps; node = n; return false; } return true; }); E.view.dispatch(E.view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, pad: [2, 5.4, 2, 5.4] })); });
+  const r = await p.evaluate(() => {
+    const E = window.ens, doc = E.view.state.doc;
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    let a, b; doc.descendants((n) => { if (n.type.name === 'table') { a = n; return false; } return true; }); back.doc.descendants((n) => { if (n.type.name === 'table') { b = n; return false; } return true; });
+    return { xml, same: a.eq(b), a: JSON.stringify(a.toJSON()).slice(0, 600), b: JSON.stringify(b.toJSON()).slice(0, 600), lossy: back.meta.lossy };
+  });
+  ok(r.xml.includes('<w:tblStyle w:val="ENS-green"/>') && r.xml.includes('w:firstRow="1"'), 'стиль и w:tblLook');
+  ok(r.xml.includes('<w:tblHeader/>') && r.xml.includes('<w:textDirection w:val="btLr"/>') && r.xml.includes('<w:tblCellMar>') && r.xml.includes('w:type="autofit"'), 'повтор заголовка, направление, поля, автоподбор');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, `таблица та же после круга:\n${r.a}\n${r.b}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

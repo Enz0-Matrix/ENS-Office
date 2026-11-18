@@ -263,6 +263,12 @@ const nodes: Record<string, NodeSpec> = {
         getFromDOM: (d) => { try { return JSON.parse((d as HTMLElement).getAttribute('data-borders') ?? 'null'); } catch { return null; } },
         setDOMAttr: (v, attrs) => { if (v) { attrs['data-borders'] = JSON.stringify(v); attrs.style = `${attrs.style ?? ''};${cellBorderCss(v as CellBorders)}`; } },
       },
+      /** Направление текста: btLr — снизу вверх, tbRl — сверху вниз (w:textDirection). */
+      dir: {
+        default: null,
+        getFromDOM: (d) => { const v = (d as HTMLElement).getAttribute('data-dir'); return v === 'btLr' || v === 'tbRl' ? v : null; },
+        setDOMAttr: (v, attrs) => { if (v) { attrs['data-dir'] = v as string; attrs.class = `${attrs.class ?? ''} dir-${v}`.trim(); } },
+      },
     },
   }),
 };
@@ -279,17 +285,28 @@ export const cellBorderCss = (b: CellBorders): string => [edgeCss('top', b.t), e
 
 nodes.table_row = {
   ...nodes.table_row,
-  attrs: { height: { default: null } },
-  parseDOM: [{ tag: 'tr', getAttrs: (d) => { const m = /^([\d.]+)pt$/.exec((d as HTMLElement).style.height); return { height: m ? parseFloat(m[1]) : null }; } }],
-  toDOM: (n) => (n.attrs.height ? ['tr', { style: `height:${n.attrs.height}pt` }, 0] : ['tr', 0]),
+  /** header — строка заголовка повторяется на каждой странице (w:tblHeader). */
+  attrs: { height: { default: null }, header: { default: false } },
+  parseDOM: [{ tag: 'tr', getAttrs: (d) => { const m = /^([\d.]+)pt$/.exec((d as HTMLElement).style.height); return { height: m ? parseFloat(m[1]) : null, header: (d as HTMLElement).hasAttribute('data-header') }; } }],
+  toDOM: (n) => ['tr', { ...(n.attrs.height ? { style: `height:${n.attrs.height}pt` } : {}), ...(n.attrs.header ? { 'data-header': '1', title: 'Повторяется на каждой странице' } : {}) }, 0],
 };
 
 // Таблица: признак «с границами» (стиль «Сетка таблицы» в docx).
 nodes.table = {
   ...nodes.table,
   /** align — положение таблицы на странице (left, center, right), если она уже полосы текста. */
-  attrs: { borders: { default: true }, align: { default: null } },
-  toDOM: (n) => ['table', { class: n.attrs.borders ? 'bordered' : 'plain', ...(n.attrs.align ? { style: tableAlignCss(n.attrs.align as string) } : {}) }, ['tbody', 0]],
+  /**
+   * look — стиль из «Конструктора»: { style, header, total, banded, firstCol } (цвета уже записаны в ячейки);
+   * pad — поля ячеек [верх, право, низ, лево], pt; autofit — столбцы по содержимому (а не фиксированные).
+   */
+  attrs: { borders: { default: true }, align: { default: null }, look: { default: null }, pad: { default: null }, autofit: { default: false } },
+  toDOM: (n) => {
+    const style: string[] = [];
+    if (n.attrs.align) style.push(tableAlignCss(n.attrs.align as string));
+    const pad = n.attrs.pad as number[] | null;
+    if (pad) style.push(`--cell-pad:${pad.map((v) => `${v}pt`).join(' ')}`);
+    return ['table', { class: `${n.attrs.borders ? 'bordered' : 'plain'}${pad ? ' padded' : ''}${n.attrs.autofit ? ' autofit' : ''}`, ...(style.length ? { style: style.join(';') } : {}) }, ['tbody', 0]];
+  },
 };
 
 /** Выделение «Основной текст» не нужно: текст без шрифта наследует шрифт документа. */

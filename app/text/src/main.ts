@@ -34,6 +34,10 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import {
+  alignCells, applyLook, cellMarginsDialog, currentLook, cycleDirection, DEFAULT_LOOK, pen, penPlugin, repeatHeaderOn, selectPart,
+  setAutofit, setRepeatHeader, sortDialog, TABLE_STYLES, toTextDialog, type Look,
+} from './table-design';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -65,7 +69,7 @@ import { changeCase, type CaseMode } from './textcase';
 import { popMenu } from './popmenu';
 import { builtInTemplates } from './templates';
 import { initRuler, rulerPreviewPlugin, rulerVisible, setRulerVisible, updateRuler } from './ruler';
-import { bordersDialog, clearFill, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
+import { bordersDialog, clearFill, setCellsAttr, equalColumns, equalRows, fitTable, setTableWrap, setValign, tableDialog as tablePropsDialog } from './tables-ui';
 import {
   addCaption, alignImage, arrangeImage, clearCrop, deleteImage, fitImageWidth, imageDialog, initImageTools, insertTextBox, isCropMode, replaceImage, resetImageSize,
   scaleImage, selectFrame, selectNextImage, selectedImage as imgSelected, setCropMode, updateOverlay,
@@ -460,7 +464,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, penPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -855,6 +859,40 @@ register(
   { id: 'table.valign', label: 'Выравнивание в ячейке по вертикали', keywords: ['таблица', 'ячейка', 'вверху', 'по центру', 'внизу'], run: (v) => { if (v) setValign(view, v); setSelect('table.valign', ''); view.focus(); } },
   { id: 'table.wrap', label: 'Положение таблицы: в тексте / обтекание', keywords: ['таблица', 'обтекание', 'плавающая', 'справа', 'слева'], run: (v) => { if (v) setTableWrap(view, v as 'inline' | 'left' | 'right'); setSelect('table.wrap', ''); view.focus(); } },
   { id: 'table.fillClear', label: 'Убрать заливку ячеек', keywords: ['таблица', 'заливка'], run: () => clearFill(view) },
+  // Конструктор таблиц
+  {
+    id: 'table.style', label: 'Стиль таблицы', keywords: ['таблица', 'стиль', 'оформление', 'чередование', 'заголовок'],
+    run: (v) => { if (v) { const look = { ...(currentLook(view.state) ?? DEFAULT_LOOK), style: v }; const tr = applyLook(view.state, look); if (tr) view.dispatch(tr); } setSelect('table.style', ''); view.focus(); },
+  },
+  ...(['header', 'total', 'banded', 'firstCol'] as const).map((k) => ({
+    id: `table.look.${k}`,
+    label: { header: 'Строка заголовка', total: 'Строка итогов', banded: 'Чередование строк', firstCol: 'Первый столбец' }[k],
+    keywords: ['таблица', 'стиль', 'параметры стиля'],
+    checked: () => !!currentLook(view.state)?.[k],
+    run: () => { const cur: Look = currentLook(view.state) ?? { ...DEFAULT_LOOK, style: 'grid', header: false, banded: false }; const tr = applyLook(view.state, { ...cur, [k]: !cur[k] }); if (tr) view.dispatch(tr); view.focus(); },
+  })),
+  { id: 'table.shade', label: 'Заливка ячеек', keywords: ['таблица', 'заливка', 'цвет ячейки'], run: (v) => { setCellsAttr(view, 'cells', 'background', v || null); view.focus(); } },
+  { id: 'table.penDraw', label: 'Нарисовать границы (перо)', keywords: ['таблица', 'перо', 'рисовать', 'граница', 'раскраска границ'], checked: () => pen.mode === 'draw', run: () => { pen.mode = pen.mode === 'draw' ? 'off' : 'draw'; view.dispatch(view.state.tr); updateUi(); if (pen.mode === 'draw') toast('Щёлкайте по границам ячеек — они рисуются выбранным пером. Esc или кнопка — выход.'); } },
+  { id: 'table.penErase', label: 'Ластик границ', keywords: ['таблица', 'ластик', 'стереть', 'граница'], checked: () => pen.mode === 'erase', run: () => { pen.mode = pen.mode === 'erase' ? 'off' : 'erase'; view.dispatch(view.state.tr); updateUi(); if (pen.mode === 'erase') toast('Щёлкайте по границам — они стираются. Esc или кнопка — выход.'); } },
+  { id: 'table.penStyle', label: 'Тип линии пера', run: (v) => { if (v) { const [s2, w] = v.split(':'); pen.s = s2 as typeof pen.s; pen.w = Number(w); } } },
+  { id: 'table.penColor', label: 'Цвет пера', run: (v) => { if (v) pen.c = v; } },
+  { id: 'table.grid', label: 'Отобразить сетку', keywords: ['таблица', 'сетка', 'невидимые границы'], checked: () => !document.documentElement.hasAttribute('data-hide-grid'), run: () => { document.documentElement.toggleAttribute('data-hide-grid'); updateUi(); } },
+  // Макет
+  { id: 'table.selCell', label: 'Выделить ячейку', keywords: ['таблица', 'выделить'], run: () => { selectPart(view, 'cell'); view.focus(); } },
+  { id: 'table.selRow', label: 'Выделить строку', keywords: ['таблица', 'выделить'], run: () => { selectPart(view, 'row'); view.focus(); } },
+  { id: 'table.selCol', label: 'Выделить столбец', keywords: ['таблица', 'выделить'], run: () => { selectPart(view, 'col'); view.focus(); } },
+  { id: 'table.selAll', label: 'Выделить таблицу', keywords: ['таблица', 'выделить'], run: () => { selectPart(view, 'table'); view.focus(); } },
+  { id: 'table.cellAlign', label: 'Выравнивание в ячейке', keywords: ['таблица', 'выравнивание', 'по центру'], run: (v) => { if (v) { const [h, va] = v.split('-') as ['left' | 'center' | 'right', 'top' | 'middle' | 'bottom']; const tr = alignCells(view.state, h, va); if (tr) view.dispatch(tr); } setSelect('table.cellAlign', ''); view.focus(); } },
+  { id: 'table.textDir', label: 'Направление текста', keywords: ['таблица', 'направление', 'повернуть текст', 'вертикально'], run: () => { const tr = cycleDirection(view.state); if (tr) view.dispatch(tr); view.focus(); } },
+  { id: 'table.margins', label: 'Поля ячеек…', keywords: ['таблица', 'поля ячейки', 'отступы'], run: () => cellMarginsDialog(view) },
+  { id: 'table.sort', label: 'Сортировка…', keywords: ['таблица', 'сортировка', 'упорядочить', 'по алфавиту'], run: () => sortDialog(view) },
+  { id: 'table.repeatHeader', label: 'Повторять строку заголовка', keywords: ['таблица', 'заголовок', 'на каждой странице', 'шапка'], checked: () => repeatHeaderOn(view.state), run: () => { const tr = setRepeatHeader(view.state); if (tr) view.dispatch(tr); view.focus(); } },
+  { id: 'table.toText', label: 'Преобразовать в текст…', keywords: ['таблица', 'в текст', 'преобразовать'], run: () => toTextDialog(view) },
+  { id: 'table.autofit', label: 'Автоподбор', keywords: ['таблица', 'автоподбор', 'по содержимому', 'по ширине окна', 'фиксированная'], run: (v) => {
+    if (v === 'window') fitTable(view, (curPage().w - curPage().left - curPage().right) * PX);
+    else if (v === 'content' || v === 'fixed') { const tr = setAutofit(view.state, v); if (tr) view.dispatch(tr); }
+    setSelect('table.autofit', ''); view.focus();
+  } },
   { id: 'view.marks', label: 'Отобразить все знаки', keywords: ['скрытые символы', 'непечатаемые', 'знаки абзаца', 'пробелы', 'табуляция', '¶'], keys: ['Ctrl+Shift+Digit8'], checked: () => hiddenMarksOn(view.state), run: () => { setHiddenMarks(view, !hiddenMarksOn(view.state)); updateUi(); view.focus(); } },
   { id: 'view.ruler', label: 'Линейка', keywords: ['линейка', 'поля', 'отступы', 'границы'], checked: () => rulerVisible(), run: () => { setRulerVisible(!rulerVisible()); updateUi(); } },
   { id: 'insert.textbox', label: 'Надпись', keywords: ['надпись', 'текстовое поле', 'рамка', 'врезка'], run: () => insertTextBox() },
@@ -1329,8 +1367,49 @@ const TABS: RibbonTab[] = [
     ],
   },
   {
+    id: 'tableDesign', label: 'Конструктор таблиц',
+    groups: [
+      {
+        name: 'Параметры стилей',
+        items: [
+          { type: 'medium', command: 'table.look.header', icon: 'row_add', label: 'Строка заголовка' },
+          { type: 'medium', command: 'table.look.total', icon: 'row_add', label: 'Строка итогов' },
+          { type: 'medium', command: 'table.look.banded', icon: 'row_add', label: 'Чередование строк' },
+          { type: 'medium', command: 'table.look.firstCol', icon: 'col_add', label: 'Первый столбец' },
+        ],
+      },
+      {
+        name: 'Стили таблиц',
+        items: [
+          { type: 'select', command: 'table.style', width: 160, options: [{ value: '', label: 'Стиль таблицы…' }, ...Object.entries(TABLE_STYLES).map(([value, d]) => ({ value, label: d.label }))] },
+          { type: 'color', command: 'table.shade', icon: 'paint_bucket', kind: 'fill' },
+        ],
+      },
+      {
+        name: 'Обрамление',
+        items: [
+          { type: 'select', command: 'table.penStyle', width: 150, options: [{ value: 'solid:0.5', label: 'Сплошная 0,5 пт' }, { value: 'solid:1', label: 'Сплошная 1 пт' }, { value: 'solid:1.5', label: 'Сплошная 1,5 пт' }, { value: 'solid:2.25', label: 'Сплошная 2¼ пт' }, { value: 'double:0.5', label: 'Двойная' }, { value: 'dashed:0.5', label: 'Штриховая' }, { value: 'dotted:0.5', label: 'Пунктирная' }] },
+          { type: 'color', command: 'table.penColor', icon: 'text_color', kind: 'font' },
+          { type: 'large', command: 'table.penDraw', icon: 'paint_brush', label: 'Нарисовать границы' },
+          { type: 'large', command: 'table.penErase', icon: 'eraser', label: 'Ластик' },
+          { type: 'large', command: 'table.borderDialog', icon: 'border_all', label: 'Границы и заливка' },
+          { type: 'large', command: 'table.grid', icon: 'grid', label: 'Сетка' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'table', label: 'Таблица',
     groups: [
+      {
+        name: 'Выделить',
+        items: [
+          { type: 'medium', command: 'table.selCell', icon: 'cursor', label: 'Ячейку' },
+          { type: 'medium', command: 'table.selRow', icon: 'row_add', label: 'Строку' },
+          { type: 'medium', command: 'table.selCol', icon: 'col_add', label: 'Столбец' },
+          { type: 'medium', command: 'table.selAll', icon: 'table', label: 'Таблицу' },
+        ],
+      },
       {
         name: 'Строки и столбцы',
         items: [
@@ -1356,6 +1435,9 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'table.borders', icon: 'border_all', label: 'Границы вкл/выкл' },
           { type: 'large', command: 'table.borderDialog', icon: 'paint_brush', label: 'Границы и заливка' },
           { type: 'select', command: 'table.valign', width: 170, options: [{ value: '', label: 'Текст в ячейке по высоте…' }, { value: 'top', label: 'Вверху' }, { value: 'middle', label: 'По центру' }, { value: 'bottom', label: 'Внизу' }] },
+          { type: 'select', command: 'table.cellAlign', width: 170, options: [{ value: '', label: 'Выравнивание в ячейке…' }, ...['top', 'middle', 'bottom'].flatMap((v) => ['left', 'center', 'right'].map((h) => ({ value: `${h}-${v}`, label: `${{ top: 'Сверху', middle: 'По центру', bottom: 'Снизу' }[v]}, ${{ left: 'слева', center: 'по центру', right: 'справа' }[h]}` })))] },
+          { type: 'medium', command: 'table.textDir', icon: 'text_direction_rotate', label: 'Направление текста' },
+          { type: 'medium', command: 'table.margins', icon: 'grid', label: 'Поля ячеек' },
           { type: 'medium', command: 'table.fillClear', icon: 'eraser', label: 'Убрать заливку' },
         ],
       },
@@ -1368,6 +1450,15 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'table.equalRows', icon: 'row_add', label: 'Выровнять строки' },
           { type: 'large', command: 'table.fit', icon: 'arrow_autofit_width', label: 'По ширине текста' },
           { type: 'select', command: 'table.wrap', width: 190, options: [{ value: '', label: 'Положение таблицы…' }, { value: 'inline', label: 'В тексте' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'left', label: 'Слева, текст справа' }] },
+          { type: 'select', command: 'table.autofit', width: 170, options: [{ value: '', label: 'Автоподбор…' }, { value: 'content', label: 'По содержимому' }, { value: 'window', label: 'По ширине окна' }, { value: 'fixed', label: 'Фиксированная ширина' }] },
+        ],
+      },
+      {
+        name: 'Данные',
+        items: [
+          { type: 'large', command: 'table.sort', icon: 'text_sort_ascending', label: 'Сортировка' },
+          { type: 'large', command: 'table.repeatHeader', icon: 'row_add', label: 'Повторять заголовок' },
+          { type: 'large', command: 'table.toText', icon: 'document_text', label: 'В текст' },
         ],
       },
     ],
@@ -1448,7 +1539,7 @@ function setSelect(cmd: string, value: string): void {
   sel.value = value;
 }
 
-const TABLE_CMDS = new Set(['table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.wrap', 'table.fillClear']);
+const TABLE_CMDS = new Set(['table.style', 'table.look.header', 'table.look.total', 'table.look.banded', 'table.look.firstCol', 'table.shade', 'table.selCell', 'table.selRow', 'table.selCol', 'table.selAll', 'table.cellAlign', 'table.textDir', 'table.margins', 'table.sort', 'table.repeatHeader', 'table.toText', 'table.autofit', 'table.rowBefore', 'table.rowAfter', 'table.colBefore', 'table.colAfter', 'table.delRow', 'table.delCol', 'table.merge', 'table.split', 'table.borders', 'table.delete', 'table.borderDialog', 'table.props', 'table.equalCols', 'table.equalRows', 'table.fit', 'table.valign', 'table.wrap', 'table.fillClear']);
 
 const NIGHT_KEY = 'ens-text.night';
 let nightSheet = (() => { try { return localStorage.getItem(NIGHT_KEY) === '1'; } catch { return false; } })();
@@ -1811,6 +1902,8 @@ $('sheet').addEventListener('dblclick', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && hfSession && document.getElementById('dialog')!.hidden) closeHf(); });
+// Esc выключает перо и ластик границ таблицы.
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pen.mode !== 'off') { pen.mode = 'off'; view.dispatch(view.state.tr); updateUi(); } });
 
 // ---------------------------------------------------------------- печать
 
@@ -1944,7 +2037,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, penPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
