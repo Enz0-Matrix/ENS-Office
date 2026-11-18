@@ -45,6 +45,11 @@
 .paper { position: absolute; left: 0; right: 0; background: var(--paper, #fff); box-shadow: 0 1px 6px rgba(0,0,0,.28); }
 .sheet > .ProseMirror { position: relative; z-index: 1; box-sizing: border-box; }
 /* Распорки разрыва страниц (pagination.ts) */
+.ProseMirror .pg-neg { height: 0; padding: 0; border: 0; pointer-events: none; user-select: none; }
+/* Колонки: линия-разделитель на листе и пометка разрыва колонки при скрытых знаках. */
+.paper .col-sep { position: absolute; width: 0; border-left: 1px solid #000; pointer-events: none; }
+:root[data-night-sheet] .paper .col-sep { border-color: #aaa; }
+.ProseMirror.show-marks [data-col-break]::before { content: "··· Разрыв колонки ···"; display: block; font-size: 8pt; color: #7a8; text-align: center; text-indent: 0; }
 .ProseMirror .pg-split { display: inline-block; width: 100%; vertical-align: top; pointer-events: none; user-select: none; }
 .ProseMirror tr.pg-gap td { border: 0 !important; padding: 0 !important; background: transparent; }
 
@@ -76,6 +81,10 @@ body.ctrl-held .ProseMirror a { cursor: pointer; }
 .ProseMirror table.bordered td, .ProseMirror table.bordered th { border: 1px solid #000; }
 .ProseMirror table.plain td, .ProseMirror table.plain th { border: 1px dotted #d0d0d0; }
 .ProseMirror .tableWrapper { overflow-x: auto; }
+/* Таблица в разделе с колонками: строки, перешедшие в другую колонку, сдвинуты и не должны обрезаться. */
+.ProseMirror .tableWrapper.pg-colt, .ProseMirror .pg-colt table { overflow: visible; }
+/* Слитые рамки рисует сама таблица на месте в потоке, а не сдвинутые строки: в колонках рамки — у ячеек. */
+.ProseMirror .pg-colt table { border-collapse: separate; border-spacing: 0; }
 .ProseMirror .selectedCell::after { z-index: 2; position: absolute; content: ""; inset: 0; background: rgba(43, 87, 154, .22); pointer-events: none; }
 .ProseMirror .column-resize-handle { position: absolute; right: -2px; top: 0; bottom: 0; width: 4px; background: var(--accent); pointer-events: none; z-index: 20; }
 .ProseMirror.resize-cursor { cursor: col-resize; }
@@ -471,3 +480,18 @@ svg.ic-l, svg.ic-m { display: none; }
 .ProseMirror .toc-page { min-width: 1.5em; text-align: right; }
 .ProseMirror .toc-empty { color: #777; font-style: italic; border: 1px dashed #aaa; padding: 6px 8px; }
 @media print { .ProseMirror .toc-empty { display: none; } .ProseMirror div.toc.ProseMirror-selectednode { outline: none; } }
+/* Исправления (рецензирование): вставка подчёркнута, удаление зачёркнуто, у абзаца — черта на поле, как в Word. */
+.ProseMirror ins.rev-ins { color: #1a6fb5; text-decoration: underline; text-decoration-color: currentColor; }
+.ProseMirror del.rev-del { color: #c0262d; text-decoration: line-through; }
+.ProseMirror [data-rev-block] { box-shadow: -6px 0 0 -4px #8a8a8a; }
+:root[data-night-sheet] .ProseMirror ins.rev-ins { color: #7cb8ff; }
+:root[data-night-sheet] .ProseMirror del.rev-del { color: #ff8a8f; }
+/* «Было»: без вставленного; «Стало»: без удалённого, пометки сняты. */
+:root[data-rev-view="original"] .ProseMirror ins.rev-ins,
+:root[data-rev-view="original"] .ProseMirror [data-rev-block="ins"],
+:root[data-rev-view="final"] .ProseMirror del.rev-del,
+:root[data-rev-view="final"] .ProseMirror [data-rev-block="del"] { display: none; }
+:root[data-rev-view] .ProseMirror ins.rev-ins,
+:root[data-rev-view] .ProseMirror del.rev-del { color: inherit; text-decoration: none; }
+:root[data-rev-view] .ProseMirror [data-rev-block] { box-shadow: none; }
+.compare-dialog .dlg-row select { max-width: 360px; }

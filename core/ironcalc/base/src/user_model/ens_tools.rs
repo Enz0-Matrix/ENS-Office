@@ -300,6 +300,19 @@ impl UserModel<'_> {
         Ok(missing)
     }
 
+    /// ENS-Office: значения прямоугольника листа в байтах (для «Вставить связь» в другой книге).
+    pub fn ens_range_values(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Vec<u8> {
+        self.model.ens_range_values(sheet, r1, c1, r2, c2)
+    }
+
+    /// ENS-Office: значения ячеек другой книги (`ens_range_values` там) — в кэш ссылок на неё,
+    /// с пересчётом. Как обновление связей, не отменяется.
+    pub fn ens_merge_external_values(&mut self, file: &str, target: &str, sheet: &str, bytes: &[u8]) -> Result<(), String> {
+        self.model.ens_merge_external_values(file, target, sheet, bytes)?;
+        self.model.evaluate();
+        Ok(())
+    }
+
     /// ENS-Office: книги-источники внешних ссылок: (имя файла, путь как записан).
     pub fn external_books(&self) -> Vec<(String, String)> {
         self.model
