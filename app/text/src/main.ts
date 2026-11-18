@@ -19,7 +19,7 @@ import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
 import { schema } from './schema';
 import {
-  clearFormatting, createState, insertField, currentLevel, currentStyle, fmtActive, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
+  clearFormatting, createState, insertField, currentLevel, currentStyle, fmtActive, findKey, findStep, indent, insertImage, insertPageBreak, insertColumnBreak, insertTable, linkAt,
   listKind, markActive, paraAttr, replaceAll, replaceMatch, setLink, setParaAttrs, setStyle, setTextStyle, toggle, toggleList, toggles,
 } from './editor';
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type HfDoc, type PageSetup } from './docx';
@@ -357,12 +357,21 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   const sheetW = Math.max(...list.map((b) => b.W));
   const papers = $('papers');
   const wm = meta.watermark?.trim() ?? '';
-  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join(',')}`;
+  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}:${b.cols?.sep ? `${b.cols.x.join('/')}:${b.sepH}:${b.eff.top}:${b.page.left}` : ''}`).join(',')}`;
   if (papers.dataset.sig !== sig) {
     papers.replaceChildren(...list.map((b) => {
       const d = document.createElement('div');
       d.className = 'paper';
       d.style.cssText = `top:${b.top}px;height:${b.H}px;left:${(sheetW - b.W) / 2}px;right:auto;width:${b.W}px`;
+      if (b.cols?.sep && b.sepH) {
+        // Линия между колонками — посередине промежутка, высотой по самой длинной колонке листа.
+        for (let k = 1; k < b.cols.n; k++) {
+          const ln = document.createElement('div');
+          ln.className = 'col-sep';
+          ln.style.cssText = `left:${b.page.left * PX + b.cols.x[k] - b.cols.gap / 2}px;top:${b.eff.top * PX}px;height:${b.sepH}px`;
+          d.append(ln);
+        }
+      }
       if (wm) {
         // Подложка: по центру листа под 45°, размер — по длине надписи и диагонали листа.
         const w = document.createElement('div');
@@ -837,6 +846,9 @@ register(
   { id: 'insert.dateRu', label: 'Дата «29» октября 2026 г.', keywords: ['дата', 'сегодня'], run: () => { const v = active(); v.dispatch(v.state.tr.insertText(dateRu(new Date())).scrollIntoView()); v.focus(); } },
   { id: 'insert.sectionBreak', label: 'Разрыв раздела (со следующей страницы)', keywords: ['раздел', 'ориентация', 'альбомная', 'книжная', 'страница'], run: () => insertSectionBreak() },
   { id: 'insert.pageBreak', label: 'Разрыв страницы', run: () => dispatchCmd(insertPageBreak) },
+  { id: 'insert.columnBreak', label: 'Разрыв колонки', keywords: ['колонка', 'столбец текста', 'следующая колонка'], keys: ['Ctrl+Shift+Enter'], run: () => dispatchCmd(insertColumnBreak) },
+  { id: 'layout.columns', label: 'Колонки', keywords: ['колонки', 'две колонки', 'три колонки', 'газетные колонки', 'столбцы текста'], run: () => columnsMenu() },
+  { id: 'layout.columnsDialog', label: 'Другие колонки…', keywords: ['колонки', 'ширина колонок', 'промежуток', 'разделитель'], run: () => columnsDialog() },
   { id: 'table.rowBefore', label: 'Вставить строку выше', run: () => dispatchCmd(addRowBefore) },
   { id: 'table.rowAfter', label: 'Вставить строку ниже', run: () => dispatchCmd(addRowAfter) },
   { id: 'table.colBefore', label: 'Вставить столбец слева', run: () => dispatchCmd(addColumnBefore) },
@@ -1232,6 +1244,7 @@ const TABS: RibbonTab[] = [
         name: 'Рисунок',
         items: [{ type: 'select', command: 'image.wrap', width: 150, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] }],
       },
+      { name: 'Колонки', items: [{ type: 'large', command: 'layout.columns', icon: 'columns', label: 'Колонки' }, { type: 'small', command: 'insert.columnBreak', icon: 'page_break' }] },
       { name: 'Разделы', items: [{ type: 'large', command: 'insert.sectionBreak', icon: 'page_break', label: 'Разрыв раздела' }] },
       {
         name: 'Текст и фон',
@@ -1601,6 +1614,82 @@ function setOrientation(landscape: boolean): void {
   const lo = Math.min(curPage().w, curPage().h);
   const hi = Math.max(curPage().w, curPage().h);
   changePage(landscape ? { w: hi, h: lo } : { w: lo, h: hi });
+}
+
+/** Колонки раздела, где стоит курсор: n равных или «слева»/«справа» (узкая колонка — треть ширины). */
+function setColumns(n: number, side?: 'left' | 'right', extra: Partial<PageSetup> = {}): void {
+  const p = curPage();
+  const colW = side ? (side === 'left' ? [1, 2] : [2, 1]) : undefined;
+  changePage({ cols: n > 1 ? n : undefined, colW: n > 1 ? colW : undefined, colSpace: n > 1 ? (p.colSpace ?? 35.4) : p.colSpace, colSep: n > 1 ? p.colSep : undefined, ...extra });
+}
+
+function columnsMenu(): void {
+  const p = curPage();
+  const n = p.cols && p.cols > 1 ? p.cols : 1;
+  const side = n === 2 && p.colW?.length === 2 ? (p.colW[0] < p.colW[1] ? 'left' : p.colW[0] > p.colW[1] ? 'right' : '') : '';
+  const at = ribbonButton('layout.columns') ?? { x: 300, y: 120 };
+  popMenu(at, [
+    { label: 'Одна', checked: n === 1, run: () => setColumns(1) },
+    { label: 'Две', checked: n === 2 && !side, run: () => setColumns(2) },
+    { label: 'Три', checked: n === 3 && !p.colW, run: () => setColumns(3) },
+    { label: 'Слева (узкая слева)', checked: side === 'left', run: () => setColumns(2, 'left') },
+    { label: 'Справа (узкая справа)', checked: side === 'right', run: () => setColumns(2, 'right') },
+    '-',
+    { label: 'Разрыв колонки', keys: 'Ctrl+Shift+Enter', run: () => dispatchCmd(insertColumnBreak) },
+    { label: 'Другие колонки…', run: () => columnsDialog() },
+  ], 'columns-menu');
+}
+
+/** «Другие колонки…»: число, ширина и промежуток (см), равная ширина, линия-разделитель. Для раздела с курсором. */
+function columnsDialog(): void {
+  const p0 = curPage();
+  const CMPT = 28.3465;
+  const cm = (pt: number) => String(Math.round((pt / CMPT) * 100) / 100).replace('.', ',');
+  const val = (i: HTMLInputElement) => parseFloat(i.value.replace(',', '.'));
+  dialog((box, close) => {
+    const text = p0.w - p0.left - p0.right;
+    const count = el('input', { type: 'number', value: String(p0.cols && p0.cols > 1 ? p0.cols : 1), min: '1', max: '12' });
+    const space = el('input', { type: 'text', value: cm(p0.colSpace ?? 35.4), size: 5 });
+    const equal = el('input', { type: 'checkbox', checked: !p0.colW });
+    const sep = el('input', { type: 'checkbox', checked: !!p0.colSep });
+    const widths = el('span', { class: 'col-widths' });
+    let inputs: HTMLInputElement[] = [];
+    const draw = () => {
+      const n = Math.min(12, Math.max(1, Math.round(+count.value || 1)));
+      const sp = Math.max(0, (val(space) || 0) * CMPT);
+      const free = Math.max(18, text - sp * (n - 1));
+      const own = p0.colW && p0.colW.length === n ? p0.colW : null;
+      const sum = own ? own.reduce((a, b) => a + b, 0) : 0;
+      inputs = Array.from({ length: n }, (_, k) => el('input', { type: 'text', size: 5, value: cm(own && !equal.checked ? (own[k] * free) / sum : free / n), disabled: equal.checked || n < 2 }));
+      widths.replaceChildren(...inputs.flatMap((x, k) => [`${k + 1}: `, x, ' ']));
+    };
+    count.addEventListener('input', draw);
+    space.addEventListener('change', draw);
+    equal.addEventListener('change', draw);
+    draw();
+    const ok = el('button', { class: 'primary', textContent: 'ОК' });
+    const go = () => {
+      const n = Math.min(12, Math.max(1, Math.round(+count.value || 1)));
+      const sp = Math.max(0, (val(space) || 0) * CMPT);
+      const ws = inputs.map((x) => (val(x) || 0) * CMPT);
+      const own = !equal.checked && n > 1 && ws.every((x) => x > 9) ? ws : undefined;
+      close();
+      setColumns(n, undefined, { colSpace: n > 1 ? sp : p0.colSpace, colW: own, colSep: n > 1 && sep.checked ? true : undefined });
+      view.focus();
+    };
+    ok.addEventListener('click', go);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    box.append(
+      el('h2', { textContent: 'Колонки' }),
+      el('p', { textContent: 'Для раздела, где стоит курсор. Текст перетекает из колонки в колонку; разрыв колонки — Ctrl+Shift+Enter.' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Число колонок' }), count),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Промежуток, см' }), space),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Колонки одинаковой ширины' }), equal),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Ширина, см' }), widths),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Разделитель' }), sep),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
+    );
+  });
 }
 
 function setMargins(key: string): void {
