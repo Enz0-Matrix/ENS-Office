@@ -25,8 +25,9 @@ import type { PageSetup } from './docx';
 import { sectionsOf } from './sections';
 
 export const PX = 4 / 3;
-/** Зазор между листами на экране, px (при печати 0: страницы вплотную, как на бумаге). */
-export const layout = { gap: 16 };
+/** Зазор между листами на экране, px (при печати 0: страницы вплотную, как на бумаге); perRow — листов в ряду
+ * (режим «Несколько страниц»: листы рядами, как в Word; 1 — столбиком). */
+export const layout = { gap: 16, perRow: 1 };
 
 export interface Geo {
   /** Высота листа, px. */
@@ -79,7 +80,7 @@ export function columnsOf(p: PageSetup): ColGeo | null {
 
 /** Лист на экране: положение по вертикали и размер. `page` — параметры раздела, `eff` — с учётом колонтитулов.
  * `cols` — колонки листа; `sepH` — высота разделителя (по самой длинной колонке листа), px. */
-export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup; cols?: ColGeo; sepH?: number }
+export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup; cols?: ColGeo; sepH?: number; /** Левый край листа на подложке (листы рядами), px. */ left?: number }
 interface PagState { deco: DecorationSet; pages: number; boxes: PageBox[]; rev: number; /** Растёт при правке и запросе пересчёта (не от своих распорок). */ ext: number }
 
 /** Параметры одного раздела для расчёта: настоящие и с учётом колонтитулов. */
@@ -261,13 +262,27 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
   let lastBottom = seg.y0;
   let startOfSection = false;
   const boxes: PageBox[] = [];
+  // Листы рядами («Несколько страниц»): поток остаётся столбиком, лист g ставится в ряд floor(g/k), место g%k.
+  // Ряды одной высоты — по самому высокому листу, места одной ширины — по самому широкому.
+  const k = Math.max(1, Math.floor(layout.perRow));
+  const grid = k > 1;
+  const rowH = Math.max(...secs.map((x) => x.g.H)) + layout.gap;
+  const colStep = Math.max(...secs.map((x) => x.page.w * PX)) + layout.gap;
+  /** Номер первого листа текущего раздела во всём документе. */
+  let segFirst = 0;
+  const gridTop = (g: number) => Math.floor(g / k) * rowH;
+  const gridLeft = (g: number) => (g % k) * colStep;
   /** Высота разделителя колонок по листам раздела. */
   let sepH: number[] = [];
   const vIdx = (y: number) => Math.max(0, Math.floor((y - seg.y0 + 0.5) / seg.vP));
   const pageOfV = (v: number) => (seg.cols ? Math.floor(v / seg.cols.n) : v);
-  /** Смещение виртуальной страницы v на экран (в разделе с колонками): по вертикали и по горизонтали. */
-  const dyOf = (v: number) => (seg.cols ? pageOfV(v) * seg.g.P - v * seg.vP : 0);
-  const dxOf = (v: number) => (seg.cols ? seg.cols.x[v % seg.cols.n] : 0);
+  /** Смещение виртуальной страницы v на экран (колонки, листы рядами): по вертикали и по горизонтали. */
+  const dyOf = (v: number) => {
+    const p = pageOfV(v);
+    const col = seg.cols ? p * seg.g.P - v * seg.vP : 0;
+    return grid ? col + gridTop(segFirst + p) - (seg.y0 - seg.g.top + p * seg.g.P) : col;
+  };
+  const dxOf = (v: number) => (seg.cols ? seg.cols.x[v % seg.cols.n] : 0) + (grid ? gridLeft(segFirst + pageOfV(v)) : 0);
   const markSep = (v: number, h: number) => {
     const p = pageOfV(v);
     sepH[p] = Math.max(sepH[p] ?? 0, Math.min(seg.g.C, h));
@@ -276,11 +291,14 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
     const top0 = seg.y0 - seg.g.top;
     const sg = secs[secIdx];
     for (let j = 0; j < count; j++) {
-      const b: PageBox = { top: top0 + j * seg.g.P, H: seg.g.H, W: sg.page.w * PX, page: sg.page, eff: sg.eff };
+      const g = boxes.length;
+      const b: PageBox = { top: grid ? gridTop(g) : top0 + j * seg.g.P, H: seg.g.H, W: sg.page.w * PX, page: sg.page, eff: sg.eff };
+      if (grid) b.left = gridLeft(g);
       if (sg.cols) { b.cols = sg.cols; b.sepH = r1(sepH[j] ?? 0); }
       boxes.push(b);
     }
     sepH = [];
+    segFirst = boxes.length;
   };
   // Смещения колонок: открытые элементы (li держит смещение своего первого абзаца — вместе с номером).
   const relStack: { to: number; dx: number; dy: number }[] = [];
@@ -398,7 +416,7 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
     else if (pad > 0.5) {
       // В колонках пустое место внизу колонки отдаём абзацу над ним (отступ снизу): отступ сверху у блока
       // в следующей колонке лежал бы на экране поверх чужого текста и перехватывал щелчки.
-      if (cols && !it.row && prevText) out.push({ kind: 'padb', pos: prevText.pos, end: prevText.end, h: padR, cols: 0, padPos: prevText.pos, padEnd: prevText.end });
+      if ((cols || grid) && !it.row && prevText) out.push({ kind: 'padb', pos: prevText.pos, end: prevText.end, h: padR, cols: 0, padPos: prevText.pos, padEnd: prevText.end });
       else out.push({ kind: it.row ? 'row' : 'pad', pos: it.pos, end: it.end, h: padR, cols: it.cols, padPos: it.padPos, padEnd: it.padEnd });
     }
     for (const s of splits) out.push({ kind: 'split', pos: s.pos, end: s.pos, h: r1(s.h), cols: 0, padPos: s.pos, padEnd: s.pos });
@@ -406,7 +424,7 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
     acc += (Math.abs(pad) > 0.5 ? padR : 0) + splits.reduce((s, x) => s + r1(x.h), 0);
     lastBottom = nBottom + acc;
 
-    if (cols) {
+    if (cols || grid) {
       // Смещение на экран: блок — по виртуальной странице начала текста, хвосты — по своим.
       const v0 = vIdx(nTop + accBefore + (Math.abs(pad) > 0.5 ? padR : 0));
       const dy0 = dyOf(v0), dx0 = dxOf(v0);
@@ -423,7 +441,7 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
         const dy = dyOf(s.v) - dy0, dx = dxOf(s.v) - dx0;
         out.push({ kind: 'seg', pos: s.pos, end: to, h: r1(dy), cols: 0, padPos: s.pos, padEnd: to, style: `position:relative;left:${r1(dx)}px;top:${r1(dy)}px` });
       });
-      if (!cols.equal) {
+      if (cols && !cols.equal) {
         // Ширина блока верхнего уровня — ширина его колонки (у абзаца, выше колонки, — самой узкой).
         const $p = view.state.doc.resolve(it.pos);
         if ($p.depth === 0 || (it.row && $p.depth === 1)) {
@@ -435,14 +453,15 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
         }
       }
       const vLast = vIdx(lastBottom - 1);
-      markSep(vLast, lastBottom - (seg.y0 + vLast * seg.vP));
+      if (cols) markSep(vLast, lastBottom - (seg.y0 + vLast * seg.vP));
     }
     prevText = it.row ? null : it;
   }
   const vEnd = vIdx(lastBottom - 1);
-  closeSeg(Math.max(1, pageOfV(vEnd) + 1));
-  // Поток после колонок длиннее, чем листы на экране: лишнее снимаем в конце документа.
+  // Поток после колонок (и при листах рядами) длиннее, чем листы на экране: лишнее снимаем в конце документа.
+  // Считаем до closeSeg: он сдвигает номер первого листа раздела.
   const tail = r1(dyOf(vEnd));
+  closeSeg(Math.max(1, pageOfV(vEnd) + 1));
   if (tail < -0.5) { const e = view.state.doc.content.size; out.push({ kind: 'neg', pos: e, end: e, h: tail, cols: 0, padPos: e, padEnd: e }); }
   return { out, pages: boxes.length, boxes, items: items.length };
 }
@@ -468,7 +487,7 @@ function toDecos(out: Planned[]): Decoration[] {
   });
 }
 
-const boxKey = (b: PageBox) => `${Math.round(b.top)}:${b.W}:${b.H}:${b.cols ? `${b.cols.n},${b.cols.sep ? 1 : 0},${b.sepH}` : ''}`;
+const boxKey = (b: PageBox) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols ? `${b.cols.n},${b.cols.sep ? 1 : 0},${b.sepH}` : ''}`;
 type Mark = { from: number; to: number; spec: Spec };
 const close = (a: Mark[], b: Mark[]): boolean => a.length === b.length && a.every((x, i) => {
   const y = b[i];
