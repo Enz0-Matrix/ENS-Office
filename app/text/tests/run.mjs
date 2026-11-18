@@ -3281,6 +3281,110 @@ await test('новый документ не считается изменённ
   await p.context().close();
 });
 
+// --- Закладки
+const BM_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+  E.loadDoc(s.nodes.doc.create(null, [P('Введение к документу'), P('Глава первая: цели'), P('Заключение и выводы')]), E.getMeta(), 'bm');
+};
+const caret = (p) => p.evaluate(() => window.ens.view.state.selection.from);
+await test('закладки: добавить из окна, перейти, ссылка «Место в документе», Ctrl+щелчок ведёт к закладке', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  // Выделяем «Глава первая» и вставляем закладку: имя подсказано из текста.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 23, 35))); });
+  await p.keyboard.press('Control+Shift+F5');
+  await p.waitForSelector('.bookmark-dialog');
+  eq(await p.$eval('.bookmark-dialog input[type=text]', (i) => i.value), 'Глава_первая', 'имя по выделению');
+  await p.fill('.bookmark-dialog input[type=text]', 'Цели');
+  await p.click('.bookmark-dialog button:has-text("Добавить")');
+  const bms = await p.evaluate(() => window.ens.listBookmarks());
+  eq(bms.map((b) => [b.name, b.context]), [['Цели', 'Глава первая: цели']], 'закладка в начале выделения');
+  // Неверное имя.
+  await p.evaluate(() => window.ens.run('insert.bookmark'));
+  await p.fill('.bookmark-dialog input[type=text]', '1 неверное');
+  await p.click('.bookmark-dialog button:has-text("Добавить")');
+  ok((await p.textContent('.bookmark-dialog .bm-status')).includes('начинается с буквы'), 'проверка имени');
+  // Перейти из списка.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.selectOption('.bookmark-dialog .bm-list', 'Цели');
+  await p.click('.bookmark-dialog button:has-text("Перейти")');
+  eq(await caret(p), bms[0].pos + 1, 'курсор у закладки');
+  // Ссылка на закладку из окна «Гиперссылка».
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1, 9))); });
+  await p.keyboard.press('Control+KeyK');
+  await p.selectOption('select[aria-label="Место в документе"]', '#Цели');
+  await p.click('#dialog button:has-text("Применить")');
+  const href = await p.evaluate(() => { const n = window.ens.view.state.doc.nodeAt(2); return n.marks.find((m) => m.type.name === 'link')?.attrs.href; });
+  eq(href, '#Цели', 'ссылка на закладку');
+  // Ctrl+щелчок по ссылке — переход к закладке.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 50))); });
+  const box = await p.$eval('.ProseMirror a[href="#Цели"]', (a) => { const r = a.getBoundingClientRect(); return { x: r.x + 5, y: r.y + r.height / 2 }; });
+  await p.keyboard.down('Control');
+  await p.mouse.click(box.x, box.y);
+  await p.keyboard.up('Control');
+  eq(await caret(p), bms[0].pos + 1, 'Ctrl+щелчок перешёл к закладке');
+  await p.context().close();
+});
+await test('закладки: переименование обновляет ссылки, удаление предупреждает и показывает ссылки без цели', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, st = E.view.state;
+    const tr = st.tr.insert(23, s.nodes.bookmark.create({ name: 'Цели' }));
+    tr.addMark(1, 9, s.marks.link.create({ href: '#Цели' }));
+    E.view.dispatch(tr.setMeta('addToHistory', false));
+  });
+  await p.evaluate(() => window.ens.run('insert.bookmark'));
+  await p.selectOption('.bookmark-dialog .bm-list', 'Цели');
+  ok((await p.$eval('.bookmark-dialog .bm-list option', (o) => o.textContent)).includes('ссылок: 1'), 'в списке видно число ссылок');
+  await p.fill('.bookmark-dialog input[type=text]', 'Задачи');
+  await p.click('.bookmark-dialog button:has-text("Переименовать")');
+  const r = await p.evaluate(() => ({ names: window.ens.listBookmarks().map((b) => b.name), href: window.ens.view.state.doc.nodeAt(2).marks.find((m) => m.type.name === 'link').attrs.href }));
+  eq(r, { names: ['Задачи'], href: '#Задачи' }, 'ссылка переименована вместе с закладкой');
+  await p.selectOption('.bookmark-dialog .bm-list', 'Задачи');
+  await p.click('.bookmark-dialog button:has-text("Удалить")');
+  await p.waitForSelector('#dialog button:has-text("Отмена")');
+  ok((await p.textContent('#dialog')).includes('ведут ссылки: 1'), 'предупреждение о ссылках');
+  await p.click('#dialog button.danger:has-text("Удалить")');
+  await p.waitForSelector('.bookmark-dialog');
+  eq(await p.evaluate(() => window.ens.listBookmarks().length), 0, 'удалена');
+  ok((await p.textContent('.bookmark-dialog .bm-broken')).includes('Ссылки без цели: 1'), 'список ссылок без цели');
+  await p.click('.bookmark-dialog .bm-broken-item');
+  eq(await p.evaluate(() => { const { from, to } = window.ens.view.state.selection; return [from, to]; }), [1, 9], 'переход к битой ссылке');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await p.evaluate(() => window.ens.listBookmarks().map((b) => b.name)), ['Задачи'], 'отмена возвращает закладку');
+  await p.context().close();
+});
+await test('закладки: docx туда и обратно, _GoBack не переносится, повтор имени при вставке убирается', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    E.view.dispatch(E.view.state.tr.insert(23, s.nodes.bookmark.create({ name: 'Цели' })).insert(1, s.nodes.bookmark.create({ name: '_Toc1' })).addMark(2, 10, s.marks.link.create({ href: '#Цели' })));
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    let xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    // Файл из Word: служебная закладка _GoBack.
+    const files = E.unzip(bytes);
+    files['word/document.xml'] = new TextEncoder().encode(xml.replace('<w:bookmarkStart w:id="0" w:name="_Toc1"/>', '<w:bookmarkStart w:id="0" w:name="_GoBack"/>'));
+    const zipped = E.zip(files);
+    return { xml, names: [], back: back.doc.toJSON(), now: E.view.state.doc.toJSON(), lossy: back.meta.lossy, goBack: E.importDocx(zipped).doc.toJSON() };
+  });
+  ok(/<w:bookmarkStart w:id="\d+" w:name="Цели"\/><w:bookmarkEnd w:id="\d+"\/>/.test(r.xml), 'w:bookmarkStart/End');
+  ok(r.xml.includes('<w:hyperlink w:anchor="Цели"'), 'ссылка на закладку — w:anchor');
+  eq(r.back, r.now, 'документ тот же после круга');
+  eq(r.lossy, [], 'без потерь');
+  ok(!JSON.stringify(r.goBack).includes('_GoBack'), '_GoBack не переносится');
+  // Повтор имени: вставка копии абзаца с закладкой.
+  const names = await p.evaluate(() => {
+    const E = window.ens, st = E.view.state, para = st.doc.child(1);
+    E.view.dispatch(st.tr.insert(st.doc.content.size, para));
+    return window.ens.listBookmarks().map((b) => b.name);
+  });
+  eq(names, ['_Toc1', 'Цели'], 'одна закладка на имя');
+  await p.context().close();
+});
+
 // --- Сравнение документов и исправления
 const REV_SETUP = () => {
   const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);

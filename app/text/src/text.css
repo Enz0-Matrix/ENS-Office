@@ -466,6 +466,17 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
 
+/* Закладка: точка нулевой ширины; видна серой скобкой при «Отобразить все знаки» и вспышкой при переходе. */
+.ProseMirror span.bm { display: inline-block; width: 0; height: 1em; vertical-align: text-bottom; position: relative; }
+.ProseMirror.show-marks span.bm::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 3px; border: 1px solid #8a8a8a; border-right: 0; }
+.ProseMirror span.bm.bm-flash::before { content: ""; position: absolute; left: -2px; top: -2px; bottom: -2px; width: 4px; background: var(--accent, #2b579a); animation: bm-flash 1.2s ease-out forwards; }
+@keyframes bm-flash { from { opacity: 1; } to { opacity: 0; } }
+.bookmark-dialog .bm-list { width: 100%; min-height: 140px; margin: 6px 0; }
+.bookmark-dialog .bm-hidden { margin-left: 12px; }
+.bookmark-dialog .bm-broken { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.bookmark-dialog .bm-broken-item { text-align: left; background: none; border: 0; color: #b3261e; cursor: pointer; padding: 2px 0; }
+.bookmark-dialog { width: min(560px, 94vw); }
+.bookmark-dialog .dlg-actions { flex-wrap: wrap; }
 /* Исправления (рецензирование): вставка подчёркнута, удаление зачёркнуто, у абзаца — черта на поле, как в Word. */
 .ProseMirror ins.rev-ins { color: #1a6fb5; text-decoration: underline; text-decoration-color: currentColor; }
 .ProseMirror del.rev-del { color: #c0262d; text-decoration: line-through; }

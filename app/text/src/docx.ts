@@ -599,6 +599,12 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
       case 'sdt':
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
         break;
+      case 'bookmarkStart': {
+        // Закладки — точки в начале; служебная «_GoBack» (последняя правка в Word) не переносится.
+        const name = attr(c, 'name');
+        if (name && name !== '_GoBack') acc.nodes.push(schema.nodes.bookmark.create({ name }));
+        break;
+      }
       case 'smartTag':
       case 'sdtContent':
       case 'customXml':
@@ -1120,6 +1126,8 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Номера закладок (w:id): общие для всего файла. */
+  bookmarkId: { n: number };
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1272,6 +1280,9 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'bookmark') {
+      const id = ctx.bookmarkId.n++;
+      out += `<w:bookmarkStart w:id="${id}" w:name="${esc(child.attrs.name as string)}"/><w:bookmarkEnd w:id="${id}"/>`;
     }
     // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
     if (rev && child.type.name !== 'field') {
@@ -1491,7 +1502,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), bookmarkId: { n: 0 } };
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
