@@ -1597,6 +1597,20 @@ impl Model {
         serde_wasm_bindgen::to_value(&list).unwrap()
     }
 
+    /// ENS-Office: лист в байтах для вставки в другую книгу (ADR-012). `file` — имя этой книги
+    /// (для ссылок на её другие листы), `target` — её путь на диске (пусто — неизвестен).
+    #[wasm_bindgen(js_name = "exportSheet")]
+    pub fn export_sheet(&mut self, sheet: u32, file: &str, target: &str) -> Result<Vec<u8>, JsError> {
+        self.model.ens_export_sheet(sheet, file, target).map_err(to_js_error)
+    }
+
+    /// ENS-Office: лист из другой книги (байты `exportSheet`) перед листом `index`; одно действие
+    /// отмены. Возвращает номер нового листа.
+    #[wasm_bindgen(js_name = "importSheet")]
+    pub fn import_sheet(&mut self, bytes: &[u8], index: u32) -> Result<u32, JsError> {
+        self.model.ens_import_sheet(bytes, index).map_err(to_js_error)
+    }
+
     /// ENS-Office: обновляет ссылки на книгу `file` из байтов её xlsx (файл читается с диска,
     /// запускать его не нужно). Возвращает листы, которых в ней нет.
     #[cfg(feature = "xlsx")]

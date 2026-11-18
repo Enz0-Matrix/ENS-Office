@@ -684,6 +684,32 @@ impl<'a> UserModel<'a> {
         Ok(())
     }
 
+    /// ENS-Office: пакет листа для вставки в другую книгу (книга не меняется).
+    pub fn ens_export_sheet(&mut self, sheet: u32, source_file: &str, source_target: &str) -> Result<Vec<u8>, String> {
+        let pkg = self.model.ens_export_sheet(sheet, source_file, source_target)?;
+        Ok(crate::ens_sheet_transfer::sheet_package_to_bytes(&pkg))
+    }
+
+    /// ENS-Office: лист из пакета другой книги перед листом `index`; имя — исходное или
+    /// «Имя (2)», если такое уже есть. Одно действие отмены. Возвращает номер нового листа.
+    pub fn ens_import_sheet(&mut self, bytes: &[u8], index: u32) -> Result<u32, String> {
+        self.guard_structure()?;
+        let package = crate::ens_sheet_transfer::sheet_package_from_bytes(bytes)?;
+        let taken: Vec<String> = self.model.workbook.get_worksheet_names().iter().map(|n| n.to_uppercase()).collect();
+        let mut name = package.name.clone();
+        let mut n = 1;
+        while taken.contains(&name.to_uppercase()) {
+            n += 1;
+            let suffix = format!(" ({n})");
+            let base: String = package.name.chars().take(31 - suffix.chars().count()).collect();
+            name = format!("{base}{suffix}");
+        }
+        let index = self.model.ens_import_sheet(&package, index, &name)?;
+        self.set_selected_sheet(index)?;
+        self.push_diff_list(vec![Diff::EnsImportSheet { index, name, package: Box::new(package) }]);
+        Ok(index)
+    }
+
     /// Deletes sheet by index
     ///
     /// See also:
