@@ -10,6 +10,27 @@ import { parseTex, toMathML } from './math';
 /** Рамка надписи: линия и поля внутри. */
 export interface FrameLine { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' }
 
+/** Исправление (рецензирование): вставка или удаление, кто и когда. id связывает части одной правки. */
+export interface Revision { kind: 'ins' | 'del'; id: number; author: string; date: string }
+
+export function revTitle(r: Pick<Revision, 'kind' | 'author' | 'date'>): string {
+  const when = r.date ? new Date(r.date) : null;
+  const at = when && !isNaN(+when) ? ' ' + when.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  return `${r.kind === 'ins' ? 'Вставлено' : 'Удалено'}${r.author ? ': ' + r.author : ''}${at}`;
+}
+
+const revMark = (kind: 'ins' | 'del'): MarkSpec => ({
+  attrs: { id: {}, author: { default: '' }, date: { default: '' } },
+  inclusive: false,
+  excludes: 'ins del',
+  // Только свои пометки: обычные <ins>/<del> из вставляемого HTML остаются подчёркиванием и зачёркиванием.
+  parseDOM: [{ tag: `${kind}[data-rev]`, priority: 60, getAttrs: (d) => {
+    const e = d as HTMLElement;
+    return { id: Number(e.dataset.rev) || 0, author: e.dataset.author ?? '', date: e.dataset.date ?? '' };
+  } }],
+  toDOM: (m) => [kind, { class: `rev-${kind}`, 'data-rev': String(m.attrs.id), 'data-author': m.attrs.author, 'data-date': m.attrs.date, title: revTitle({ kind, author: m.attrs.author as string, date: m.attrs.date as string }) }, 0],
+});
+
 /** Свойства абзаца: хранятся прямо в узле (как прямое форматирование в docx). */
 export interface ParaAttrs {
   align: 'left' | 'center' | 'right' | 'justify' | null;
@@ -24,6 +45,8 @@ export interface ParaAttrs {
   /** Межстрочный интервал: множитель (1, 1.15, 1.5, 2). */
   line: number | null;
   pageBreakBefore: boolean;
+  /** Разрыв колонки перед абзацем (Ctrl+Shift+Enter): в разделе без колонок действует как разрыв страницы. */
+  colBreakBefore?: boolean;
 }
 
 const paraAttrs = {
@@ -35,8 +58,11 @@ const paraAttrs = {
   after: { default: null },
   line: { default: null },
   pageBreakBefore: { default: false },
+  colBreakBefore: { default: false },
   /** Метка на полях: 'red' — проверить, 'green' — готово. Живёт в документе и версиях, в docx не сохраняется. */
   flag: { default: null },
+  /** Исправление целого абзаца: { kind: 'ins' | 'del', id, author, date } (знак абзаца в docx — w:pPr/w:rPr/w:ins|w:del). */
+  rev: { default: null },
 };
 
 function paraStyle(a: ParaAttrs): string {
@@ -60,7 +86,10 @@ function paraDom(tag: string, node: PMNode): DOMOutputSpec {
   const style = paraStyle(a);
   if (style) attrs.style = style;
   if (a.pageBreakBefore) attrs['data-page-break'] = '1';
+  if (a.colBreakBefore) attrs['data-col-break'] = '1';
   if ((a as ParaAttrs & { flag?: string | null }).flag) attrs['data-flag'] = String((a as ParaAttrs & { flag?: string }).flag);
+  const rev = (node.attrs as { rev?: Revision | null }).rev;
+  if (rev) { attrs['data-rev-block'] = rev.kind; attrs.title = revTitle(rev); }
   return [tag, attrs, 0];
 }
 
@@ -327,6 +356,8 @@ const marks: Record<string, MarkSpec> = {
   strike: { parseDOM: [{ tag: 's' }, { tag: 'del' }, { tag: 'strike' }, { style: 'text-decoration=line-through' }], toDOM: () => ['s', 0] },
   sup: { excludes: 'sub', parseDOM: [{ tag: 'sup' }], toDOM: () => ['sup', 0] },
   sub: { excludes: 'sup', parseDOM: [{ tag: 'sub' }], toDOM: () => ['sub', 0] },
+  ins: revMark('ins'),
+  del: revMark('del'),
   /** Шрифт, кегль (pt), цвет текста и заливка (#RRGGBB) — одним слоем. */
   textStyle: {
     attrs: { font: { default: null }, size: { default: null }, color: { default: null }, bg: { default: null } },
