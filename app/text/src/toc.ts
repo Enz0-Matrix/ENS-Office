@@ -9,12 +9,15 @@
 import type { Node as PMNode } from 'prosemirror-model';
 import { TextSelection, type EditorState, type Transaction } from 'prosemirror-state';
 import type { EditorView, NodeView } from 'prosemirror-view';
+import { listCaptions } from './captions';
 import { schema } from './schema';
 
 export interface TocEntry { level: number; text: string; pos: number; page?: number }
 
 /** Заголовки до уровня levels (пустые пропускаются). */
-export function tocEntries(doc: PMNode, levels: number): TocEntry[] {
+export function tocEntries(doc: PMNode, levels: number, caption: string | null = null): TocEntry[] {
+  // Список иллюстраций: строки — подписи с этим именем («Рисунок 2 – Схема»), ссылка на абзац подписи.
+  if (caption) return listCaptions(doc).filter((c) => c.name === caption).map((c) => ({ level: 1, text: `${c.name.replace(/_/g, ' ')} ${c.n}${c.text ? ' – ' + c.text : ''}`, pos: c.block }));
   const out: TocEntry[] = [];
   doc.descendants((node, pos) => {
     if (node.type === schema.nodes.heading) {
@@ -64,7 +67,7 @@ class TocView implements NodeView {
     this.render();
   }
   render(): void {
-    const entries = tocEntries(this.view.state.doc, this.node.attrs.levels as number).map((e) => ({ ...e, page: resolvePage(e.pos) }));
+    const entries = tocEntries(this.view.state.doc, this.node.attrs.levels as number, this.node.attrs.caption as string | null).map((e) => ({ ...e, page: resolvePage(e.pos) }));
     const sig = JSON.stringify(entries.map((e) => [e.level, e.text, e.page, e.pos]));
     if (sig === this.sig) return;
     this.sig = sig;
@@ -78,7 +81,7 @@ class TocView implements NodeView {
       const page = document.createElement('span'); page.className = 'toc-page'; page.textContent = e.page ? String(e.page) : '';
       row.append(text, dots, page);
       return row;
-    }) : [Object.assign(document.createElement('div'), { className: 'toc-empty', textContent: 'Оглавление пусто: оформите названия разделов стилями «Заголовок 1–3» (вкладка «Главная» → «Стили»).' })]));
+    }) : [Object.assign(document.createElement('div'), { className: 'toc-empty', textContent: this.node.attrs.caption ? `Список пуст: вставьте подписи «${this.node.attrs.caption}» (Ссылки → Название).` : 'Оглавление пусто: оформите названия разделов стилями «Заголовок 1–3» (вкладка «Главная» → «Стили»).' })]));
     // Число строк изменилось — изменилась высота: страницы нужно перестроить.
     if (entries.length !== this.rows) { const first = this.rows < 0; this.rows = entries.length; if (!first) onResize(); }
   }
@@ -113,6 +116,22 @@ export function insertToc(state: EditorState, levels = 3): Transaction {
 /** Оглавление в документе есть? Тогда кнопка «Оглавление» меняет число уровней, а не вставляет второе. */
 export function findToc(doc: PMNode): { pos: number; node: PMNode } | null {
   let found: { pos: number; node: PMNode } | null = null;
-  doc.forEach((node, pos) => { if (!found && node.type === schema.nodes.toc) found = { pos, node }; });
+  doc.forEach((node, pos) => { if (!found && node.type === schema.nodes.toc && !node.attrs.caption) found = { pos, node }; });
   return found;
+}
+
+/** Список иллюстраций с этим именем подписи (если уже есть — второй не вставляем). */
+export function findFigureList(doc: PMNode, caption: string): { pos: number; node: PMNode } | null {
+  let found: { pos: number; node: PMNode } | null = null;
+  doc.forEach((node, pos) => { if (!found && node.type === schema.nodes.toc && node.attrs.caption === caption) found = { pos, node }; });
+  return found;
+}
+
+/** Вставить список иллюстраций: заголовок «ПЕРЕЧЕНЬ РИСУНКОВ» (или таблиц, формул) и сам список. */
+export function insertFigureList(state: EditorState, caption: string): Transaction {
+  const { $from } = state.selection;
+  const at = $from.depth ? $from.before(1) : $from.pos;
+  const word = ({ 'Рисунок': 'РИСУНКОВ', 'Таблица': 'ТАБЛИЦ', 'Формула': 'ФОРМУЛ' } as Record<string, string>)[caption] ?? caption.toUpperCase();
+  const title = schema.nodes.paragraph.create({ align: 'center', after: 12 }, schema.text(`ПЕРЕЧЕНЬ ${word}`, [schema.marks.strong.create()]));
+  return state.tr.insert(at, [title, schema.nodes.toc.create({ levels: 1, caption })]).scrollIntoView();
 }

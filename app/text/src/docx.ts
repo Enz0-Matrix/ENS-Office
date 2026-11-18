@@ -198,8 +198,8 @@ interface Ctx {
 }
 
 /** Поле TOC в абзаце: число уровней и глубина полей в конце абзаца (0 — поле закрылось в этом же абзаце). */
-function tocField(p: Element): { levels: number; depth: number } | null {
-  let depth = 0, levels = 0, seen = false, first = true;
+function tocField(p: Element): { levels: number; depth: number; caption: string | null } | null {
+  let depth = 0, levels = 0, seen = false, first = true, caption: string | null = null;
   for (const e of p.getElementsByTagName('*')) {
     if (e.localName === 'fldChar') {
       const t = attr(e, 'fldCharType');
@@ -212,9 +212,13 @@ function tocField(p: Element): { levels: number; depth: number } | null {
       seen = true;
       const o = /\\o\s+"(\d)\s*-\s*(\d)"/.exec(m[1]);
       levels = o ? Math.min(6, Math.max(1, +o[2])) : 3;
+      // Список иллюстраций Word: TOC \c "Рисунок" — по подписям с этим именем.
+      const c = /\\c\s+"([^"]+)"/.exec(m[1]) ?? /\\c\s+(\S+)/.exec(m[1]);
+      caption = c ? c[1] : null;
+      if (caption) levels = 1;
     }
   }
-  return seen ? { levels, depth } : null;
+  return seen ? { levels, depth, caption } : null;
 }
 
 /** Баланс полей в абзаце (begin − end). */
@@ -923,7 +927,7 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
           // Результат поля TOC (строки старого оглавления) пропускаем: оглавление построится по заголовкам.
           if (ctx.tocDepth) { ctx.tocDepth += fieldBalance(c); if (ctx.tocDepth <= 0) ctx.tocDepth = 0; break; }
           const toc = tocField(c);
-          if (toc) { flushFrame(); entries.push({ node: schema.nodes.toc.create({ levels: toc.levels }) }); ctx.tocDepth = Math.max(0, toc.depth); break; }
+          if (toc) { flushFrame(); entries.push({ node: schema.nodes.toc.create({ levels: toc.levels, caption: toc.caption }) }); ctx.tocDepth = Math.max(0, toc.depth); break; }
           const es = paraEntries(ctx, c);
           const fp = kid(kid(c, 'pPr'), 'framePr');
           const sp = kid(kid(c, 'pPr'), 'sectPr');
@@ -1545,10 +1549,11 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
 /** Оглавление: поле TOC в блоке «Table of Contents» с готовыми строками (текст, точки до правого края, номер страницы). */
 function tocXml(ctx: ExportCtx, node: PMNode): string {
   const levels = node.attrs.levels as number;
-  const entries = ctx.root ? tocEntries(ctx.root, levels) : [];
+  const caption = node.attrs.caption as string | null;
+  const entries = ctx.root ? tocEntries(ctx.root, levels, caption) : [];
   const p = ctx.meta.page;
   const right = tw(p.w - p.left - p.right);
-  const begin = `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-${levels}" \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+  const begin = `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ${caption ? `TOC \\h \\z \\c "${esc(caption)}"` : `TOC \\o "1-${levels}" \\u`} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
   const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
   const paras = entries.map((e, i) => {
     const page = ctx.root ? tocPage(ctx.root, e.pos) : undefined;

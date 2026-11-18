@@ -254,9 +254,10 @@ const nodes: Record<string, NodeSpec> = {
     atom: true,
     selectable: true,
     draggable: false,
-    attrs: { levels: { default: 3 } },
-    parseDOM: [{ tag: 'div.toc[data-levels]', getAttrs: (d) => ({ levels: Number((d as HTMLElement).getAttribute('data-levels')) || 3 }) }],
-    toDOM: (n) => ['div', { class: 'toc', 'data-levels': String(n.attrs.levels), contenteditable: 'false' }],
+    /** caption — список иллюстраций по подписям («Рисунок», «Таблица»…) вместо заголовков; null — оглавление. */
+    attrs: { levels: { default: 3 }, caption: { default: null } },
+    parseDOM: [{ tag: 'div.toc[data-levels]', getAttrs: (d) => ({ levels: Number((d as HTMLElement).getAttribute('data-levels')) || 3, caption: (d as HTMLElement).getAttribute('data-caption') || null }) }],
+    toDOM: (n) => ['div', { class: 'toc', 'data-levels': String(n.attrs.levels), ...(n.attrs.caption ? { 'data-caption': n.attrs.caption } : {}), contenteditable: 'false' }],
   },
   /** Номер подписи (поле SEQ Word): «Рисунок 3», «Таблица 2». Число считает плагин captions.ts по порядку в документе. */
   seq: {
