@@ -3281,6 +3281,52 @@ await test('новый документ не считается изменённ
   await p.context().close();
 });
 
+// --- Панель «Структура»
+const OL_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t)), H = (l, t) => s.nodes.heading.create({ level: l }, t ? s.text(t) : null);
+  E.loadDoc(s.nodes.doc.create(null, [H(1, 'Введение'), P('текст введения'), H(1, 'Методы'), P('текст методов'), H(2, 'Опрос'), P('текст опроса'), H(1, 'Итоги'), H(3, 'Деталь'), P('х'), H(1, '')]), E.getMeta(), 'ol');
+};
+const olRows = (p) => p.$$eval('.outline-pane .ol-row', (r) => r.map((e) => [Number(e.dataset.level), e.querySelector('.ol-text').textContent, !!e.querySelector('.ol-warn')]));
+const tops = (p) => p.evaluate(() => { const out = []; window.ens.view.state.doc.forEach((n) => out.push(n.textContent)); return out.join('|'); });
+await test('структура: дерево заголовков, переход, замечания (пропуск уровня, пустой, без текста)', async () => {
+  const p = await page();
+  await p.evaluate(OL_SETUP);
+  await p.keyboard.press('Control+Alt+KeyN');
+  await p.waitForSelector('.outline-pane .ol-row');
+  eq(await olRows(p), [[1, 'Введение', false], [1, 'Методы', false], [2, 'Опрос', false], [1, 'Итоги', false], [3, 'Деталь', true], [1, '(пустой заголовок)', true]], 'дерево и замечания');
+  const titles = await p.$$eval('.outline-pane .ol-row', (r) => r.map((e) => e.title));
+  ok(titles[4].includes('пропущен уровень') && titles[5].includes('пустой заголовок') && titles[5].includes('раздел без текста'), JSON.stringify(titles));
+  ok((await p.textContent('.ol-summary')).includes('Замечаний'), 'сводка замечаний');
+  await p.click('.outline-pane .ol-row >> nth=2');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'Опрос', 'переход');
+  ok(await p.$('.outline-pane .ol-row.current >> text=Опрос'), 'текущая глава подсвечена');
+  // Правка заголовка видна в панели сразу.
+  await p.keyboard.press('End');
+  await p.keyboard.type(' граждан');
+  await p.waitForFunction(() => [...document.querySelectorAll('.outline-pane .ol-text')].some((e) => e.textContent === 'Опрос граждан'));
+  await p.context().close();
+});
+await test('структура: глава переносится целиком кнопками и перетаскиванием, отмена возвращает', async () => {
+  const p = await page();
+  await p.evaluate(OL_SETUP);
+  await p.evaluate(() => window.ens.run('view.outline'));
+  await p.waitForSelector('.outline-pane .ol-row');
+  const start = await tops(p);
+  // «Методы» (с подглавой «Опрос») — выше «Введения».
+  await p.hover('.outline-pane .ol-row >> nth=1');
+  await p.click('.outline-pane .ol-row >> nth=1 >> button:has-text("↑")');
+  eq(await tops(p), 'Методы|текст методов|Опрос|текст опроса|Введение|текст введения|Итоги|Деталь|х|', 'глава с подглавой поднялась');
+  // Перетаскиванием «Итоги» (с «Деталью») — перед «Введением».
+  await p.dragAndDrop('.outline-pane .ol-row:has-text("Итоги")', '.outline-pane .ol-row:has-text("Введение")');
+  eq(await tops(p), 'Методы|текст методов|Опрос|текст опроса|Итоги|Деталь|х|Введение|текст введения|', 'перетаскивание');
+  // ↓ у «Методы»: встаёт после «Итогов».
+  await p.hover('.outline-pane .ol-row >> nth=0');
+  await p.click('.outline-pane .ol-row >> nth=0 >> button:has-text("↓")');
+  eq(await tops(p), 'Итоги|Деталь|х|Методы|текст методов|Опрос|текст опроса|Введение|текст введения|', 'вниз');
+  for (let i = 0; i < 3; i++) await p.keyboard.press('Control+KeyZ');
+  eq(await tops(p), start, 'отмена возвращает исходный порядок');
+  await p.context().close();
+});
 // --- Примечания
 await test('примечания: создать (Ctrl+Alt+M), текст в панели, ответ, «решено», переход и удаление', async () => {
   const p = await page();
