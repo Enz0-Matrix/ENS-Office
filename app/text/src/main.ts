@@ -34,6 +34,8 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { biblioViews, numbering, refreshBiblio, setBiblioResize, formatSource } from './biblio';
+import { insertBiblio, sourcesDialog } from './biblio-ui';
 import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
 import { listRevisions } from './compare';
 import { compatDialog } from './compat-ui';
@@ -543,9 +545,11 @@ let lastSecSig = '';
 let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
+setBiblioResize(() => replan(view));
+
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
-  nodeViews: frameViews,
+  nodeViews: { ...frameViews, ...biblioViews },
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
@@ -788,6 +792,7 @@ function openHref(href: string): void {
 }
 
 function afterChange(docChanged: boolean): void {
+  if (docChanged) refreshBiblio();
   // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
   if (docChanged) hideContextMenu();
   updateUi();
@@ -915,6 +920,8 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'biblio.sources', label: 'Источники и ссылка на источник…', keywords: ['литература', 'источник', 'библиография', 'гост 7.0.100', 'ссылка', 'цитата', 'список литературы'], keys: ['Ctrl+Alt+KeyL'], run: () => sourcesDialog(view) },
+  { id: 'biblio.insert', label: 'Список литературы', keywords: ['список литературы', 'библиография', 'источники', 'гост'], run: () => insertBiblio(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
@@ -1296,6 +1303,7 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      { name: 'Литература', items: [{ type: 'large', command: 'biblio.sources', icon: 'book_open', label: 'Источники' }, { type: 'large', command: 'biblio.insert', icon: 'document_text', label: 'Список' }] },
       {
         name: 'По-русски',
         items: [
@@ -2489,6 +2497,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), biblio: () => { const b = numbering(view.state.doc); return b.order.map((x) => [b.num.get(x.id), formatSource(x), b.cited.has(x.id)]); }, listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

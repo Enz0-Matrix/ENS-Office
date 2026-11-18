@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { citeLabel, formatSource, numbering, type Source } from './biblio';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -596,9 +597,14 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         ctx.rev = outer;
         break;
       }
-      case 'sdt':
+      case 'sdt': {
+        // Ссылка на источник ENS-Text: тег «ens-cite:1,3|25»; текст ссылки внутри пересчитывается сам.
+        const tag = attr(kid(kid(c, 'sdtPr'), 'tag'), 'val') ?? '';
+        const cite = /^ens-cite:([\d,]*)\|(.*)$/.exec(tag);
+        if (cite) { acc.nodes.push(schema.nodes.cite.create({ ids: cite[1].split(',').map(Number).filter((n) => n > 0), page: cite[2] })); break; }
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
         break;
+      }
       case 'smartTag':
       case 'sdtContent':
       case 'customXml':
@@ -909,6 +915,8 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
           }
           break;
         case 'sdt':
+          // Список литературы ENS-Text: строки строятся заново по карточкам.
+          if (attr(kid(kid(c, 'sdtPr'), 'tag'), 'val') === 'ens-biblio') { flushFrame(); entries.push({ node: schema.nodes.biblio.create() }); break; }
           visit(kid(c, 'sdtContent') ?? c);
           break;
         case 'customXml':
@@ -1071,10 +1079,26 @@ export function importDocx(bytes: Uint8Array): Imported {
   const meta: DocMeta = { page, defaults: ctx.defaults, hf, lossy };
   if (hyphenate) meta.hyphenate = true;
   if (watermark) meta.watermark = watermark;
-  return { doc: schema.nodes.doc.create(null, blocks), meta, history: readHistoryPart(files) };
+  return { doc: schema.nodes.doc.create({ sources: readSourcesPart(files) }, blocks), meta, history: readHistoryPart(files) };
 }
 
 const HISTORY_NS = 'urn:ens-office:text:history';
+const SOURCES_NS = 'urn:ens-office:text:sources';
+
+/** Карточки источников (customXml с нашим пространством имён, JSON внутри). */
+function readSourcesPart(files: Record<string, Uint8Array>): Source[] {
+  for (const [name, bytes] of Object.entries(files)) {
+    if (!/^customXml\/item\d+\.xml$/.test(name)) continue;
+    try {
+      const root = parseXml(strFromU8(bytes)).documentElement;
+      if (root.localName === 'sources' && root.namespaceURI === SOURCES_NS) {
+        const list = JSON.parse(root.textContent ?? '[]');
+        return Array.isArray(list) ? list as Source[] : [];
+      }
+    } catch { /* чужая или повреждённая часть — пропускаем */ }
+  }
+  return [];
+}
 const HISTORY_NS_OLD = 'urn:ens-office:tekst:history';
 
 /** История версий лежит в customXml: Word такие части при сохранении оставляет. */
@@ -1120,6 +1144,8 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Номера источников по первому упоминанию (для ссылок и списка литературы). */
+  biblio: ReturnType<typeof numbering>;
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1272,6 +1298,10 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'cite') {
+      // Ссылка на источник: элемент управления содержимым с тегом (номера карточек и страница) и готовым текстом.
+      const tag = `ens-cite:${(child.attrs.ids as number[]).join(',')}|${child.attrs.page as string}`;
+      out += `<w:sdt><w:sdtPr><w:tag w:val="${esc(tag)}"/></w:sdtPr><w:sdtContent><w:r>${rPr}<w:t xml:space="preserve">${esc(citeLabel(child, ctx.biblio.num))}</w:t></w:r></w:sdtContent></w:sdt>`;
     }
     // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
     if (rev && child.type.name !== 'field') {
@@ -1465,6 +1495,11 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
       case 'frame':
         out += frameXml(ctx, n);
         break;
+      case 'biblio': {
+        const rows = ctx.biblio.order.map((s, i) => `<w:p><w:pPr><w:ind w:firstLine="709"/><w:jc w:val="both"/></w:pPr><w:r><w:t xml:space="preserve">${esc(`${i + 1}. ${formatSource(s)}`)}</w:t></w:r></w:p>`);
+        out += `<w:sdt><w:sdtPr><w:tag w:val="ens-biblio"/></w:sdtPr><w:sdtContent>${rows.join('') || '<w:p/>'}</w:sdtContent></w:sdt>`;
+        break;
+      }
       default:
         break;
     }
@@ -1491,7 +1526,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), biblio: numbering(doc) };
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
@@ -1547,12 +1582,15 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
 
+  const sources = (doc.attrs.sources as Source[] | undefined) ?? [];
+  const sourcesJson = sources.length ? JSON.stringify(sources) : '';
   const base = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const fixed = [
     { id: 'rId1', type: `${base}/styles`, target: 'styles.xml', external: false },
     { id: 'rId2', type: `${base}/settings`, target: 'settings.xml', external: false },
     ...(ctx.nums.length ? [{ id: 'rId3', type: `${base}/numbering`, target: 'numbering.xml', external: false }] : []),
     ...(history ? [{ id: 'rId4', type: `${base}/customXml`, target: '../customXml/item1.xml', external: false }] : []),
+    ...(sourcesJson ? [{ id: 'rId5', type: `${base}/customXml`, target: '../customXml/item2.xml', external: false }] : []),
   ];
   const relsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     [...fixed, ...ctx.rels].map((r) => `<Relationship Id="${r.id}" Type="${r.type}" Target="${esc(r.target)}"${r.external ? ' TargetMode="External"' : ''}/>`).join('') + '</Relationships>';
@@ -1565,6 +1603,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>' +
     (history ? '<Override PartName="/customXml/itemProps1.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>' : '') +
+    (sourcesJson ? '<Override PartName="/customXml/itemProps2.xml" ContentType="application/vnd.openxmlformats-officedocument.customXmlProperties+xml"/>' : '') +
     parts.map((x) => `<Override PartName="/${x.path}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.${x.kind}+xml"/>`).join('') +
     (ctx.nums.length ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : '') +
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' +
@@ -1592,6 +1631,11 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     files['customXml/item1.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ens:history xmlns:ens="${HISTORY_NS}">${history}</ens:history>`);
     files['customXml/itemProps1.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ds:datastoreItem ds:itemID="{3B2A4B7E-5C1D-4E8F-9A10-0E15F1CE0001}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs><ds:schemaRef ds:uri="${HISTORY_NS}"/></ds:schemaRefs></ds:datastoreItem>`);
     files['customXml/_rels/item1.xml.rels'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${base}/customXmlProps" Target="itemProps1.xml"/></Relationships>`);
+  }
+  if (sourcesJson) {
+    files['customXml/item2.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ens:sources xmlns:ens="${SOURCES_NS}">${esc(sourcesJson)}</ens:sources>`);
+    files['customXml/itemProps2.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ds:datastoreItem ds:itemID="{3B2A4B7E-5C1D-4E8F-9A10-0E15F1CE0002}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs><ds:schemaRef ds:uri="${SOURCES_NS}"/></ds:schemaRefs></ds:datastoreItem>`);
+    files['customXml/_rels/item2.xml.rels'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${base}/customXmlProps" Target="itemProps2.xml"/></Relationships>`);
   }
   for (const x of parts) {
     files[x.path] = strToU8(x.xml);

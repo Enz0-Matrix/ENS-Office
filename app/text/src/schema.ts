@@ -112,7 +112,8 @@ function parseParaAttrs(el: HTMLElement): Partial<ParaAttrs> {
 }
 
 const nodes: Record<string, NodeSpec> = {
-  doc: { content: 'block+' },
+  /** sources — карточки источников для списка литературы (biblio.ts). */
+  doc: { content: 'block+', attrs: { sources: { default: [] } } },
   paragraph: {
     content: 'inline*',
     group: 'block',
@@ -247,6 +248,26 @@ const nodes: Record<string, NodeSpec> = {
       const label = p ? `Разрыв раздела · ${p.w > p.h ? 'альбомная' : 'книжная'}` : 'Разрыв раздела';
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
+  },
+  /** Ссылка на источник: «[1, с. 25]». ids — номера карточек, page — страница. Текст ссылки ставит biblio.ts. */
+  cite: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { ids: { default: [] }, page: { default: '' } },
+    parseDOM: [{ tag: 'span.cite[data-ids]', getAttrs: (d) => {
+      const e = d as HTMLElement;
+      return { ids: (e.getAttribute('data-ids') ?? '').split(',').map(Number).filter((n) => n > 0), page: e.getAttribute('data-page') ?? '' };
+    } }],
+    toDOM: (n) => ['span', { class: 'cite', 'data-ids': (n.attrs.ids as number[]).join(','), 'data-page': n.attrs.page }],
+  },
+  /** Список литературы: строки строит biblio.ts по карточкам источников. */
+  biblio: {
+    group: 'block',
+    atom: true,
+    selectable: true,
+    parseDOM: [{ tag: 'div.biblio' }],
+    toDOM: () => ['div', { class: 'biblio', contenteditable: 'false' }],
   },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
