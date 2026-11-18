@@ -2954,6 +2954,75 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Подписи (названия) рисунков и таблиц
+const shownCaptions = (p) => p.evaluate(() => [...document.querySelectorAll('.ProseMirror p')].filter((e) => e.querySelector('span.seq'))
+  .map((e) => [...e.childNodes].map((n) => n.nodeType === 3 ? n.textContent : n.classList?.contains('seq') ? n.getAttribute('data-n') : n.textContent).join('')));
+await test('подписи: «Таблица N» над таблицей, «Рисунок N» под рисунком, номера пересчитываются сами', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const T = s.nodes.table.create(null, [s.nodes.table_row.create(null, [cell('А'), cell('Б')])]);
+    const img = s.nodes.paragraph.create(null, s.nodes.image.create({ src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', width: 40, height: 40 }));
+    E.loadDoc(s.nodes.doc.create(null, [P('Текст'), T, img, P('Конец')]), E.getMeta(), 'cap');
+    // Курсор в таблице.
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 11)));
+  });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  eq(await p.$eval('.caption-dialog select[aria-label="Подпись"]', (s) => s.value), 'Таблица', 'в таблице — «Таблица»');
+  eq(await p.$eval('.caption-dialog select[aria-label="Положение"]', (s) => s.value), 'above', 'над таблицей (ГОСТ)');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Исходные данные');
+  eq(await p.textContent('.caption-preview'), 'Таблица 1 – Исходные данные', 'предпросмотр');
+  await p.click('.caption-dialog button.primary');
+  // Курсор у рисунка.
+  await p.evaluate(() => { const E = window.ens, d = E.view.state.doc; let at = 0; d.descendants((n, pos) => { if (n.type.name === 'image') at = pos; }); E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(d, at))); });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  eq(await p.$eval('.caption-dialog select[aria-label="Положение"]', (s) => s.value), 'below', 'под рисунком');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Схема');
+  await p.keyboard.press('Enter');
+  eq(await shownCaptions(p), ['Таблица 1 – Исходные данные', 'Рисунок 1 – Схема'], 'подписи вставлены');
+  const r = await p.evaluate(() => { const d = window.ens.view.state.doc; return [d.child(1).type.name, d.child(1).attrs.align, d.child(2).type.name, d.child(4).type.name, d.child(4).attrs.align]; });
+  eq(r, ['paragraph', null, 'table', 'paragraph', 'center'], 'место и выравнивание по ГОСТ');
+  // Ещё одна таблица выше первой — номера ниже сдвигаются сами.
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  await p.selectOption('.caption-dialog select[aria-label="Подпись"]', 'Таблица');
+  await p.selectOption('.caption-dialog select[aria-label="Положение"]', 'above');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Новая');
+  await p.click('.caption-dialog button.primary');
+  eq(await shownCaptions(p), ['Таблица 1 – Новая', 'Таблица 2 – Исходные данные', 'Рисунок 1 – Схема'], 'номера пересчитаны');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await shownCaptions(p), ['Таблица 1 – Исходные данные', 'Рисунок 1 – Схема'], 'отмена возвращает номера');
+  await p.context().close();
+});
+await test('подписи в docx: поле SEQ с числом туда и обратно, поля SEQ из Word читаются', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cap = (name, t) => s.nodes.paragraph.create(null, [s.text(name + ' '), s.nodes.seq.create({ name }), s.text(' – ' + t)]);
+    const doc = s.nodes.doc.create(null, [cap('Рисунок', 'один'), cap('Таблица', 'первая'), cap('Рисунок', 'два')]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    // Сложное поле из Word: begin / instr / separate / результат / end.
+    const files = E.unzip(bytes);
+    files['word/document.xml'] = new TextEncoder().encode(xml.replace('<w:fldSimple w:instr=" SEQ Рисунок \\* ARABIC "><w:r><w:t>1</w:t></w:r></w:fldSimple>',
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> SEQ Рисунок \\* ARABIC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'));
+    const word = E.importDocx(E.zip(files));
+    E.loadDoc(word.doc, word.meta, 'w');
+    return { xml, same: back.doc.eq(doc), lossy: back.meta.lossy, wordLossy: word.meta.lossy, caps: E.listCaptions().map((c) => [c.name, c.n, c.text]) };
+  });
+  ok(r.xml.includes('<w:fldSimple w:instr=" SEQ Рисунок \\* ARABIC "><w:r><w:t>2</w:t>'), 'второй рисунок записан с числом 2');
+  ok(r.xml.includes('SEQ Таблица'), 'таблица');
+  ok(r.same, 'документ тот же после круга');
+  eq([r.lossy, r.wordLossy], [[], []], 'без потерь');
+  eq(r.caps, [['Рисунок', 1, 'один'], ['Таблица', 1, 'первая'], ['Рисунок', 2, 'два']], 'сложное поле SEQ → номер, число пересчитано');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

@@ -219,6 +219,15 @@ const nodes: Record<string, NodeSpec> = {
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
+  /** Номер подписи (поле SEQ Word): «Рисунок 3», «Таблица 2». Число считает плагин captions.ts по порядку в документе. */
+  seq: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { name: { default: 'Рисунок' } },
+    parseDOM: [{ tag: 'span.seq[data-seq]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-seq') }) }],
+    toDOM: (n) => ['span', { class: 'seq', 'data-seq': n.attrs.name, title: `Номер: ${n.attrs.name} (обновляется сам)` }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,

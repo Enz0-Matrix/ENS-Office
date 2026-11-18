@@ -474,7 +474,13 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           field.phase = 'result';
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
           const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
+          const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(field.instr);
           if (m) field.href = m[1];
+          else if (seq) {
+            // Номер подписи: число пересчитывается само, сохранённое в файле отбрасываем.
+            acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marks));
+            field.suppress = true;
+          }
           else if (/^\s*=/.test(field.instr)) ctx.cellFormula = field.instr.trim(); // формула таблицы: результат — обычный текст
           else if (pg) {
             // Номер страницы и число страниц остаются полями; сохранённое в файле число отбрасываем.
@@ -565,6 +571,12 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         const instr = attr(c, 'instr') ?? '';
         const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(instr);
         const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(instr);
+        const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(instr);
+        if (seq) {
+          const run = kid(c, 'r');
+          acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
+          break;
+        }
         if (pg) {
           const run = kid(c, 'r');
           acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
@@ -1085,6 +1097,8 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Счётчики полей SEQ по имени (Рисунок, Таблица…). */
+  seq: Map<string, number>;
 }
 
 function relId(ctx: ExportCtx, type: string, target: string, external = false): string {
@@ -1230,6 +1244,12 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'seq') {
+      // Поле SEQ с текущим числом: Word показывает его сразу, обновит при F9.
+      const name = child.attrs.name as string;
+      const n = (ctx.seq.get(name) ?? 0) + 1;
+      ctx.seq.set(name, n);
+      out += `<w:fldSimple w:instr=" SEQ ${esc(/\s/.test(name) ? `"${name}"` : name)} \\* ARABIC "><w:r>${rPr}<w:t>${n}</w:t></w:r></w:fldSimple>`;
     }
   });
   closeLink();
@@ -1427,7 +1447,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map() };
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
   const pagesOf: PageSetup[] = [meta.page];
@@ -1450,7 +1470,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     if (!json && kind === 'header' && wmText) json = emptyHfDoc();
     if (!json) return '';
     const node = schema.nodeFromJSON(json);
-    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1 };
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1, seq: new Map() };
     let inner = blocksXml(sub, node);
     if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
     if (kind === 'header' && wmText) inner = watermarkXml(wmText, parts.length + 1) + inner;
