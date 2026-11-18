@@ -23,7 +23,7 @@ impl<'a> Model<'a> {
             },
             CalcResult::Range { left, right } => self.values_from_range(left, right)?,
             CalcResult::Boolean(value) => {
-                if !matches!(arg, Node::ReferenceKind { .. }) {
+                if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) {
                     vec![Some(if value { 1.0 } else { 0.0 })]
                 } else {
                     return Err(CalcResult::Error {

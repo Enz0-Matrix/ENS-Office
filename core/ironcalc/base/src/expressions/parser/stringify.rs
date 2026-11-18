@@ -4,6 +4,7 @@ use crate::expressions::parser::move_formula::to_string_array_node;
 use crate::expressions::parser::static_analysis::remove_redundant_implicit_intersection;
 use crate::expressions::token::{OpSum, OpUnary};
 use crate::functions::Function;
+use crate::expressions::token::{TableReference, TableSpecifier};
 use crate::language::{get_language, Language};
 use crate::locale::{get_locale, Locale};
 use crate::{expressions::types::CellReferenceRC, number_format::to_excel_precision_str};
@@ -209,6 +210,7 @@ fn prefix_bound_variables(node: &mut Node, bound: &mut Vec<String>) {
         | Node::ArrayKind(_)
         | Node::DefinedNameKind(_)
         | Node::TableNameKind(_)
+        | Node::StructuredKind { .. }
         | Node::ErrorKind(_)
         | Node::ParseErrorKind { .. }
         | Node::EmptyArgKind => {}
@@ -831,6 +833,7 @@ fn stringify(
                 | WrongReferenceKind { .. }
                 | DefinedNameKind(_)
                 | TableNameKind(_)
+                | StructuredKind { .. }
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     left,
@@ -876,6 +879,7 @@ fn stringify(
                 | WrongReferenceKind { .. }
                 | DefinedNameKind(_)
                 | TableNameKind(_)
+                | StructuredKind { .. }
                 | NamedVariableKind { .. }
                 | WrongRangeKind { .. } => stringify(
                     right,
@@ -971,6 +975,9 @@ fn stringify(
             format!("{{{matrix_string}}}")
         }
         TableNameKind(value) => value.to_string(),
+        StructuredKind { table_name, specifier, table_reference, .. } => {
+            structured_reference_string(table_name, specifier, table_reference, export_to_excel, locale, language)
+        }
         DefinedNameKind((name, ..)) => name.to_string(),
         NamedVariableKind { name, id: _ } => name.to_string(),
         UnaryKind { kind, right } => match kind {
@@ -992,6 +999,7 @@ fn stringify(
                     | ArrayKind(_)
                     | DefinedNameKind(_)
                     | TableNameKind(_)
+                    | StructuredKind { .. }
                     | NamedVariableKind { .. }
                     | ImplicitIntersection { .. }
                     | SpillRangeOperator { .. }
@@ -1286,6 +1294,7 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
         Node::ArrayKind(_) => {}
         Node::DefinedNameKind(_) => {}
         Node::TableNameKind(_) => {}
+        Node::StructuredKind { resolved, .. } => rename_sheet_in_node(resolved, sheet_index, new_name),
         Node::NamedVariableKind { .. } => {}
         Node::EmptyArgKind => {}
         Node::LambdaDefKind {
@@ -1391,6 +1400,7 @@ pub(crate) fn for_each_sheet_ref(node: &mut Node, f: &mut dyn FnMut(&mut Option<
         Node::ArrayKind(_) => {}
         Node::DefinedNameKind(_) => {}
         Node::TableNameKind(_) => {}
+        Node::StructuredKind { resolved, .. } => for_each_sheet_ref(resolved, f),
         Node::NamedVariableKind { .. } => {}
         Node::EmptyArgKind => {}
         Node::LambdaDefKind {
@@ -1403,6 +1413,108 @@ pub(crate) fn for_each_sheet_ref(node: &mut Node, f: &mut dyn FnMut(&mut Option<
             for_each_sheet_ref(lambda, f);
             for arg in args {
                 for_each_sheet_ref(arg, f);
+            }
+        }
+    }
+}
+
+/// ENS-Office: обходит структурированные ссылки формулы: `f(имя таблицы, столбцы)`.
+pub(crate) fn visit_structured_mut(node: &mut Node, f: &mut dyn FnMut(&mut String, &mut Option<TableReference>)) {
+    match node {
+        Node::StructuredKind {
+            table_name,
+            table_reference,
+            ..
+        } => f(table_name, table_reference),
+        Node::ReferenceKind { .. }
+        | Node::RangeKind { .. }
+        | Node::WrongReferenceKind { .. }
+        | Node::WrongRangeKind { .. } => {}
+        // Go next level
+        Node::OpRangeKind { left, right } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::OpConcatenateKind { left, right } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::OpSumKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::OpProductKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::OpPowerKind { left, right } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::FunctionKind { kind: _, args } => {
+            for arg in args {
+                visit_structured_mut(arg, f);
+            }
+        }
+        Node::NamedFunctionKind {
+            name: _,
+            args,
+            id: _,
+        } => {
+            for arg in args {
+                visit_structured_mut(arg, f);
+            }
+        }
+        Node::CompareKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            visit_structured_mut(left, f);
+            visit_structured_mut(right, f);
+        }
+        Node::UnaryKind { kind: _, right } => {
+            visit_structured_mut(right, f);
+        }
+        Node::ImplicitIntersection {
+            automatic: _,
+            child,
+        } => {
+            visit_structured_mut(child, f);
+        }
+        Node::SpillRangeOperator { child } => {
+            visit_structured_mut(child, f);
+        }
+
+        // Do nothing
+        Node::BooleanKind(_) => {}
+        Node::NumberKind(_) => {}
+        Node::StringKind(_) => {}
+        Node::ErrorKind(_) => {}
+        Node::ParseErrorKind { .. } => {}
+        Node::ArrayKind(_) => {}
+        Node::DefinedNameKind(_) => {}
+        Node::TableNameKind(_) => {}
+        Node::NamedVariableKind { .. } => {}
+        Node::EmptyArgKind => {}
+        Node::LambdaDefKind {
+            parameters: _,
+            body,
+        } => {
+            visit_structured_mut(body, f);
+        }
+        Node::LambdaCallKind { lambda, args } => {
+            visit_structured_mut(lambda, f);
+            for arg in args {
+                visit_structured_mut(arg, f);
             }
         }
     }
@@ -1497,6 +1609,7 @@ pub(crate) fn rename_defined_name_in_node(
         Node::WrongReferenceKind { .. } => {}
         Node::WrongRangeKind { .. } => {}
         Node::TableNameKind(_) => {}
+        Node::StructuredKind { resolved, .. } => rename_defined_name_in_node(resolved, name, scope, new_name),
         Node::NamedVariableKind { .. } => {}
         Node::LambdaDefKind {
             parameters: _,
@@ -1510,5 +1623,68 @@ pub(crate) fn rename_defined_name_in_node(
                 rename_defined_name_in_node(arg, name, scope, new_name);
             }
         }
+    }
+}
+
+/// ENS-Office: текст структурированной ссылки (ADR-013). По-русски — как показывает русский Excel
+/// (`Таблица1[@Цена]`, `[#Итоги]`, `;` между частями); для xlsx и внутреннего хранения — как пишет
+/// Excel в файл (`Table1[[#This Row],[Цена]]`).
+pub(crate) fn structured_reference_string(
+    table_name: &str,
+    specifier: &Option<TableSpecifier>,
+    table_reference: &Option<TableReference>,
+    export_to_excel: bool,
+    locale: &Locale,
+    language: &Language,
+) -> String {
+    let ru = !export_to_excel && language.code == "ru";
+    let sep = if locale.numbers.symbols.decimal == "." { "," } else { ";" };
+    let esc = |n: &str| {
+        let mut o = String::new();
+        for ch in n.chars() {
+            if matches!(ch, '[' | ']' | '#' | '\'') {
+                o.push('\'');
+            }
+            o.push(ch);
+        }
+        o
+    };
+    let spec = |s: &TableSpecifier| match (s, ru) {
+        (TableSpecifier::All, false) => "#All",
+        (TableSpecifier::Data, false) => "#Data",
+        (TableSpecifier::Headers, false) => "#Headers",
+        (TableSpecifier::Totals, false) => "#Totals",
+        (TableSpecifier::ThisRow, false) => "#This Row",
+        (TableSpecifier::All, true) => "#Все",
+        (TableSpecifier::Data, true) => "#Данные",
+        (TableSpecifier::Headers, true) => "#Заголовки",
+        (TableSpecifier::Totals, true) => "#Итоги",
+        (TableSpecifier::ThisRow, true) => "#Эта строка",
+    };
+    let columns = match table_reference {
+        None => None,
+        Some(TableReference::ColumnReference(c)) => Some(format!("[{}]", esc(c))),
+        Some(TableReference::RangeReference((a, b))) => Some(format!("[{}]:[{}]", esc(a), esc(b))),
+    };
+    if ru && *specifier == Some(TableSpecifier::ThisRow) {
+        // как в Excel: Таблица1[@Цена], Таблица1[@[Цена с НДС]], Таблица1[@[Янв]:[Мар]]
+        return match (table_reference, columns) {
+            (Some(TableReference::ColumnReference(c)), _)
+                if !c.is_empty() && c.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.') =>
+            {
+                format!("{table_name}[@{c}]")
+            }
+            (_, Some(cols)) => format!("{table_name}[@{cols}]"),
+            (_, None) => format!("{table_name}[@]"),
+        };
+    }
+    match (specifier, columns, table_reference) {
+        (None, None, _) => format!("{table_name}[]"),
+        (Some(s), None, _) => format!("{table_name}[{}]", spec(s)),
+        // как Excel: имя с пробелом по краям — в двойных скобках (Table3[[the two ]])
+        (None, Some(cols), Some(TableReference::ColumnReference(c))) if c.trim() != c => format!("{table_name}[{cols}]"),
+        (None, Some(_), Some(TableReference::ColumnReference(c))) => format!("{table_name}[{}]", esc(c)),
+        (None, Some(cols), _) => format!("{table_name}[{cols}]"),
+        (Some(s), Some(cols), _) => format!("{table_name}[[{}]{sep}{cols}]", spec(s)),
     }
 }

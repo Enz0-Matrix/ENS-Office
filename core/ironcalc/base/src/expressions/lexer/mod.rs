@@ -110,6 +110,8 @@ pub struct Lexer<'a> {
     mode: LexerMode,
     locale: &'a Locale,
     language: &'a Language,
+    /// ENS-Office: идёт разбор структурированной ссылки — «[» внутри неё просто скобка.
+    in_structured: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -130,6 +132,7 @@ impl<'a> Lexer<'a> {
             mode,
             locale,
             language,
+            in_structured: false,
         }
     }
 
@@ -204,6 +207,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// ENS-Office: `Таблица1[...]` в формулах, хранимых в R1C1.
+    fn structured_or_illegal(&mut self, name: &str) -> TokenType {
+        match self.consume_structured_reference(name) {
+            Ok(r) => r,
+            Err(_) => TokenType::Illegal(self.set_error("Invalid structured reference", self.position)),
+        }
+    }
+
     /// Returns the next token
     pub fn next_token(&mut self) -> TokenType {
         self.next_token_position = None;
@@ -221,7 +232,23 @@ impl<'a> Lexer<'a> {
                     '=' => TokenType::Compare(OpCompare::Equal),
                     '{' => TokenType::LeftBrace,
                     '}' => TokenType::RightBrace,
-                    '[' => TokenType::LeftBracket,
+                    '[' if self.in_structured => TokenType::LeftBracket,
+                    // [b] — необязательный параметр LAMBDA: без имени таблицы ссылкой считаются
+                    // только однозначные формы [@…], [#…], [[…]]
+                    '[' if !matches!(self.peek_char(), Some('@' | '#' | '[')) => TokenType::LeftBracket,
+                    '[' => {
+                        // ENS-Office: [@Цена], [Сумма], [[#Итоги];[Сумма]] — ссылка на таблицу,
+                        // в которой стоит формула (ADR-013)
+                        let start = self.position;
+                        self.position -= 1;
+                        match self.consume_structured_reference("") {
+                            Ok(token) if self.peek_char() != Some('!') => token,
+                            _ => {
+                                self.position = start;
+                                TokenType::LeftBracket
+                            }
+                        }
+                    }
                     ']' => TokenType::RightBracket,
                     ':' => TokenType::Colon,
                     ';' => TokenType::Semicolon,
@@ -433,6 +460,9 @@ impl<'a> Lexer<'a> {
                                     Ok(ParsedRange { left, right }) => {
                                         if pos > self.position {
                                             self.position = pos;
+                                            if self.peek_char() == Some('[') && utils::is_valid_identifier(&name) {
+                                                return self.structured_or_illegal(&name);
+                                            }
                                             if is_valid_r1c1_identifier(&name, self.peek_char()) {
                                                 return TokenType::Ident(name);
                                             } else {
@@ -476,6 +506,9 @@ impl<'a> Lexer<'a> {
                                         }
                                         self.position = pos;
 
+                                        if self.peek_char() == Some('[') && utils::is_valid_identifier(&name) {
+                                            return self.structured_or_illegal(&name);
+                                        }
                                         if is_valid_r1c1_identifier(&name, self.peek_char()) {
                                             return TokenType::Ident(name);
                                         } else {

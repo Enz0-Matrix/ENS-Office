@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::expressions::parser::tests::utils::{new_parser, to_english_localized_string};
+use crate::expressions::parser::Node;
 use crate::expressions::types::CellReferenceRC;
 use crate::expressions::utils::{number_to_column, parse_reference_a1};
 use crate::types::{Table, TableColumn, TableStyleInfo};
@@ -72,9 +73,14 @@ fn simple_table() {
 
     let formula = "SUM(tblIncome[[#This Row],[Jan]:[Dec]])";
     let t = parser.parse(formula, &cell_reference);
+    // ENS-Office (ADR-013): ссылка остаётся ссылкой на таблицу, диапазон — внутри
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUM($A$2:$E$2)"
+        "SUM(tblIncome[[#This Row],[Jan]:[Dec]])"
+    );
+    assert_eq!(
+        to_english_localized_string(resolved_arg(&t, 0), &cell_reference),
+        "$A2:$E2"
     );
 
     // Cell A3
@@ -87,7 +93,11 @@ fn simple_table() {
     let t = parser.parse(formula, &cell_reference);
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUBTOTAL(109,$A$2:$A$3)"
+        "SUBTOTAL(109,tblIncome[Jan])"
+    );
+    assert_eq!(
+        to_english_localized_string(resolved_arg(&t, 1), &cell_reference),
+        "$A$2:$A$3"
     );
 
     // Cell A3 in 'Second Sheet'
@@ -100,6 +110,18 @@ fn simple_table() {
     let t = parser.parse(formula, &cell_reference);
     assert_eq!(
         to_english_localized_string(&t, &cell_reference),
-        "SUBTOTAL(109,'Sheet One'!$A$2:$A$3)"
+        "SUBTOTAL(109,tblIncome[Jan])"
     );
+    assert_eq!(
+        to_english_localized_string(resolved_arg(&t, 1), &cell_reference),
+        "'Sheet One'!$A$2:$A$3"
+    );
+}
+
+/// Диапазон структурированной ссылки в аргументе `i` функции.
+fn resolved_arg(node: &Node, i: usize) -> &Node {
+    match node {
+        Node::FunctionKind { args, .. } => args[i].structured_inner(),
+        _ => panic!("не функция"),
+    }
 }

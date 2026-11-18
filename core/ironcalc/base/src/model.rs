@@ -301,6 +301,8 @@ impl<'a> Model<'a> {
         cell: CellReferenceIndex,
     ) -> CalcResult {
         match node {
+            // ENS-Office: структурированная ссылка — по диапазону таблицы (ADR-013)
+            Node::StructuredKind { resolved, .. } => self.evaluate_node_with_reference(resolved, cell),
             Node::ReferenceKind {
                 sheet_name: _,
                 sheet_index,
@@ -671,6 +673,7 @@ impl<'a> Model<'a> {
     ) -> CalcResult {
         use Node::*;
         match node {
+            StructuredKind { resolved, .. } => self.evaluate_node_in_context(resolved, cell),
             OpSumKind { kind, left, right } => match kind {
                 OpSum::Add => self.handle_arithmetic(left, right, cell, &|f1, f2| Ok(f1 + f2)),
                 OpSum::Minus => self.handle_arithmetic(left, right, cell, &|f1, f2| Ok(f1 - f2)),

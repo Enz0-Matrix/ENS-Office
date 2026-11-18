@@ -476,6 +476,9 @@ fn to_string_moved(
         }
         DefinedNameKind((name, ..)) => name.to_string(),
         TableNameKind(name) => name.to_string(),
+        StructuredKind { table_name, specifier, table_reference, .. } => {
+            crate::expressions::parser::stringify::structured_reference_string(table_name, specifier, table_reference, false, locale, language)
+        }
         NamedVariableKind { name, id: _ } => name.to_string(),
         CompareKind { kind, left, right } => format!(
             "{}{}{}",

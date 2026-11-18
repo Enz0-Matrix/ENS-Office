@@ -43,31 +43,9 @@ fn bounds(reference: &str) -> Option<(i32, i32, i32, i32)> {
 }
 
 /// Имена столбцов: Excel требует, чтобы они совпадали с текстом ячеек заголовка
-/// и не повторялись. Берём текст ячеек; пустую ячейку или повтор — из прежнего имени.
+/// и не повторялись. Правило одно с движком (он по нему же переписывает формулы).
 fn column_names(model: &Model, sheet: u32, table: &Table) -> Vec<String> {
-    let mut names: Vec<String> = Vec::with_capacity(table.columns.len());
-    let header = bounds(&table.reference).filter(|_| table.header_row_count > 0);
-    for (i, col) in table.columns.iter().enumerate() {
-        let from_cell = header
-            .and_then(|(r1, c1, _, _)| {
-                model
-                    .get_formatted_cell_value(sheet, r1, c1 + i as i32)
-                    .ok()
-            })
-            .filter(|s| !s.trim().is_empty());
-        let mut name = from_cell.unwrap_or_else(|| col.name.clone());
-        let base = name.clone();
-        let mut n = 2;
-        while names
-            .iter()
-            .any(|x| x.to_lowercase() == name.to_lowercase())
-        {
-            name = format!("{base}{n}");
-            n += 1;
-        }
-        names.push(name);
-    }
-    names
+    model.ens_header_names(sheet, table)
 }
 
 fn opt_attr(name: &str, v: Option<u32>) -> String {
