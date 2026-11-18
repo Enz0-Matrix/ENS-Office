@@ -219,6 +219,16 @@ const nodes: Record<string, NodeSpec> = {
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
+  /** Закладка (w:bookmarkStart): невидимая точка в тексте с именем; на неё ведут ссылки «#имя». */
+  bookmark: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    selectable: false,
+    attrs: { name: {} },
+    parseDOM: [{ tag: 'span.bm[data-name]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-name') }) }],
+    toDOM: (n) => ['span', { class: 'bm', 'data-name': n.attrs.name, title: `Закладка «${n.attrs.name}»`, contenteditable: 'false' }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,
