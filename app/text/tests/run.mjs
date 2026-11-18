@@ -815,6 +815,76 @@ await test('колонки: печать в PDF — текст в две кол�
 });
 
 
+// ---- Вид: несколько страниц ----
+await test('вид: «Несколько страниц» — листы рядами, текст на своих листах, правка и печать', async () => {
+  const p = await longPage((s, P) => Array.from({ length: 70 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
+  await p.evaluate(COLS_JS);
+  const pages = await p.evaluate(() => window.ens.pageCount());
+  await p.click('.tab:has-text("Вид")');
+  await p.click('#ribbon [data-command="view.multiPage"]');
+  await p.waitForTimeout(500);
+  const r = await p.evaluate(() => ({ boxes: window.ens.pageBoxes().map((b) => [Math.round(b.left ?? 0), Math.round(b.top)]), stuck: window.ens.pagStats.stuck }));
+  ok(r.boxes.length === pages, `листов столько же: ${r.boxes.length} и ${pages}`);
+  ok(r.boxes[1][0] > 500 && r.boxes[1][1] === r.boxes[0][1], `второй лист справа от первого: ${JSON.stringify(r.boxes)}`);
+  eq(r.stuck, false, 'расчёт сошёлся');
+  const c = await p.evaluate(() => window.__colBad());
+  eq(c.bad, [], 'знаки вне полей своих листов');
+  ok(c.used.includes('1:0') && c.used.includes('2:0'), `текст на листах 2 и 3: ${c.used}`);
+  // Подложки на местах листов, лишней высоты под последним рядом нет.
+  const geo = await p.evaluate(() => {
+    const papers = [...document.querySelectorAll('.paper')], v = window.ens.view, b = window.ens.pageBoxes();
+    const last = b.at(-1);
+    return { left: papers[1].offsetLeft, tail: Math.round(v.dom.offsetHeight - (last.top + last.H)) };
+  });
+  ok(geo.left > 500, `подложка второго листа справа: ${geo.left}`);
+  ok(geo.tail <= 2, `лишняя высота: ${geo.tail}`);
+  // Щелчок и ввод на втором листе.
+  const q = await p.evaluate(() => { const v = window.ens.view; let q = 0; v.state.doc.forEach((n, off) => { if (!q && n.textContent.startsWith('Абзац 30.')) q = off + 3; }); return q; });
+  const at = await p.evaluate((q) => { const c = window.ens.view.coordsAtPos(q, 1); return { x: c.left + 1, y: (c.top + c.bottom) / 2 }; }, q);
+  await p.mouse.click(at.x, at.y);
+  ok(Math.abs((await p.evaluate(() => window.ens.view.state.selection.head)) - q) <= 1, 'курсор после щелчка');
+  await p.keyboard.type('Ж');
+  ok((await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('АбЖзац 30') || (await p.evaluate(() => window.ens.view.state.doc.textContent)).includes('АбзЖац 30'), 'ввод на втором листе');
+  // Мельче масштаб — больше листов в ряду.
+  for (let i = 0; i < 3; i++) await p.evaluate(() => window.ens.run('view.zoomOut'));
+  await p.waitForTimeout(400);
+  const row = await p.evaluate(() => window.ens.pageBoxes().filter((b) => b.top === 0).length);
+  ok(row >= 3, `при уменьшении масштаба в ряду листов: ${row}`);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки на своих листах после смены масштаба');
+  // Печать — столбиком, после печати снова рядами.
+  await p.evaluate(() => window.ens.printPrepare());
+  ok(await p.evaluate(() => window.ens.pageBoxes().every((b) => !b.left)), 'при печати листы столбиком');
+  await p.evaluate(() => window.ens.printRestore());
+  await p.waitForTimeout(300);
+  ok(await p.evaluate(() => window.ens.pageBoxes()[1].left > 0), 'после печати снова рядами');
+  // «Одна страница» и «По ширине»: листы столбиком, масштаб вписывает лист.
+  await p.click('#ribbon [data-command="view.onePage"]');
+  await p.waitForTimeout(400);
+  const one = await p.evaluate(() => { const b = document.querySelector('.paper').getBoundingClientRect(), d = document.getElementById('desk').getBoundingClientRect(); return { h: b.height, dh: d.height, left: window.ens.pageBoxes()[1].left ?? 0 }; });
+  ok(one.left === 0 && one.h <= one.dh && one.h > one.dh * 0.8, `одна страница: ${JSON.stringify(one)}`);
+  await p.click('#ribbon [data-command="view.pageWidth"]');
+  await p.waitForTimeout(400);
+  const wid = await p.evaluate(() => { const b = document.querySelector('.paper').getBoundingClientRect(), d = document.getElementById('desk'); return { w: b.width, dw: d.clientWidth }; });
+  ok(wid.w <= wid.dw && wid.w > wid.dw * 0.85, `по ширине: ${JSON.stringify(wid)}`);
+  await p.context().close();
+});
+
+await test('вид: «Несколько страниц» с колонками и разделами разного размера', async () => {
+  const p = await colPage(2, 70);
+  await p.evaluate(() => {
+    const E = window.ens, v = E.view, s = E.schema;
+    const A4L = { w: 841.9, h: 595.3, top: 56.7, bottom: 56.7, left: 56.7, right: 56.7 };
+    let pos = 0, k = 0; v.state.doc.forEach((n, off) => { if (k++ === 40) pos = off; });
+    v.dispatch(v.state.tr.insert(pos, s.nodes.section_break.create({ page: A4L })));
+  });
+  await p.waitForTimeout(400);
+  await p.evaluate(() => window.ens.run('view.multiPage'));
+  await p.waitForTimeout(600);
+  eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки вне колонок и полей');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
+  await p.context().close();
+});
+
 // ---- Версии, журнал, защита от потерь ----
 await test('версии: сохранение записывает версию и журнал, история едет внутри docx и читается обратно', async () => {
   const p = await page();
