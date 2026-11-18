@@ -189,6 +189,8 @@ interface Ctx {
   cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
+  /** Тексты сносок и концевых сносок из word/footnotes.xml и word/endnotes.xml (по w:id) и связи этих частей. */
+  notes?: { foot: Map<string, Element>; end: Map<string, Element>; footRels: Ctx['rels']; endRels: Ctx['rels'] };
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -536,9 +538,20 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       }
       case 'footnoteReference':
-      case 'endnoteReference':
-        lose(ctx, 'сноски');
+      case 'endnoteReference': {
+        const end = c.localName === 'endnoteReference';
+        const note = ctx.notes?.[end ? 'end' : 'foot'].get(attr(c, 'id') ?? '');
+        if (!note) { lose(ctx, 'сноски (текст сноски не найден в файле)'); break; }
+        // Текст сноски — свои абзацы; читаем их отдельным контекстом (поля, стиль абзаца, связи части сносок).
+        const sub: Ctx = { ...ctx, rels: ctx.notes![end ? 'endRels' : 'footRels'], fields: [], sects: [], baseR: {} };
+        const blocks = walkBlocks(sub, note);
+        const content = blocks.map((b) => b.toJSON() as Record<string, unknown>);
+        // Word ставит пробел после номера в начале текста сноски: убираем его.
+        const first = content[0]?.content as { type: string; text?: string }[] | undefined;
+        if (first?.[0]?.type === 'text' && first[0].text) { first[0].text = first[0].text.replace(/^\s+/, ''); if (!first[0].text) first.shift(); }
+        acc.nodes.push(schema.nodes.footnote.create({ content, end }, null, marks.filter((m) => m.type !== schema.marks.sup)));
         break;
+      }
       case 'commentReference':
         lose(ctx, 'примечания');
         break;
@@ -927,8 +940,21 @@ export function importDocx(bytes: Uint8Array): Imported {
   };
   for (const [, rel] of ctx.rels) {
     if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
-    if (/\/(footnotes|endnotes)$/.test(rel.type)) { /* считаем по ссылкам в тексте */ }
   }
+  // Сноски: тексты по номерам (служебные разделители separator/continuationSeparator не нужны).
+  const notePart = (kind: 'footnotes' | 'endnotes') => {
+    const rel = [...ctx.rels.values()].find((r) => new RegExp(`/${kind}$`).test(r.type));
+    const map = new Map<string, Element>();
+    if (!rel || !files[rel.target]) return { map, rels: new Map() as Ctx['rels'] };
+    const tag = kind === 'footnotes' ? 'footnote' : 'endnote';
+    for (const n of kids(parseXml(strFromU8(files[rel.target])).documentElement, tag)) {
+      const type = attr(n, 'type');
+      if (!type || type === 'normal') map.set(attr(n, 'id') ?? '', n);
+    }
+    return { map, rels: readRels(files, rel.target) };
+  };
+  const fn = notePart('footnotes'), en = notePart('endnotes');
+  ctx.notes = { foot: fn.map, end: en.map, footRels: fn.rels, endRels: en.rels };
   themeFonts = { minor: '', major: '' };
   const themePath = [...ctx.rels.values()].find((r) => /\/theme$/.test(r.type))?.target;
   if (themePath && files[themePath]) {
@@ -1085,6 +1111,8 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Сноски и концевые сноски по порядку: номер в файле и текст. */
+  notes: { foot: PMNode[]; end: PMNode[] };
 }
 
 function relId(ctx: ExportCtx, type: string, target: string, external = false): string {
@@ -1230,6 +1258,13 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'footnote') {
+      // Номер в файле: 1, 2… (0 и −1 — служебные разделители Word).
+      const end = !!child.attrs.end;
+      const list = ctx.notes[end ? 'end' : 'foot'];
+      list.push(child);
+      const tag = end ? 'endnoteReference' : 'footnoteReference';
+      out += `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${tag} w:id="${list.length}"/></w:r>`;
     }
   });
   closeLink();
@@ -1427,7 +1462,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), notes: { foot: [], end: [] } };
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
   const pagesOf: PageSetup[] = [meta.page];
@@ -1442,7 +1477,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   if (chunkXml[lastChunk].endsWith('</w:tbl>')) chunkXml[lastChunk] += '<w:p/>';
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
-  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
+  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' | 'footnotes' | 'endnotes' }[] = [];
   const wmText = meta.watermark?.trim() || '';
   const emptyHfDoc = (): HfDoc => schema.nodes.doc.create(null, [schema.nodes.paragraph.create()]).toJSON() as HfDoc;
   const hfRef = (json: HfDoc, kind: 'header' | 'footer', type: 'default' | 'first'): string => {
@@ -1481,6 +1516,34 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
+
+  // Сноски: свои части с разделителями Word и текстами (абзацы — как в основном тексте, со своими связями).
+  for (const end of [false, true]) {
+    const list = ctx.notes[end ? 'end' : 'foot'];
+    if (!list.length) continue;
+    const kind = end ? 'endnotes' : 'footnotes', tag = end ? 'endnote' : 'footnote', ref = end ? 'endnoteRef' : 'footnoteRef';
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1, notes: { foot: [], end: [] } };
+    const notes = list.map((n, i) => {
+      let inner = '';
+      try { inner = blocksXml(sub, schema.nodes.doc.create(null, (n.attrs.content as Record<string, unknown>[]).map((j) => schema.nodeFromJSON(j)))); } catch { inner = ''; }
+      const mark = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${ref}/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>`;
+      // Номер сноски — в начало первого абзаца.
+      inner = inner.startsWith('<w:p>') || inner.startsWith('<w:p ')
+        ? inner.replace(/^(<w:p\b[^>]*>(?:<w:pPr>.*?<\/w:pPr>)?)/, `$1${mark}`)
+        : `<w:p>${mark}</w:p>${inner}`;
+      return `<w:${tag} w:id="${i + 1}">${inner}</w:${tag}>`;
+    }).join('');
+    parts.push({
+      path: `word/${kind}.xml`, tag: kind, kind, rels: sub.rels,
+      xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<w:${kind} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+        `<w:${tag} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:${tag}>` +
+        `<w:${tag} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:${tag}>` +
+        `${notes}</w:${kind}>`,
+    });
+    relId(ctx, `${REL_BASE}/${kind}`, `${kind}.xml`);
+  }
 
   const base = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const fixed = [

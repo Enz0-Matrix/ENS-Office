@@ -2954,6 +2954,78 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Сноски
+await test('сноски: Ctrl+Alt+F вставляет сноску с текстом, номера по порядку, подсказка при наведении, правка двойным щелчком', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Первое утверждение');
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog .note-editor .ProseMirror');
+  await p.keyboard.type('Источник первый');
+  await p.keyboard.press('Control+Enter');
+  await p.keyboard.type(' и второе');
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog .note-editor .ProseMirror');
+  await p.keyboard.type('Источник второй');
+  await p.click('.note-dialog button:has-text("Готово")');
+  const nums = () => p.$$eval('.ProseMirror sup.fn', (s) => s.map((e) => [e.dataset.n, e.dataset.tip]));
+  eq(await nums(), [['1', 'Источник первый'], ['2', 'Источник второй']], 'номера и тексты');
+  eq(await text(p), 'Первое утверждение и второе', 'основной текст без текста сносок');
+  // Новая сноска в начале — номера сдвигаются.
+  await p.keyboard.press('Home');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 7))); });
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type('Новая');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums()).map((x) => x.join(':')), ['1:Новая', '2:Источник первый', '3:Источник второй'], 'перенумерация');
+  // Подсказка при наведении.
+  await p.hover('.ProseMirror sup.fn >> nth=1');
+  const tip = await p.$eval('.ProseMirror sup.fn >> nth=1', (e) => getComputedStyle(e, '::before').content);
+  ok(tip.includes('Источник первый'), `подсказка: ${tip}`);
+  // Двойной щелчок — правка.
+  await p.dblclick('.ProseMirror sup.fn >> nth=1');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type(', с. 25');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums())[1][1], 'Источник первый, с. 25', 'текст изменён');
+  // Концевая сноска — римские номера (курсор в конец абзаца).
+  await p.evaluate(() => { const E = window.ens, d = E.view.state.doc; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.atEnd(d))); });
+  await p.keyboard.press('Control+Alt+KeyD');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type('Концевая');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums()).slice(-1)[0], ['i', 'Концевая'], 'концевая сноска');
+  // Отмена убирает сноску вместе с текстом.
+  const before = (await nums()).length;
+  await p.keyboard.press('Control+KeyZ');
+  await p.keyboard.press('Control+KeyZ');
+  ok((await nums()).length < before, 'отмена');
+  await p.context().close();
+});
+await test('сноски в docx: footnotes.xml и endnotes.xml туда и обратно, текст с форматированием, без потерь', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const note = (t, end = false) => s.nodes.footnote.create({ end, content: [s.nodes.paragraph.create(null, [s.text('См. '), s.text(t, [s.marks.em.create()])]).toJSON()] });
+    const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Текст'), note('Иванов И. И.'), s.text(' дальше'), note('второй'), note('конец', true)])]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const f = E.unzip(bytes), dec = (n) => f[n] ? new TextDecoder().decode(f[n]) : '';
+    const back = E.importDocx(bytes);
+    return { doc: dec('word/document.xml'), fn: dec('word/footnotes.xml'), en: dec('word/endnotes.xml'), rels: dec('word/_rels/document.xml.rels'), ct: dec('[Content_Types].xml'),
+      same: back.doc.eq(doc), back: JSON.stringify(back.doc.toJSON()).slice(0, 400), lossy: back.meta.lossy };
+  });
+  ok(r.doc.includes('<w:footnoteReference w:id="1"/>') && r.doc.includes('<w:footnoteReference w:id="2"/>') && r.doc.includes('<w:endnoteReference w:id="1"/>'), 'ссылки в тексте');
+  ok(r.fn.includes('w:type="separator" w:id="-1"') && r.fn.includes('<w:footnote w:id="2">'), 'часть сносок с разделителями');
+  ok(/<w:footnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"\/><\/w:rPr><w:footnoteRef\/><\/w:r>/.test(r.fn), 'номер в начале текста сноски');
+  ok(r.fn.includes('<w:i/>'), 'курсив в сноске');
+  ok(r.en.includes('<w:endnoteRef/>'), 'концевые');
+  ok(r.rels.includes('/footnotes" Target="footnotes.xml"') && r.ct.includes('/word/footnotes.xml'), 'связи и типы');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, `документ тот же после круга: ${r.back}`);
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

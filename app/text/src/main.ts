@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { gotoNote, insertNote, listNotes } from './footnotes';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -831,6 +832,9 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'insert.footnote', label: 'Вставить сноску', keywords: ['сноска', 'footnote', 'примечание внизу страницы'], keys: ['Ctrl+Alt+KeyF'], run: () => insertNote(view, false) },
+  { id: 'insert.endnote', label: 'Вставить концевую сноску', keywords: ['концевая сноска', 'endnote', 'примечание в конце'], keys: ['Ctrl+Alt+KeyD'], run: () => insertNote(view, true) },
+  { id: 'note.next', label: 'Следующая сноска', keywords: ['сноска', 'перейти'], run: () => { if (!gotoNote(view, 1)) toast('Сносок нет.'); } },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
@@ -1198,6 +1202,14 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      {
+        name: 'Сноски',
+        items: [
+          { type: 'large', command: 'insert.footnote', icon: 'note_add', label: 'Сноска' },
+          { type: 'medium', command: 'insert.endnote', icon: 'note_add', label: 'Концевая' },
+          { type: 'medium', command: 'note.next', icon: 'arrow_down', label: 'Следующая' },
+        ],
+      },
       {
         name: 'По-русски',
         items: [
@@ -2272,6 +2284,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listNotes: () => listNotes(view.state.doc), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
