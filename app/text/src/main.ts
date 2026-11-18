@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { addComment, closeComments, deleteThread, gotoThread, listThreads, openComments, panelOpen, renderComments, threadAt } from './comments';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -704,6 +705,7 @@ function openHref(href: string): void {
 }
 
 function afterChange(docChanged: boolean): void {
+  renderComments();
   // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
   if (docChanged) hideContextMenu();
   updateUi();
@@ -925,6 +927,27 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  {
+    id: 'comment.new', label: 'Создать примечание', keywords: ['примечание', 'комментарий', 'comment', 'рецензирование', 'замечание'], keys: ['Ctrl+Alt+KeyM'],
+    run: () => {
+      const tr = addComment(view.state, me());
+      if (!tr) { toast('Выделите текст, к которому относится примечание.'); return; }
+      view.dispatch(tr);
+      const id = listThreads(view.state.doc).reduce((m, t) => Math.max(m, t.id), 0);
+      openComments(view, me, id);
+    },
+  },
+  { id: 'comment.next', label: 'Следующее примечание', keywords: ['примечание', 'комментарий'], run: () => { if (!gotoThread(view, 1)) toast('Примечаний нет.'); else openComments(view, me); view.focus(); } },
+  { id: 'comment.prev', label: 'Предыдущее примечание', keywords: ['примечание', 'комментарий'], run: () => { if (!gotoThread(view, -1)) toast('Примечаний нет.'); else openComments(view, me); view.focus(); } },
+  {
+    id: 'comment.delete', label: 'Удалить примечание', keywords: ['примечание', 'комментарий', 'удалить'],
+    run: () => { const t = threadAt(view.state); if (!t) { toast('Курсор не в тексте с примечанием.'); return; } const tr = deleteThread(view.state, t.id); if (tr) view.dispatch(tr); view.focus(); },
+  },
+  {
+    id: 'comment.deleteAll', label: 'Удалить все примечания', keywords: ['примечания', 'комментарии', 'удалить все'],
+    run: () => { const n = listThreads(view.state.doc).length; const tr = deleteThread(view.state, 'all'); if (tr) { view.dispatch(tr); toast(`Удалено примечаний: ${n}. Отменить — Ctrl+Z.`); } else toast('Примечаний нет.'); view.focus(); },
+  },
+  { id: 'comment.pane', label: 'Панель примечаний', keywords: ['примечания', 'комментарии', 'показать'], checked: () => panelOpen(), run: () => { if (panelOpen()) closeComments(); else openComments(view, me); updateUi(); } },
   { id: 'review.dictionary', label: 'Словарь…', keywords: ['словарь', 'орфография', 'фамилия', 'не подчёркивать', 'исключения'], run: () => dictDialog() },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
@@ -1291,6 +1314,16 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'mark.green', icon: 'checkmark', label: 'Готово' },
           { type: 'large', command: 'mark.next', icon: 'arrow_redo', label: 'Следующая' },
           { type: 'large', command: 'mark.list', icon: 'book_open', label: 'Список меток' },
+        ],
+      },
+      {
+        name: 'Примечания',
+        items: [
+          { type: 'large', command: 'comment.new', icon: 'comment_add', label: 'Создать' },
+          { type: 'medium', command: 'comment.prev', icon: 'arrow_up', label: 'Назад' },
+          { type: 'medium', command: 'comment.next', icon: 'arrow_down', label: 'Далее' },
+          { type: 'medium', command: 'comment.delete', icon: 'comment_dismiss', label: 'Удалить' },
+          { type: 'large', command: 'comment.pane', icon: 'comment_edit', label: 'Показать' },
         ],
       },
       {
@@ -2272,6 +2305,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listThreads: () => listThreads(view.state.doc), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

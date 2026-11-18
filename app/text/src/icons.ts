@@ -48,11 +48,14 @@ import imageReset24 from '@fluentui/svg-icons/icons/image_arrow_counterclockwise
 import toFront24 from '@fluentui/svg-icons/icons/position_to_front_24_regular.svg?raw';
 import toBack24 from '@fluentui/svg-icons/icons/position_to_back_24_regular.svg?raw';
 import delete24 from '@fluentui/svg-icons/icons/delete_24_regular.svg?raw';
+import arrowUp24 from '@fluentui/svg-icons/icons/arrow_up_24_regular.svg?raw';
+import arrowDown24 from '@fluentui/svg-icons/icons/arrow_down_24_regular.svg?raw';
 import maximize24 from '@fluentui/svg-icons/icons/arrow_maximize_24_regular.svg?raw';
 import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?raw';
 
 Object.assign(ICONS, {
   crop_24: crop24, resize_image_24: resizeImage24, image_edit_24: imageEdit24, image_arrow_counterclockwise_24: imageReset24,
+  arrow_up_24: arrowUp24, arrow_down_24: arrowDown24,
   position_to_front_24: toFront24, position_to_back_24: toBack24, delete_24: delete24, arrow_maximize_24: maximize24, arrow_minimize_24: minimize24,
 });
 

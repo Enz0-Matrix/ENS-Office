@@ -2954,6 +2954,80 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Примечания
+await test('примечания: создать (Ctrl+Alt+M), текст в панели, ответ, «решено», переход и удаление', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Срок исполнения десять дней');
+  // Курсор в слове «десять» без выделения — примечание на слово.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 20))); });
+  await p.keyboard.press('Control+Alt+KeyM');
+  await p.waitForSelector('.comments-pane .cmt-card textarea');
+  await p.waitForFunction(() => document.activeElement?.tagName === 'TEXTAREA');
+  await p.keyboard.type('Уточнить срок');
+  await p.keyboard.press('Control+Enter');
+  let t = await p.evaluate(() => window.ens.listThreads());
+  eq(t.map((x) => [x.quote, x.text, x.done]), [['десять', 'Уточнить срок', false]], 'примечание на слово');
+  ok(t[0].author.length > 0, 'автор');
+  ok(await p.$('.ProseMirror span.cmt'), 'текст подсвечен');
+  // Ответ.
+  await p.fill('.comments-pane .cmt-card textarea', 'Согласовано: 10 рабочих дней');
+  await p.click('.comments-pane .cmt-card button:has-text("Ответить")');
+  t = await p.evaluate(() => window.ens.listThreads());
+  eq(t[0].replies.map((r) => r.text), ['Согласовано: 10 рабочих дней'], 'ответ');
+  // Решено.
+  await p.click('.comments-pane .cmt-card button:has-text("Решено")');
+  eq((await p.evaluate(() => window.ens.listThreads()))[0].done, true, 'решено');
+  ok(await p.$('.ProseMirror span.cmt.cmt-done'), 'решённое — серым');
+  ok((await p.textContent('.cmt-pane-head')).includes('открытых 0'), 'счётчик открытых');
+  // Второе примечание на выделение и переход между ними.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1, 5))); });
+  await p.evaluate(() => window.ens.run('comment.new'));
+  await p.waitForFunction(() => document.activeElement?.tagName === 'TEXTAREA');
+  await p.keyboard.type('Второе');
+  await p.keyboard.press('Control+Enter');
+  eq((await p.evaluate(() => window.ens.listThreads())).map((x) => x.quote), ['Срок', 'десять'], 'по порядку в тексте');
+  await p.evaluate(() => window.ens.run('comment.next'));
+  eq(await p.evaluate(() => { const { from, to } = window.ens.view.state.selection; return window.ens.view.state.doc.textBetween(from, to); }), 'десять', 'переход к следующему');
+  // Щелчок по карточке выделяет текст.
+  await p.click('.comments-pane .cmt-card >> nth=0 >> .cmt-quote');
+  eq(await p.evaluate(() => { const { from, to } = window.ens.view.state.selection; return window.ens.view.state.doc.textBetween(from, to); }), 'Срок', 'щелчок по карточке');
+  // Удалить и отменить.
+  await p.evaluate(() => window.ens.run('comment.delete'));
+  eq((await p.evaluate(() => window.ens.listThreads())).length, 1, 'удалено');
+  await p.keyboard.press('Control+KeyZ');
+  eq((await p.evaluate(() => window.ens.listThreads())).length, 2, 'отмена возвращает');
+  eq(await text(p), 'Срок исполнения десять дней', 'текст документа не изменился');
+  await p.context().close();
+});
+await test('примечания в docx: comments.xml и commentsExtended.xml (ответы, «решено») туда и обратно', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const c1 = s.marks.comment.create({ id: 1, author: 'Иванов И.', date: '2026-11-18T09:00:00Z', text: 'Проверить\nдва абзаца', replies: [{ author: 'Петров П.', date: '2026-11-18T10:00:00Z', text: 'Проверил' }], done: true });
+    const c2 = s.marks.comment.create({ id: 2, author: 'Сидорова', date: '2026-11-18T11:00:00Z', text: 'Через абзац', replies: [], done: false });
+    const doc = s.nodes.doc.create(null, [
+      s.nodes.paragraph.create(null, [s.text('Начало '), s.text('отмечено', [c1]), s.text(' и '), s.text('здесь', [c2])]),
+      s.nodes.paragraph.create(null, [s.text('продолжение', [c2]), s.text(' конец')]),
+    ]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const f = E.unzip(bytes), dec = (n) => f[n] ? new TextDecoder().decode(f[n]) : '';
+    const back = E.importDocx(bytes);
+    E.loadDoc(back.doc, back.meta, 'b');
+    return { doc: dec('word/document.xml'), cm: dec('word/comments.xml'), ex: dec('word/commentsExtended.xml'), ct: dec('[Content_Types].xml'), rels: dec('word/_rels/document.xml.rels'),
+      lossy: back.meta.lossy, threads: E.listThreads().map((t) => [t.author, t.text, t.replies.map((x) => x.author + ':' + x.text), t.done, t.quote]), text: back.doc.textBetween(0, back.doc.content.size, '|') };
+  });
+  ok(r.doc.includes('<w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/>'), 'диапазон ветки и ответа');
+  ok(/<w:commentRangeEnd w:id="2"\/><w:r><w:commentReference w:id="2"\/><\/w:r>/.test(r.doc), 'конец диапазона во втором абзаце');
+  ok(r.cm.includes('w:author="Иванов И."') && r.cm.includes('<w:annotationRef/>') && r.cm.includes('два абзаца'), 'comments.xml');
+  ok(r.ex.includes('w15:paraIdParent=') && r.ex.includes('w15:done="1"'), 'commentsExtended.xml: ответ и «решено»');
+  ok(r.ct.includes('/word/comments.xml') && r.rels.includes('comments.xml'), 'типы и связи');
+  eq(r.lossy, [], 'без потерь');
+  eq(r.threads, [['Иванов И.', 'Проверить\nдва абзаца', ['Петров П.:Проверил'], true, 'отмечено'], ['Сидорова', 'Через абзац', [], false, 'здесьпродолжение']], 'ветки после круга');
+  eq(r.text, 'Начало отмечено и здесь|продолжение конец', 'текст');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
