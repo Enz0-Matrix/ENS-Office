@@ -751,6 +751,26 @@ await test('колонки: раздел с колонками между раз
 });
 
 
+await test('колонки: плавающий рисунок в абзаце второй колонки стоит по координатам листа', async () => {
+  const p = await colPage(2);
+  const r = await p.evaluate(async () => {
+    const E = window.ens, v = E.view, s = E.schema;
+    // Абзац, целиком стоящий во второй колонке первого листа.
+    let pos = -1;
+    v.state.doc.forEach((n, off) => { const st = v.nodeDOM(off).style; if (pos < 0 && st.left && parseFloat(st.left) > 100) pos = off; });
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const float = { mode: 'behind', hRel: 'page', hOff: 200, hAlign: null, vRel: 'page', vOff: 300, vAlign: null, dist: [0, 0, 8, 8] };
+    v.dispatch(v.state.tr.insert(pos + 1, s.nodes.image.create({ src: png, width: 40, height: 40, float })));
+    await new Promise((res) => setTimeout(res, 500));
+    const img = document.querySelector('.ProseMirror img.fl-behind').getBoundingClientRect();
+    const paper = document.querySelector('.paper').getBoundingClientRect();
+    return { pos, dx: Math.round(img.left - paper.left), dy: Math.round(img.top - paper.top) };
+  });
+  ok(r.pos > 0, 'нет абзаца во второй колонке');
+  ok(Math.abs(r.dx - 200) <= 2 && Math.abs(r.dy - 300) <= 2, `рисунок не на месте: ${JSON.stringify(r)}`);
+  await p.context().close();
+});
+
 await test('колонки: печать в PDF — текст в две колонки, листов столько же', async () => {
   const p = await colPage(2);
   const sheets = await p.evaluate(() => window.ens.pageCount());
