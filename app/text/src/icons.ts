@@ -39,6 +39,11 @@ import ccw24 from '@fluentui/svg-icons/icons/arrow_counterclockwise_24_regular.s
 import wand24 from '@fluentui/svg-icons/icons/wand_24_regular.svg?raw';
 import numRot24 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_24_regular.svg?raw';
 import check24 from '@fluentui/svg-icons/icons/checkmark_24_regular.svg?raw';
+import columns24 from '@fluentui/svg-icons/icons/column_triple_24_regular.svg?raw';
+import columns20 from '@fluentui/svg-icons/icons/column_triple_20_regular.svg?raw';
+import onePage24 from '@fluentui/svg-icons/icons/document_one_page_24_regular.svg?raw';
+import multiPage24 from '@fluentui/svg-icons/icons/document_one_page_multiple_24_regular.svg?raw';
+import pageWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
 import person24 from '@fluentui/svg-icons/icons/person_24_regular.svg?raw';
 
 import crop24 from '@fluentui/svg-icons/icons/crop_24_regular.svg?raw';
@@ -49,17 +54,24 @@ import toFront24 from '@fluentui/svg-icons/icons/position_to_front_24_regular.sv
 import toBack24 from '@fluentui/svg-icons/icons/position_to_back_24_regular.svg?raw';
 import delete24 from '@fluentui/svg-icons/icons/delete_24_regular.svg?raw';
 import bookmark24 from '@fluentui/svg-icons/icons/bookmark_24_regular.svg?raw';
+import compare24 from '@fluentui/svg-icons/icons/branch_compare_24_regular.svg?raw';
+import checkCircle24 from '@fluentui/svg-icons/icons/checkmark_circle_24_regular.svg?raw';
+import arrowUp24 from '@fluentui/svg-icons/icons/arrow_up_24_regular.svg?raw';
+import arrowDown24 from '@fluentui/svg-icons/icons/arrow_down_24_regular.svg?raw';
 import maximize24 from '@fluentui/svg-icons/icons/arrow_maximize_24_regular.svg?raw';
 import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?raw';
 
 Object.assign(ICONS, {
   crop_24: crop24, resize_image_24: resizeImage24, image_edit_24: imageEdit24, image_arrow_counterclockwise_24: imageReset24,
   bookmark_24: bookmark24,
+  branch_compare_24: compare24, checkmark_circle_24: checkCircle24, arrow_up_24: arrowUp24, arrow_down_24: arrowDown24,
   position_to_front_24: toFront24, position_to_back_24: toBack24, delete_24: delete24, arrow_maximize_24: maximize24, arrow_minimize_24: minimize24,
 });
 
 Object.assign(ICONS, {
   person_24: person24,
+  one_page_24: onePage24, multi_page_24: multiPage24, page_width_24: pageWidth24,
+  columns_24: columns24, columns_20: columns20,
   checkmark_24: check24,
   arrow_counterclockwise_24: ccw24, wand_24: wand24, text_number_list_ltr_rotate_270_24: numRot24,
   history_24: history24,
