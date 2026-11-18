@@ -34,7 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
-import { findToc, insertToc, refreshTocs, setPageResolver, tocViews } from './toc';
+import { findFigureList, insertFigureList, findToc, insertToc, refreshTocs, setPageResolver, tocViews } from './toc';
 import { captionDialog } from './captions-ui';
 import { listCaptions } from './captions';
 import { bookmarkDialog } from './bookmarks-ui';
@@ -939,6 +939,17 @@ register(
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   {
+    id: 'insert.figures', label: 'Список иллюстраций (рисунков, таблиц)', keywords: ['список иллюстраций', 'перечень рисунков', 'перечень таблиц', 'список рисунков'],
+    run: (v) => {
+      if (!v) return;
+      const have = findFigureList(view.state.doc, v);
+      if (have) { view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, have.pos)).scrollIntoView()); toast('Такой список уже есть — он обновляется сам.'); }
+      else view.dispatch(insertFigureList(view.state, v));
+      setSelect('insert.figures', '');
+      view.focus();
+    },
+  },
+  {
     id: 'insert.toc', label: 'Оглавление', keywords: ['оглавление', 'содержание', 'toc', 'заголовки', 'номера страниц'],
     run: (v) => {
       const levels = Number(v) || 3;
@@ -1337,7 +1348,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }, { type: 'select', command: 'insert.toc', options: TOC_OPTIONS, width: 130 }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }, { type: 'select', command: 'insert.toc', options: TOC_OPTIONS, width: 130 }, { type: 'select', command: 'insert.figures', options: [{ value: '', label: 'Список иллюстраций…' }, { value: 'Рисунок', label: 'Перечень рисунков' }, { value: 'Таблица', label: 'Перечень таблиц' }, { value: 'Формула', label: 'Перечень формул' }], width: 150 }] },
       {
         name: 'По-русски',
         items: [

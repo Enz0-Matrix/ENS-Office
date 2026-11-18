@@ -3686,6 +3686,38 @@ await test('сравнение: версия из истории против т
   eq(r, [['ins', ' с дополнением']], 'вставка относительно версии');
   await p.context().close();
 });
+
+// --- Список иллюстраций
+await test('список иллюстраций: перечень рисунков по подписям обновляется сам, docx — TOC \\c туда и обратно', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const cap = (name, t) => s.nodes.paragraph.create(null, [s.text(name + ' '), s.nodes.seq.create({ name }), s.text(' – ' + t)]);
+    E.loadDoc(s.nodes.doc.create(null, [P('Начало'), cap('Рисунок', 'Схема'), cap('Таблица', 'Итоги'), cap('Рисунок', 'График')]), E.getMeta(), 'fl');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1)));
+  });
+  await p.evaluate(() => window.ens.run('insert.figures', 'Рисунок'));
+  await p.waitForSelector('.ProseMirror .toc-row');
+  const rows = () => p.$$eval('.ProseMirror .toc-row .toc-text', (e) => e.map((x) => x.textContent));
+  eq(await rows(), ['Рисунок 1 – Схема', 'Рисунок 2 – График'], 'только рисунки');
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(0).textContent), 'ПЕРЕЧЕНЬ РИСУНКОВ', 'заголовок перечня');
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.insert(E.view.state.doc.content.size, s.nodes.paragraph.create(null, [s.text('Рисунок '), s.nodes.seq.create({ name: 'Рисунок' }), s.text(' – Карта')]))); });
+  await p.waitForFunction(() => document.querySelectorAll('.ProseMirror .toc-row').length === 3);
+  eq((await rows())[2], 'Рисунок 3 – Карта', 'новая подпись в перечне');
+  await p.evaluate(() => window.ens.run('insert.figures', 'Рисунок'));
+  eq(await p.evaluate(() => { let n = 0; window.ens.view.state.doc.forEach((x) => { if (x.type.name === 'toc') n++; }); return n; }), 1, 'второй перечень не вставляется');
+  const r = await p.evaluate(() => {
+    const E = window.ens, bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    return { xml, same: back.doc.eq(E.view.state.doc), lossy: back.meta.lossy };
+  });
+  ok(r.xml.includes('TOC \\h \\z \\c "Рисунок"'), 'поле TOC \\c');
+  ok(r.xml.includes('Рисунок 2 – График'), 'строки в результате поля');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, 'документ тот же после круга');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();
