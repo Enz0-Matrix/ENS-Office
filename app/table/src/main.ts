@@ -28,9 +28,10 @@ import { defineFromSelection, initNames, nameFormula, openNameManager } from './
 import { icon, onRibbonDrawn, pickColor, renderRibbon } from './ribbon';
 import { attachFontPicker } from './font-picker';
 import { FUNCTIONS } from './functions';
+import { askValues, bookId, claimSheets, holdForNewBook, otherBooks, sendTo, setBookHost } from './books';
 import { localeId, refreshShared, saveSettings, settings } from './settings';
 import * as desk from './desktop';
-import { isDesktop, isTauri } from './platform';
+import { isDesktop, isTauri, openWindow } from './platform';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const LAST_ROW = 1_048_576;
@@ -955,19 +956,73 @@ function clickSheetTab(index: number): void {
   setSheet(index);
 }
 
+/** Группа выделенных ярлыков (Ctrl/Shift+щелчок, как в Excel): номера листов (sheet_id),
+ *  чтобы группа не путалась при вставке и удалении листов. Активный лист всегда в группе. */
+const sheetGroup = new Set<number>();
+
+/** Листы группы (номера по порядку); без группы — только активный. */
+function groupSheets(): number[] {
+  const props = model.getWorksheetsProperties();
+  const out = props.map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => i === grid.sheet || (sheetGroup.has(p.sheet_id) && p.state === 'visible'))
+    .map(({ i }) => i);
+  return out.length ? out : [grid.sheet];
+}
+
+function clearSheetGroup(): void {
+  if (!sheetGroup.size) return;
+  sheetGroup.clear();
+  renderSheetTabs();
+}
+
+/** Ctrl+щелчок — добавить или убрать лист; Shift+щелчок — все видимые листы от активного до этого. */
+function groupClick(index: number, e: MouseEvent): void {
+  const props = model.getWorksheetsProperties();
+  if (editing) commitEdit(0, 0);
+  if (!sheetGroup.size) sheetGroup.add(props[grid.sheet].sheet_id);
+  if (e.shiftKey) {
+    const [a, b] = index < grid.sheet ? [index, grid.sheet] : [grid.sheet, index];
+    sheetGroup.clear();
+    for (let i = a; i <= b; i++) if (props[i].state === 'visible') sheetGroup.add(props[i].sheet_id);
+  } else {
+    const id = props[index].sheet_id;
+    if (index === grid.sheet) {
+      // активный лист из группы не убирается (как в Excel); группа из одного листа — не группа
+    } else if (sheetGroup.has(id)) sheetGroup.delete(id);
+    else sheetGroup.add(id);
+  }
+  if (sheetGroup.size <= 1) sheetGroup.clear();
+  renderSheetTabs();
+  focusGrid();
+  if (sheetGroup.size > 1) showToast(`Выделено листов: ${sheetGroup.size}. Скрыть, удалить, покрасить ярлыки или перенести в другую книгу — правой кнопкой по ярлычку. Щелчок по ярлычку снимает выделение.`);
+}
+
 function renderSheetTabs(): void {
   const host = $('sheet-tabs');
   host.replaceChildren();
   model.getWorksheetsProperties().forEach((p, i) => {
     if (p.state !== 'visible') return;
     const b = document.createElement('button');
-    b.className = `sheet-tab${i === grid.sheet ? ' active' : ''}`;
+    const grouped = sheetGroup.size > 1 && sheetGroup.has(p.sheet_id);
+    b.className = `sheet-tab${i === grid.sheet ? ' active' : ''}${grouped ? ' grouped' : ''}`;
     b.textContent = p.name;
     if (p.color) b.style.borderBottom = `3px solid ${p.color}`;
     b.addEventListener('mousedown', (e) => { if (editing) e.preventDefault(); });
-    b.addEventListener('click', () => clickSheetTab(i));
+    b.addEventListener('click', (e) => {
+      const formulaPick = editing && activeValue().startsWith('=');
+      if ((e.ctrlKey || e.metaKey || e.shiftKey) && !formulaPick) { groupClick(i, e); return; }
+      if (sheetGroup.size) { sheetGroup.clear(); if (i === grid.sheet) renderSheetTabs(); }
+      clickSheetTab(i);
+      if (!formulaPick) focusGrid(); // клавиатура — сразу листу, как в Excel
+    });
     b.addEventListener('dblclick', () => renameSheet(i, b));
-    b.addEventListener('contextmenu', (e) => { e.preventDefault(); sheetMenu(i, e.clientX, e.clientY); });
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      // правый щелчок вне группы — группа снимается, как в Excel
+      if (sheetGroup.size && !sheetGroup.has(p.sheet_id)) { sheetGroup.clear(); renderSheetTabs(); }
+      if (sheetGroup.size > 1) groupMenu(e.clientX, e.clientY);
+      else sheetMenu(i, e.clientX, e.clientY);
+    });
     host.append(b);
   });
   const add = document.createElement('button');
@@ -1061,6 +1116,7 @@ function sheetMenu(index: number, x: number, y: number): void {
     } },
     { label: 'Переименовать', run: () => renameSheet(index) },
     { label: 'Копировать лист', run: () => { model.duplicateSheet(index); setSheet(index + 1); } },
+    { label: 'Переместить или скопировать…', run: () => moveCopyDialog([index]) },
     { label: 'Переместить влево', disabled: index === 0, run: () => { model.moveSheet(index, index - 1); setSheet(index - 1, false); } },
     { label: 'Переместить вправо', disabled: index >= realSheetCount(model) - 1, run: () => { model.moveSheet(index, index + 1); setSheet(index + 1, false); } },
     { label: 'Скрыть', disabled: visible <= 1, run: () => {
@@ -1073,6 +1129,19 @@ function sheetMenu(index: number, x: number, y: number): void {
     { label: 'Показать листы…', disabled: hidden.length === 0, run: () => sheetsDialog('show') },
   ];
   const menu = showMenu(items, x, y);
+  appendTabColors(menu, [index]);
+  placeMenu(menu, x, y, true);
+}
+
+/** Палитра «Цвет ярлычка» внизу меню; для группы — один шаг отмены. */
+function appendTabColors(menu: HTMLElement, sheets: number[]): void {
+  const paint = (c: string) => {
+    const mark = model.undoMark();
+    for (const i of sheets) model.setSheetColor(i, c);
+    model.mergeUndoSince(mark);
+    renderSheetTabs();
+    focusGrid();
+  };
   const colors = document.createElement('div');
   colors.className = 'menu-colors';
   colors.title = 'Цвет ярлычка';
@@ -1081,21 +1150,216 @@ function sheetMenu(index: number, x: number, y: number): void {
     s.className = 'swatch';
     s.style.background = c || '#ffffff';
     s.title = c ? c : 'Без цвета';
-    s.addEventListener('click', () => { menu.hidden = true; model.setSheetColor(index, c); renderSheetTabs(); });
+    s.addEventListener('click', () => { menu.hidden = true; paint(c); });
     colors.append(s);
   }
   const more = document.createElement('button');
   more.className = 'swatch';
   more.textContent = '…';
   more.title = 'Другие цвета…';
-  more.addEventListener('click', () => { menu.hidden = true; pickColor('#2B7A6B', (c) => { model.setSheetColor(index, c); renderSheetTabs(); }); });
+  more.addEventListener('click', () => { menu.hidden = true; pickColor('#2B7A6B', paint); });
   colors.append(more);
   const label = document.createElement('div');
   label.className = 'menu-label';
-  label.textContent = 'Цвет ярлычка';
+  label.textContent = sheets.length > 1 ? `Цвет ярлычков (${sheets.length})` : 'Цвет ярлычка';
   menu.append(label, colors);
+}
+
+/** Меню группы листов: скрыть, удалить, цвет — каждое действие одной отменой. */
+function groupMenu(x: number, y: number): void {
+  const sheets = groupSheets();
+  const n = sheets.length;
+  const props = model.getWorksheetsProperties();
+  const visible = props.filter((p) => p.state === 'visible').length;
+  const names = sheets.map((i) => `«${props[i].name}»`).join(', ');
+  const allVisible = n >= visible;
+  const items: MenuItem[] = [
+    { label: `Удалить листы (${n})`, disabled: allVisible, run: () => {
+      if (!confirm(`Удалить листы ${names}? Отменить удаление можно сочетанием Ctrl+Z.`)) return;
+      const mark = model.undoMark();
+      try {
+        for (const i of [...sheets].sort((a, b) => b - a)) model.deleteSheet(i);
+      } catch (e) { showToast(`Не удалось удалить: ${e}`); }
+      model.mergeUndoSince(mark);
+      sheetGroup.clear();
+      setSheet(Math.max(0, model.getWorksheetsProperties().findIndex((p) => p.state === 'visible')));
+      focusGrid();
+    } },
+    { label: `Скрыть листы (${n})`, disabled: allVisible, run: () => {
+      const mark = model.undoMark();
+      try {
+        for (const i of sheets) model.hideSheet(i);
+      } catch (e) { showToast(`Не удалось скрыть: ${e}`); }
+      model.mergeUndoSince(mark);
+      sheetGroup.clear();
+      setSheet(model.getWorksheetsProperties().findIndex((p) => p.state === 'visible'));
+      focusGrid();
+    } },
+    { label: `Переместить или скопировать (${n})…`, run: () => moveCopyDialog(sheets) },
+    { label: 'Разгруппировать листы', separator: true, run: () => clearSheetGroup() },
+  ];
+  if (allVisible) items.unshift({ label: 'Все листы скрыть или удалить нельзя: один остаётся', disabled: true, run: () => {} });
+  const menu = showMenu(items, x, y);
+  appendTabColors(menu, sheets);
   placeMenu(menu, x, y, true);
 }
+
+/** Листы, на которые ссылаются формулы других листов книги (после переноса они покажут #ССЫЛКА!). */
+function referencedFromOutside(sheets: number[]): string[] {
+  const props = model.getWorksheetsProperties();
+  const out: string[] = [];
+  for (const i of sheets) {
+    const name = props[i].name;
+    const quoted = `'${name.replace(/'/g, "''")}'!`;
+    const hits = [...model.findAll(`${name}!`, false, false, true, -1), ...model.findAll(quoted, false, false, true, -1)];
+    if (hits.some((h) => !sheets.includes(h.sheet))) out.push(name);
+  }
+  return out;
+}
+
+/** «Переместить или скопировать» (как в Excel): в эту книгу, в другую открытую или в новую. */
+async function moveCopyDialog(sheets: number[]): Promise<void> {
+  if (editing) commitEdit(0, 0);
+  const props = model.getWorksheetsProperties();
+  const ids = sheets.map((i) => props[i].sheet_id);
+  const books = model.exportSheet ? await otherBooks() : [];
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const own = props.map((p, i) => ({ p, i })).filter(({ p }) => !isExternalSheet(p.name));
+  const overlay = $('recovery');
+  overlay.innerHTML = `<div class="modal small"><h2>Переместить или скопировать</h2>
+    <p class="bs-muted">${sheets.length > 1 ? `Листы: ${sheets.length}` : `Лист «${esc(props[sheets[0]].name)}»`}</p>
+    <p><label>В книгу:<br><select data-f="book" style="width:100%">
+      <option value="">${esc(doc.title)} (эта книга)</option>
+      ${books.map((b) => `<option value="${esc(b.id)}">${esc(b.title)}</option>`).join('')}
+      ${model.exportSheet ? '<option value="new">(новая книга)</option>' : ''}
+    </select></label></p>
+    <p><label>Перед листом:<br><select data-f="before" size="7" style="width:100%"></select></label></p>
+    <p><label><input type="checkbox" data-f="copy"> Создать копию</label></p>
+    <p class="bs-muted" data-f="note"></p>
+    <div class="rec-actions"><button data-act="ok" class="primary">ОК</button><button data-act="cancel">Отмена</button></div></div>`;
+  overlay.hidden = false;
+  const f = <T extends HTMLElement>(k: string) => overlay.querySelector<T>(`[data-f="${k}"]`)!;
+  const bookSel = f<HTMLSelectElement>('book'), beforeSel = f<HTMLSelectElement>('before'), copyBox = f<HTMLInputElement>('copy');
+  const fill = () => {
+    const id = bookSel.value;
+    const names = id === '' ? own.map(({ p }) => p.name) : id === 'new' ? [] : books.find((b) => b.id === id)?.sheets ?? [];
+    beforeSel.innerHTML = [...names.map((n, k) => `<option value="${k}">${esc(n)}</option>`), '<option value="-1">(переместить в конец)</option>'].join('');
+    beforeSel.selectedIndex = 0;
+    const visible = props.filter((p) => p.state === 'visible').length;
+    const all = id !== '' && sheets.length >= visible;
+    if (all) copyBox.checked = true;
+    copyBox.disabled = all;
+    f('note').textContent = all ? 'Все листы из книги перенести нельзя — будет создана копия.'
+      : id !== '' ? 'Ссылки на другие листы этой книги станут ссылками на эту книгу, значения перенесутся.' : '';
+  };
+  bookSel.addEventListener('change', fill);
+  fill();
+  const close = () => { overlay.hidden = true; overlay.innerHTML = ''; focusGrid(); };
+  overlay.querySelector('[data-act="cancel"]')!.addEventListener('click', close);
+  beforeSel.addEventListener('dblclick', () => overlay.querySelector<HTMLButtonElement>('[data-act="ok"]')!.click());
+  overlay.querySelector('[data-act="ok"]')!.addEventListener('click', async () => {
+    const target = bookSel.value, copy = copyBox.checked;
+    const before = Number(beforeSel.value);
+    close();
+    if (target === '') { moveCopyHere(ids, before, copy); return; }
+    if (!copy) {
+      const refs = referencedFromOutside(sheets);
+      if (refs.length && !confirm(`На ${refs.length > 1 ? 'листы' : 'лист'} ${refs.map((n) => `«${n}»`).join(', ')} ссылаются формулы других листов этой книги. После переноса они покажут #ССЫЛКА!.\n\nПеренести всё равно? («Отмена» — ничего не делать; копия листа ссылок не ломает.)`)) return;
+    }
+    let pkgs: Uint8Array[];
+    try { pkgs = sheets.map((i) => model.exportSheet!(i, doc.title, doc.path)); } catch (e) { showToast(`Не удалось подготовить лист: ${e}`); return; }
+    let result: { error?: string; names?: string[] };
+    if (target === 'new') {
+      const held = holdForNewBook(pkgs);
+      if (isDesktop) await openWindow(held.query, 'Книга');
+      else window.open(`${location.pathname}?${held.query}`, '_blank');
+      showToast('Открывается новая книга…');
+      result = await held.result;
+    } else result = await sendTo(target, pkgs, before);
+    if (result.error) { showToast(`Лист не перенесён: ${result.error}. Эта книга не изменилась.`); return; }
+    const where = target === 'new' ? 'новую книгу' : `книгу «${books.find((b) => b.id === target)?.title ?? ''}»`;
+    if (copy) { showToast(`Скопировано в ${where}: ${(result.names ?? []).join(', ')}.`); return; }
+    // Перенос: лист удаляется здесь только после подтверждения от другой книги. Одна отмена.
+    const mark = model.undoMark();
+    try {
+      for (const id of ids) {
+        const i = model.getWorksheetsProperties().findIndex((p) => p.sheet_id === id);
+        if (i >= 0) model.deleteSheet(i);
+      }
+    } catch (e) { showToast(`Копия создана, но лист здесь не удалён: ${e}`); }
+    model.mergeUndoSince(mark);
+    sheetGroup.clear();
+    setSheet(Math.max(0, model.getWorksheetsProperties().findIndex((p) => p.state === 'visible')));
+    focusGrid();
+    showToast(`Перенесено в ${where}. Вернуть лист в эту книгу — Ctrl+Z.`);
+  });
+}
+
+/** Перестановка или копия листов внутри книги: перед листом `before` (-1 — в конец); одна отмена. */
+function moveCopyHere(ids: number[], before: number, copy: boolean): void {
+  const idx = (id: number) => model.getWorksheetsProperties().findIndex((p) => p.sheet_id === id);
+  const props = model.getWorksheetsProperties();
+  const anchorId = before >= 0 ? props[before]?.sheet_id : undefined;
+  const mark = model.undoMark();
+  let last = -1;
+  try {
+    for (const id of ids) {
+      let from = idx(id);
+      if (copy) { model.duplicateSheet(from); from += 1; }
+      const movingId = model.getWorksheetsProperties()[from].sheet_id;
+      const count = realSheetCount(model);
+      let to = anchorId === undefined ? count - 1 : idx(anchorId);
+      if (to > from) to -= 1; // лист уходит со своего места: всё правее сдвигается
+      if (from !== to) model.moveSheet(from, to);
+      last = idx(movingId);
+    }
+  } catch (e) { showToast(`Не удалось: ${e}`); }
+  model.mergeUndoSince(mark);
+  sheetGroup.clear();
+  setSheet(last >= 0 ? last : grid.sheet, false);
+  focusGrid();
+}
+
+/** Листы из другой книги (её «Переместить или скопировать»). */
+let freshForTake = new URLSearchParams(location.search).has('take');
+setBookHost({
+  info: () => ({ title: doc.title, sheets: model.getWorksheetsProperties().filter((p) => !isExternalSheet(p.name)).map((p) => p.name) }),
+  rangeValues: (sheet, rect) => {
+    const i = model.getWorksheetsProperties().findIndex((p) => p.name === sheet);
+    return i < 0 || !model.rangeValues ? null : model.rangeValues(i, ...rect);
+  },
+  takeSheets: (pkgs, before) => {
+    if (!model.importSheet) throw new Error('Движок этой книги не умеет принимать листы: обновите программу');
+    if (editing) commitEdit(0, 0);
+    const mark = model.undoMark();
+    const names: string[] = [];
+    let first = -1;
+    try {
+      // Новая книга, открытая ради переноса: пустой «Лист1» уступает место перенесённым.
+      const blank = freshForTake && realSheetCount(model) === 1 && model.getSheetDimension(0).every((v) => v <= 1) && !model.getCellContent(0, 1, 1);
+      const blankId = blank ? model.getWorksheetsProperties()[0].sheet_id : -1;
+      if (blank) model.renameSheet(0, `~${Date.now().toString(36)}`);
+      let at = before < 0 ? realSheetCount(model) : before;
+      for (const p of pkgs) {
+        const i = model.importSheet(p, at);
+        if (first < 0) first = i;
+        names.push(model.getWorksheetsProperties()[i].name);
+        at = i + 1;
+      }
+      if (blank) {
+        model.deleteSheet(model.getWorksheetsProperties().findIndex((p) => p.sheet_id === blankId));
+        first = 0;
+      }
+    } finally {
+      model.mergeUndoSince(mark);
+      freshForTake = false;
+    }
+    sheetGroup.clear();
+    setSheet(Math.max(0, first));
+    showToast(`Получено листов: ${names.length} (${names.join(', ')}). Отменить — Ctrl+Z.`);
+    return names;
+  },
+});
 
 interface MenuItem {
   label: string; run: () => void; disabled?: boolean; keys?: string; separator?: boolean;
@@ -2750,6 +3014,13 @@ function pasteSpecialMenu(x: number, y: number): void {
 function pasteSpecialItems(): MenuItem[] {
   const c = clip;
   if (!c) {
+    const other = sharedClip();
+    if (other?.link && other.link.book !== bookId) {
+      return [
+        { label: 'Вставить всё', keys: 'Ctrl+V', run: () => void readText().then(paste).catch(() => showToast('Буфер обмена недоступен: вставьте сочетанием Ctrl+V.')) },
+        { label: `Вставить связь с «${other.link.title}»`, run: () => void pasteLink(other.range, other.link!) },
+      ];
+    }
     return [{ label: 'Сначала скопируйте ячейки (Ctrl+C)', disabled: true, run: () => {} }];
   }
   const [r1, c1, r2, c2] = c.range;
@@ -2806,7 +3077,50 @@ function pasteSpecialItems(): MenuItem[] {
       model.onPasteStyles(styles());
     }, Math.max(r2 - r1 + 1, grid.sel.r2 - grid.sel.r1 + 1), Math.max(c2 - c1 + 1, grid.sel.c2 - grid.sel.c1 + 1)) },
     { label: 'Транспонировать (значения)', separator: true, run: () => run2(() => { at(); model.pasteValues(c.sheet, c.range, true); }, c2 - c1 + 1, r2 - r1 + 1) },
+    { label: 'Вставить связь', run: () => void pasteLink(c.range, null, c.sheet) },
   ];
+}
+
+/** Имя листа в ссылке: в кавычках, если нужно (пробелы, знаки, цифра в начале, вид адреса). */
+function sheetRef(name: string): string {
+  const plain = /^[A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё.]*$/.test(name) && !/^[A-Za-z]{1,3}\d+$/.test(name);
+  return plain ? `${name}!` : `'${name.replace(/'/g, "''")}'!`;
+}
+
+/** «Специальная вставка → Вставить связь», как в Excel: в каждую ячейку — формула-ссылка на
+ *  скопированную. Своя книга — `=Лист!A1`; другая — `='C:\Папка\[Книга.xlsx]Лист'!A1`
+ *  (путь — чтобы «Обновить связи» нашла файл), значения сразу берутся из открытой книги.
+ *  Одна ячейка — абсолютная ссылка ($A$1), диапазон — относительные. Одна отмена. */
+async function pasteLink(range: [number, number, number, number], link: ClipLink | null, ownSheet = 0): Promise<void> {
+  const [r1, c1, r2, c2] = range;
+  const h = r2 - r1 + 1, w = c2 - c1 + 1;
+  const single = h === 1 && w === 1;
+  let prefix: string;
+  if (link) {
+    if (isExternalSheet(link.sheet)) { showToast('Это ссылка на третью книгу: скопируйте ячейки в ней самой.'); return; }
+    const dir = link.path ? link.path.slice(0, Math.max(link.path.lastIndexOf('/'), link.path.lastIndexOf('\\')) + 1) : '';
+    prefix = `'${`${dir}[${link.title}]${link.sheet}`.replace(/'/g, "''")}'!`;
+    // значения — из открытой книги-источника сразу, до формул: первая же формула покажет число
+    const bytes = await askValues(link.book, link.sheet, range);
+    if (bytes && model.mergeExternalValues) {
+      try { model.mergeExternalValues(link.title, link.path, link.sheet, bytes); } catch (e) { showToast(`Значения не получены: ${e}`); }
+    } else showToast(`Книга «${link.title}» закрыта или не ответила: значения появятся после «Данные → Обновить связи».`);
+  } else {
+    prefix = ownSheet === grid.sheet ? '' : sheetRef(model.getWorksheetsProperties()[ownSheet].name);
+  }
+  const at = { r: grid.sel.r1, c: grid.sel.c1 };
+  const mark = model.undoMark();
+  try {
+    for (let i = 0; i < h; i++) {
+      for (let j = 0; j < w; j++) {
+        const col = columnName(c1 + j), row = r1 + i;
+        model.setUserInput(grid.sheet, at.r + i, at.c + j, single ? `=${prefix}$${col}$${row}` : `=${prefix}${col}${row}`);
+      }
+    }
+  } catch (e) { showToast(`Не удалось вставить связь: ${e}`); }
+  model.mergeUndoSince(mark);
+  grid.selectRange(at.r, at.c, at.r + h - 1, at.c + w - 1);
+  grid.render(); updateFormulaBar(); updateStatus(); focusGrid();
 }
 
 grid.onContextMenu = (x, y, header) => {
@@ -2932,17 +3246,24 @@ function insertCutLines(before: number): void {
 const SHARED_CLIP = 'ens-clip';
 function shareClip(c: Clip): void {
   try {
-    const json = JSON.stringify({ text: c.text, data: c.data, range: c.range }, (_k, v) => (v instanceof Map ? { __map: [...v] } : v));
+    const link: ClipLink = { book: bookId, title: doc.title, path: doc.path, sheet: model.getWorksheetsProperties()[c.sheet].name };
+    const json = JSON.stringify({ text: c.text, data: c.data, range: c.range, link }, (_k, v) => (v instanceof Map ? { __map: [...v] } : v));
     if (json.length < 4_000_000) localStorage.setItem(SHARED_CLIP, json); else localStorage.removeItem(SHARED_CLIP);
   } catch { /* общий буфер недоступен: останется текст */ }
 }
-function foreignClip(text: string): { data: unknown; range: [number, number, number, number] } | null {
+/** Откуда скопировано (для «Вставить связь» в другой книге). */
+interface ClipLink { book: string; title: string; path: string; sheet: string }
+type SharedClip = { text: string; data: unknown; range: [number, number, number, number]; link?: ClipLink };
+function sharedClip(): SharedClip | null {
   try {
     const raw = localStorage.getItem(SHARED_CLIP);
     if (!raw) return null;
-    const c = JSON.parse(raw, (_k, v) => (v && typeof v === 'object' && Array.isArray(v.__map) ? new Map(v.__map) : v)) as { text: string; data: unknown; range: [number, number, number, number] };
-    return sameText(text, c.text) ? c : null;
+    return JSON.parse(raw, (_k, v) => (v && typeof v === 'object' && Array.isArray(v.__map) ? new Map(v.__map) : v)) as SharedClip;
   } catch { return null; }
+}
+function foreignClip(text: string): SharedClip | null {
+  const c = sharedClip();
+  return c && sameText(text, c.text) ? c : null;
 }
 
 function dropClip(): void {
@@ -4119,3 +4440,5 @@ await desk.start({
   refresh: () => { grid.render(); updateFormulaBar(); updateStatus(); },
   currentSheet: () => grid.sheet,
 });
+// Новая книга, открытая ради переноса листов из другой: просим их.
+claimSheets();
