@@ -14,8 +14,8 @@ import type { CellBorders, Edge, FrameLine } from './schema';
 
 export interface PageSetup {
   w: number; h: number; top: number; bottom: number; left: number; right: number;
-  /** Колонки раздела (w:cols): число и промежуток, pt. Пока показываются одной полосой, но сохраняются. */
-  cols?: number; colSpace?: number;
+  /** Колонки раздела (w:cols): число и промежуток, pt; colW — ширины неравных колонок, pt; colSep — линия между колонками. */
+  cols?: number; colSpace?: number; colW?: number[]; colSep?: boolean;
 }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
 /** Содержимое колонтитула — документ ProseMirror в виде JSON (null — пусто). */
@@ -189,6 +189,9 @@ interface Ctx {
   cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
+  /** Текущее исправление (внутри w:ins / w:del) и счётчик номеров исправлений. */
+  rev?: { kind: 'ins' | 'del'; id: number; author: string; date: string } | null;
+  revSeq: number;
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -295,7 +298,7 @@ function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml' };
 
 /** Состояние разбора одного абзаца: накопленное содержимое и ссылка. */
-interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean }[]; breakNext: boolean; /** Блоки, вынесенные из абзаца (надписи): встают перед ним. */ blocks: PMNode[] }
+interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean; colBefore?: boolean }[]; breakNext: boolean; /** Следующий кусок начинается с новой колонки (w:br w:type="column"). */ colNext?: boolean; /** Блоки, вынесенные из абзаца (надписи): встают перед ним. */ blocks: PMNode[] }
 
 function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[] {
   const m: Mark[] = [];
@@ -310,6 +313,7 @@ function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[
   const size = fmt.size && fmt.size !== d.size ? fmt.size : null;
   if (font || size || fmt.color || fmt.bg) m.push(schema.marks.textStyle.create({ font, size, color: fmt.color ?? null, bg: fmt.bg ?? null }));
   if (href) m.push(schema.marks.link.create({ href }));
+  if (ctx.rev) m.push(schema.marks[ctx.rev.kind].create({ id: ctx.rev.id, author: ctx.rev.author, date: ctx.rev.date }));
   return Mark.setFrom(m);
 }
 
@@ -491,6 +495,7 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         if (!field || (field.phase === 'result' && !field.suppress)) addText(acc, c.textContent ?? '', field?.href && !href ? marksFor(ctx, fmt, field.href) : marks);
         break;
       case 'delText':
+        if (ctx.rev?.kind === 'del' && (!field || (field.phase === 'result' && !field.suppress))) addText(acc, c.textContent ?? '', marks);
         break;
       case 'tab':
         if (!field || (field.phase === 'result' && !field.suppress)) addText(acc, '\t', marks);
@@ -500,10 +505,10 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       case 'br':
       case 'cr':
-        if (c.localName === 'br' && attr(c, 'type') === 'page') {
-          acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
+        if (c.localName === 'br' && (attr(c, 'type') === 'page' || attr(c, 'type') === 'column')) {
+          acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext, colBefore: acc.colNext });
           acc.nodes = [];
-          acc.breakNext = true;
+          if (attr(c, 'type') === 'page') { acc.breakNext = true; acc.colNext = false; } else if (!acc.breakNext) acc.colNext = true;
         } else if (!field || (field.phase === 'result' && !field.suppress)) {
           acc.nodes.push(schema.nodes.hard_break.create(null, null, marks));
         }
@@ -576,12 +581,21 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         break;
       }
       case 'ins':
-        lose(ctx, 'исправления (приняты как есть)');
-        walkInline(ctx, c, acc, href);
-        break;
       case 'del':
-        lose(ctx, 'исправления (приняты как есть)');
+      case 'moveTo':
+      case 'moveFrom': {
+        // Исправления Word становятся пометками: видны, принимаются и отклоняются, сохраняются обратно.
+        const kind = c.localName === 'ins' || c.localName === 'moveTo' ? 'ins' : 'del';
+        const author = attr(c, 'author') ?? '', date = attr(c, 'date') ?? '';
+        // Соседние куски одной правки (тот же автор и время) — одно исправление, как в Word.
+        const prev = acc.nodes[acc.nodes.length - 1]?.marks.find((m) => m.type.name === kind);
+        const id = prev && prev.attrs.author === author && prev.attrs.date === date ? prev.attrs.id as number : ++ctx.revSeq;
+        const outer = ctx.rev;
+        ctx.rev = { kind, id, author, date };
+        walkInline(ctx, c, acc, href);
+        ctx.rev = outer;
         break;
+      }
       case 'sdt':
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
         break;
@@ -626,12 +640,21 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
   ctx.baseR = fromStyle.r;
   walkInline(ctx, p, acc, undefined);
   ctx.baseR = {};
-  acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
+  acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext, colBefore: acc.colNext });
 
   const entries: Entry[] = acc.blocks.map((node) => ({ node }));
+  // Знак абзаца вставлен или удалён (w:pPr/w:rPr/w:ins|w:del): целый абзац — исправление, если весь его текст — та же правка.
+  const markRev = [...(kid(pPr, 'rPr')?.children ?? [])].find((e) => e.localName === 'ins' || e.localName === 'del');
+  const blockRev = (nodes: PMNode[]) => {
+    if (!markRev) return null;
+    const kind = markRev.localName as 'ins' | 'del';
+    const ms = nodes.map((n) => n.marks.find((m) => m.type.name === kind));
+    if (ms.some((m) => !m)) return null;
+    return { kind, id: ms.length ? ms[0]!.attrs.id as number : ++ctx.revSeq, author: attr(markRev, 'author') ?? '', date: attr(markRev, 'date') ?? '' };
+  };
   acc.chunks.forEach((chunk, k) => {
     // Абзац, состоящий только из разрыва страницы, не оставляет пустого абзаца до разрыва.
-    if (!chunk.nodes.length && !chunk.breakBefore && k < acc.chunks.length - 1) return;
+    if (!chunk.nodes.length && !chunk.breakBefore && !chunk.colBefore && k < acc.chunks.length - 1) return;
     const attrs = {
       align: para.align && para.align !== 'left' ? para.align : null,
       indent: !info && para.left ? para.left : null,
@@ -641,6 +664,8 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
       after: para.after != null && para.after !== d.after ? para.after : null,
       line: para.line && para.line !== d.line ? para.line : null,
       pageBreakBefore: !!(chunk.breakBefore || (k === 0 && para.pageBreakBefore)),
+      rev: blockRev(chunk.nodes),
+      colBreakBefore: !!chunk.colBefore && !chunk.breakBefore && !(k === 0 && para.pageBreakBefore),
       ...(level ? { level } : {}),
     };
     entries.push({
@@ -923,7 +948,7 @@ export function importDocx(bytes: Uint8Array): Imported {
   const dir = main.slice(0, main.lastIndexOf('/') + 1);
   const ctx: Ctx = {
     files, rels: readRels(files, main), styles: new Map(), defaults: { ...DEFAULTS }, nums: new Map(),
-    lossy: new Map(), baseR: {}, fields: [], sects: [],
+    lossy: new Map(), baseR: {}, fields: [], sects: [], revSeq: 0,
   };
   for (const [, rel] of ctx.rels) {
     if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
@@ -973,7 +998,17 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.right = mv('right', page.right);
     const cols = kid(sect, 'cols');
     const n = num(attr(cols, 'num')) ?? 1;
-    if (n > 1) { page.cols = Math.min(n, 12); const sp = num(attr(cols, 'space')); if (sp != null) page.colSpace = sp / 20; }
+    const own = kids(cols, 'col');
+    const count = Math.max(n, attr(cols, 'equalWidth') === '0' || attr(cols, 'equalWidth') === 'false' ? own.length : 0);
+    if (count > 1) {
+      page.cols = Math.min(count, 12);
+      const sp = num(attr(cols, 'space')) ?? num(attr(own[0], 'space'));
+      if (sp != null) page.colSpace = sp / 20;
+      const ws = own.map((c) => (num(attr(c, 'w')) ?? 0) / 20);
+      if ((attr(cols, 'equalWidth') === '0' || attr(cols, 'equalWidth') === 'false') && ws.length === page.cols && ws.every((x) => x > 0)) page.colW = ws;
+      const sep = attr(cols, 'sep');
+      if (sep === '1' || sep === 'true' || sep === 'on') page.colSep = true;
+    }
     return page;
   };
   // Разделы: у каждого свои размер и поля. Разрыв ставится между разделами и хранит страницу следующего за ним.
@@ -1086,6 +1121,11 @@ interface ExportCtx {
   docIds: { n: number };
   linkIds: Map<string, string>;
 }
+
+/** Номера w:id исправлений при записи: уникальны в пределах файла. */
+let exportRevId = 0;
+const revOpen = (kind: string, a: Record<string, unknown>) =>
+  `<w:${kind} w:id="${++exportRevId}" w:author="${esc(String(a.author || 'ENS-Text'))}"${a.date ? ` w:date="${esc(String(a.date))}"` : ''}>`;
 
 function relId(ctx: ExportCtx, type: string, target: string, external = false): string {
   const id = `rId${ctx.nextRel++}`;
@@ -1212,6 +1252,8 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       }
     }
     const rPr = rPrXml(child.marks, !!link);
+    const rev = child.marks.find((m) => m.type.name === 'ins' || m.type.name === 'del');
+    const start = out.length;
     if (child.type.name === 'field') {
       closeLink();
       const kind = child.attrs.kind === 'pages' ? 'NUMPAGES' : 'PAGE';
@@ -1231,9 +1273,27 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
     }
+    // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
+    if (rev && child.type.name !== 'field') {
+      let runs = out.slice(start);
+      if (rev.type.name === 'del') runs = runs.replace(/<w:t( [^>]*)?>/g, '<w:delText$1>').replace(/<\/w:t>/g, '</w:delText>');
+      out = out.slice(0, start) + revOpen(rev.type.name, rev.attrs) + runs + `</w:${rev.type.name}>`;
+    }
   });
   closeLink();
   return out;
+}
+
+/** Колонки раздела (w:cols): равные — числом, неравные — списком w:col; линия между колонками — w:sep. */
+function colsXml(p: PageSetup): string {
+  if (!p.cols || p.cols < 2) return '';
+  const sp = tw(p.colSpace ?? 35.4);
+  const sep = p.colSep ? ' w:sep="1"' : '';
+  if (p.colW && p.colW.length === p.cols) {
+    return `<w:cols w:num="${p.cols}" w:space="${sp}"${sep} w:equalWidth="0">` +
+      p.colW.map((w, k) => `<w:col w:w="${tw(w)}"${k + 1 < p.cols! ? ` w:space="${sp}"` : ''}/>`).join('') + '</w:cols>';
+  }
+  return `<w:cols w:num="${p.cols}" w:space="${sp}"${sep}/>`;
 }
 
 function pPrXml(node: PMNode, extra: { num?: { id: number; level: number }; indentLeft?: number } = {}): string {
@@ -1249,11 +1309,15 @@ function pPrXml(node: PMNode, extra: { num?: { id: number; level: number }; inde
   const left = (a.indent ?? 0) + (extra.indentLeft ?? 0);
   if (left || a.first || a.rindent) x += `<w:ind w:left="${tw(left)}"` + (a.rindent ? ` w:right="${tw(a.rindent)}"` : '') + (a.first ? (a.first < 0 ? ` w:hanging="${tw(-a.first)}"` : ` w:firstLine="${tw(a.first)}"`) : '') + '/>';
   if (a.align) x += `<w:jc w:val="${a.align === 'justify' ? 'both' : a.align}"/>`;
+  const rev = a.rev as { kind: string; author: string; date: string } | null | undefined;
+  if (rev) x += `<w:rPr>${revOpen(rev.kind, rev).replace(/>$/, '/>')}</w:rPr>`;
   return x ? `<w:pPr>${x}</w:pPr>` : '';
 }
 
 function paragraphXml(ctx: ExportCtx, node: PMNode, extra?: Parameters<typeof pPrXml>[1]): string {
-  return `<w:p>${pPrXml(node, extra)}${runsXml(ctx, node)}</w:p>`;
+  // Разрыв колонки перед абзацем: в Word это знак w:br w:type="column" в начале абзаца.
+  const col = node.attrs.colBreakBefore && !node.attrs.pageBreakBefore ? '<w:r><w:br w:type="column"/></w:r>' : '';
+  return `<w:p>${pPrXml(node, extra)}${col}${runsXml(ctx, node)}</w:p>`;
 }
 
 /** Определения нумерации одного верхнего списка: уровни со своим форматом. */
@@ -1428,6 +1492,7 @@ function stylesXml(meta: DocMeta): string {
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
   const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
   const pagesOf: PageSetup[] = [meta.page];
@@ -1472,7 +1537,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
   const sectOf = (p: PageSetup, first: boolean): string => `<w:sectPr>${first ? refs : ''}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
     `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
-    (p.cols && p.cols > 1 ? `<w:cols w:num="${p.cols}" w:space="${tw(p.colSpace ?? 35.4)}"/>` : '') +
+    colsXml(p) +
     `${first && hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
   // Колонтитулы описаны в первом разделе, остальные их наследуют (так делает и Word).
   const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');
