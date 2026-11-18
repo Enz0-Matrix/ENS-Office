@@ -36,6 +36,8 @@ import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
 import { captionDialog } from './captions-ui';
 import { listCaptions } from './captions';
+import { bookmarkDialog } from './bookmarks-ui';
+import { gotoBookmark, isHidden, listBookmarks } from './bookmarks';
 import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
 import { listRevisions } from './compare';
 import { compatDialog } from './compat-ui';
@@ -582,7 +584,8 @@ const view = new EditorView($('sheet'), {
   handleClick(v, pos, event) {
     if (!event.ctrlKey && !event.metaKey) return false;
     const $pos = v.state.doc.resolve(pos);
-    const link = schema.marks.link.isInSet($pos.marks());
+    // Щелчок у самого начала ссылки: позиция ещё «до» неё, метку берём у знака справа.
+    const link = schema.marks.link.isInSet($pos.marks()) ?? schema.marks.link.isInSet($pos.nodeAfter?.marks ?? []);
     if (!link) return false;
     openHref(link.attrs.href as string);
     return true;
@@ -778,6 +781,11 @@ function formulaDialog(): void {
 
 /** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
 function openHref(href: string): void {
+  // Ссылка внутри документа: переход к закладке.
+  if (href.startsWith('#')) {
+    if (!gotoBookmark(view, href.slice(1))) toast(`Закладки «${href.slice(1)}» в документе нет. Список ссылок без цели — в окне «Закладка».`);
+    return;
+  }
   if (desktop.isDesktop) {
     desktop.openTarget(href).catch((e) => toast(String((e as Error)?.message ?? e)));
     return;
@@ -918,6 +926,7 @@ register(
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.caption', label: 'Вставить название (подпись)…', keywords: ['подпись', 'название', 'рисунок', 'таблица', 'формула', 'нумерация', 'seq', 'caption'], run: () => captionDialog(view) },
+  { id: 'insert.bookmark', label: 'Закладка…', keywords: ['закладка', 'bookmark', 'якорь', 'перейти', 'метка места'], keys: ['Ctrl+Shift+F5'], run: () => bookmarkDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
@@ -1298,7 +1307,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }] },
       {
         name: 'По-русски',
         items: [
@@ -1885,6 +1894,12 @@ function dictDialog(): void {
 function linkDialog(): void {
   dialog((box, close) => {
     const url = el('input', { type: 'text', value: linkAt(active().state) ?? 'https://', placeholder: 'Адрес ссылки' });
+    // Место в документе: закладки (как в Word). Выбор подставляет адрес «#имя».
+    const marks = listBookmarks(view.state.doc).filter((b) => !isHidden(b.name));
+    const place = el('select', { ariaLabel: 'Место в документе' }, new Option('— адрес в интернете или файл —', ''),
+      ...marks.map((b) => new Option(`${b.name}${b.context ? ' — ' + b.context : ''}`, '#' + b.name)));
+    place.value = marks.some((b) => '#' + b.name === url.value) ? url.value : '';
+    place.addEventListener('change', () => { if (place.value) url.value = place.value; });
     const ok = el('button', { class: 'primary', textContent: 'Применить' });
     const go = () => {
       const v = url.value.trim();
@@ -1896,6 +1911,7 @@ function linkDialog(): void {
     box.append(
       el('h2', { textContent: 'Гиперссылка' }),
       el('div', { class: 'dlg-row' }, el('label', { textContent: 'Адрес' }), url),
+      ...(marks.length ? [el('div', { class: 'dlg-row' }, el('label', { textContent: 'Место в документе' }), place)] : []),
       el('p', { textContent: 'Пустой адрес убирает ссылку с выделенного текста. Открыть ссылку: Ctrl+щелчок.' }),
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
     );
@@ -2492,6 +2508,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listCaptions: () => listCaptions(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listCaptions: () => listCaptions(view.state.doc), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

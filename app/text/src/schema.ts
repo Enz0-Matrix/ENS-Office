@@ -257,6 +257,16 @@ const nodes: Record<string, NodeSpec> = {
     parseDOM: [{ tag: 'span.seq[data-seq]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-seq') }) }],
     toDOM: (n) => ['span', { class: 'seq', 'data-seq': n.attrs.name, title: `Номер: ${n.attrs.name} (обновляется сам)` }],
   },
+  /** Закладка (w:bookmarkStart): невидимая точка в тексте с именем; на неё ведут ссылки «#имя». */
+  bookmark: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    selectable: false,
+    attrs: { name: {} },
+    parseDOM: [{ tag: 'span.bm[data-name]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-name') }) }],
+    toDOM: (n) => ['span', { class: 'bm', 'data-name': n.attrs.name, title: `Закладка «${n.attrs.name}»`, contenteditable: 'false' }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,
