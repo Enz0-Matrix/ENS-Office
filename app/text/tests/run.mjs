@@ -2954,6 +2954,95 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Список литературы (ГОСТ Р 7.0.100-2018)
+const SRC = [
+  { id: 1, kind: 'book', authors: ['Иванов И. И.', 'Петров П. П.'], title: 'Основы делопроизводства', info: 'учебник', edition: '2-е изд., перераб.', city: 'Москва', publisher: 'Юрайт', year: '2024', pages: '256 с.', isbn: '978-5-534-00000-1' },
+  { id: 2, kind: 'article', authors: ['Сидорова А. В.'], title: 'Электронный документооборот в муниципалитетах', container: 'Делопроизводство', year: '2023', issue: '3', pages: '15–20' },
+  { id: 3, kind: 'web', authors: [], title: 'Портал госуслуг', info: 'официальный сайт', url: 'https://www.gosuslugi.ru', accessed: '18.11.2026' },
+  { id: 4, kind: 'book', authors: ['Андреев А. А.', 'Борисов Б. Б.', 'Васильев В. В.', 'Григорьев Г. Г.'], title: 'Архивное дело', city: 'Санкт-Петербург', publisher: 'Питер', year: '2022', pages: '320' },
+];
+await test('литература: записи по ГОСТ Р 7.0.100-2018, номера по первому упоминанию, [N, с. …], источник без ссылок отмечен', async () => {
+  const p = await page();
+  const r = await p.evaluate((src) => {
+    const E = window.ens, s = E.schema, cite = (ids, page = '') => s.nodes.cite.create({ ids, page });
+    const doc = s.nodes.doc.create({ sources: src }, [
+      s.nodes.paragraph.create(null, [s.text('Как показано в работе '), cite([2], '17'), s.text(', а также '), cite([1, 3])]),
+      s.nodes.paragraph.create(null, [s.text('Повторно '), cite([2])]),
+      s.nodes.biblio.create(),
+    ]);
+    E.loadDoc(doc, E.getMeta(), 'lit');
+    return { list: E.biblio(), cites: [...document.querySelectorAll('.ProseMirror span.cite')].map((e) => e.dataset.label), rows: [...document.querySelectorAll('.ProseMirror .biblio-row')].map((e) => [e.textContent, e.classList.contains('uncited')]) };
+  }, SRC);
+  eq(r.cites, ['[1, с. 17]', '[2; 3]', '[1]'], 'ссылки нумеруются по первому упоминанию');
+  eq(r.rows.map((x) => x[0]), [
+    '1. Сидорова, А. В. Электронный документооборот в муниципалитетах / А. В. Сидорова // Делопроизводство. – 2023. – № 3. – С. 15–20.',
+    '2. Иванов, И. И. Основы делопроизводства : учебник / И. И. Иванов, П. П. Петров. – 2-е изд., перераб. – Москва : Юрайт, 2024. – 256 с. – ISBN 978-5-534-00000-1.',
+    '3. Портал госуслуг : официальный сайт. – URL: https://www.gosuslugi.ru (дата обращения: 18.11.2026).',
+    '4. Архивное дело / А. А. Андреев, Б. Б. Борисов, В. В. Васильев [и др.]. – Санкт-Петербург : Питер, 2022. – 320 с.',
+  ], 'записи по ГОСТ');
+  eq(r.rows.map((x) => x[1]), [false, false, false, true], 'источник без ссылок в тексте отмечен');
+  await p.context().close();
+});
+await test('литература: окно «Источники» — карточка, ссылка с.страницей, список вставляется и обновляется сам, удаление источника → [?]', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Текст со ссылкой');
+  await p.keyboard.press('Control+Alt+KeyL');
+  await p.waitForSelector('.sources-dialog');
+  await p.click('.sources-dialog .src-add');
+  await p.fill('.sources-dialog textarea[aria-label="Авторы"]', 'Иванов И. И.');
+  await p.fill('.sources-dialog input[aria-label="Заглавие"]', 'Кадры');
+  await p.fill('.sources-dialog input[aria-label="Город"]', 'Москва');
+  await p.fill('.sources-dialog input[aria-label="Издательство"]', 'Наука');
+  await p.fill('.sources-dialog input[aria-label="Год"]', '2020');
+  eq(await p.textContent('.sources-dialog .src-preview'), 'Иванов, И. И. Кадры / И. И. Иванов. – Москва : Наука, 2020.', 'предпросмотр записи');
+  await p.fill('.sources-dialog input[aria-label="Страница"]', '25');
+  await p.click('.sources-dialog button:has-text("Вставить ссылку")');
+  await p.waitForSelector('.ProseMirror span.cite');
+  eq(await p.$eval('.ProseMirror span.cite', (e) => e.dataset.label), '[1, с. 25]', 'ссылка в тексте');
+  await p.evaluate(() => window.ens.run('biblio.insert'));
+  await p.waitForSelector('.ProseMirror .biblio-row');
+  eq(await p.$$eval('.ProseMirror .biblio-row', (r) => r.map((e) => e.textContent)), ['1. Иванов, И. И. Кадры / И. И. Иванов. – Москва : Наука, 2020.'], 'список вставлен');
+  ok((await text(p)).includes('СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ'), 'заголовок списка');
+  // Правка карточки — список и ссылки обновляются сами.
+  await p.keyboard.press('Control+Alt+KeyL');
+  await p.waitForSelector('.sources-dialog');
+  await p.fill('.sources-dialog input[aria-label="Год"]', '2021');
+  await p.click('.sources-dialog button:has-text("Сохранить карточки")');
+  await p.click('.sources-dialog button:has-text("Закрыть")');
+  ok((await p.textContent('.ProseMirror .biblio-row')).includes('2021'), 'список обновился');
+  // Удаление источника: ссылка становится «[?]», отмена возвращает.
+  await p.keyboard.press('Control+Alt+KeyL');
+  await p.waitForSelector('.sources-dialog');
+  await p.click('.sources-dialog button:has-text("Удалить источник")');
+  ok((await p.textContent('.sources-dialog .src-status')).includes('[?]'), 'предупреждение');
+  await p.click('.sources-dialog button:has-text("Закрыть")');
+  eq(await p.$eval('.ProseMirror span.cite', (e) => e.dataset.label), '[?]', 'ссылка без источника');
+  await p.evaluate(() => window.ens.view.focus());
+  await p.keyboard.press('Control+KeyZ');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await p.$eval('.ProseMirror span.cite', (e) => e.dataset.label), '[1, с. 25]', 'отмена возвращает источник');
+  await p.context().close();
+});
+await test('литература в docx: карточки, ссылки и список туда и обратно, в файле — готовый текст', async () => {
+  const p = await page();
+  const r = await p.evaluate((src) => {
+    const E = window.ens, s = E.schema;
+    const doc = s.nodes.doc.create({ sources: src }, [s.nodes.paragraph.create(null, [s.text('См. '), s.nodes.cite.create({ ids: [2], page: '17' })]), s.nodes.biblio.create()]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const f = E.unzip(bytes), dec = (n) => f[n] ? new TextDecoder().decode(f[n]) : '';
+    const back = E.importDocx(bytes);
+    return { xml: dec('word/document.xml'), item: dec('customXml/item2.xml'), same: back.doc.eq(doc), sources: back.doc.attrs.sources, lossy: back.meta.lossy };
+  }, SRC);
+  ok(r.xml.includes('<w:tag w:val="ens-cite:2|17"/>') && r.xml.includes('[1, с. 17]'), 'ссылка: тег и текст');
+  ok(r.xml.includes('<w:tag w:val="ens-biblio"/>') && r.xml.includes('1. Сидорова, А. В.'), 'список: тег и строки');
+  ok(r.item.includes('urn:ens-office:text:sources'), 'карточки в customXml');
+  eq(r.sources, SRC, 'карточки после круга');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, 'документ тот же');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

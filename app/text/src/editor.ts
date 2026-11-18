@@ -1,5 +1,6 @@
 // Ядро редактирования: состояние ProseMirror, плагины и команды форматирования.
 
+import { biblioPlugin } from './biblio';
 import { baseKeymap, chainCommands, exitCode, joinBackward, selectParentNode, setBlockType, toggleMark, lift } from 'prosemirror-commands';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
@@ -588,6 +589,7 @@ export function createState(doc: PMNode, extra: Plugin[] = []): EditorState {
       findPlugin,
       numberingPlugin,
       focusPlugin,
+      biblioPlugin,
     ],
   });
 }

@@ -456,3 +456,23 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu > button { gap: 8px !important; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
+
+/* Ссылка на источник «[1, с. 25]» (текст из data-label) и список литературы. */
+.ProseMirror span.cite::after { content: attr(data-label); }
+.ProseMirror span.cite { border-radius: 2px; }
+.ProseMirror span.cite:hover { background: rgba(43, 87, 154, .12); }
+.ProseMirror div.biblio { margin: 0 0 12pt; }
+.ProseMirror div.biblio.ProseMirror-selectednode { outline: 2px solid var(--accent, #2b579a); outline-offset: 2px; }
+.ProseMirror .biblio-row { margin: 0 0 4pt; text-indent: 1.25cm; text-align: justify; }
+.ProseMirror .biblio-row.uncited { text-decoration: underline wavy #c77700; text-decoration-thickness: 1px; }
+.ProseMirror .biblio-empty { color: #777; font-style: italic; border: 1px dashed #aaa; padding: 6px 8px; }
+@media print { .ProseMirror .biblio-row.uncited { text-decoration: none; } .ProseMirror .biblio-empty { display: none; } }
+.sources-dialog { width: min(860px, 96vw); }
+.src-body { display: grid; grid-template-columns: 260px 1fr; gap: 12px; max-height: 60vh; overflow: auto; }
+.src-list { display: flex; flex-direction: column; gap: 2px; }
+.src-item { text-align: left; background: none; border: 1px solid transparent; padding: 4px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-item.on { border-color: var(--accent, #2b579a); background: rgba(43, 87, 154, .1); }
+.src-add { text-align: left; margin-top: 6px; }
+.src-form textarea, .src-form input { width: 100%; box-sizing: border-box; }
+.src-preview { background: rgba(127,127,127,.08); padding: 6px 8px; border-radius: 4px; }
+.src-page input { width: 70px; }
