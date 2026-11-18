@@ -466,6 +466,13 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
 
+/* Номер подписи (поле SEQ): число ставит плагин captions.ts в data-n. */
+.ProseMirror span.seq::after { content: attr(data-n); }
+.ProseMirror span.seq { background: rgba(0, 0, 0, .06); border-radius: 2px; }
+@media print { .ProseMirror span.seq { background: none; } }
+:root[data-night-sheet] .ProseMirror span.seq { background: rgba(255, 255, 255, .1); }
+.caption-dialog { width: min(520px, 94vw); }
+.caption-preview { font-weight: 600; margin: 8px 0; }
 /* Закладка: точка нулевой ширины; видна серой скобкой при «Отобразить все знаки» и вспышкой при переходе. */
 .ProseMirror span.bm { display: inline-block; width: 0; height: 1em; vertical-align: text-bottom; position: relative; }
 .ProseMirror.show-marks span.bm::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 3px; border: 1px solid #8a8a8a; border-right: 0; }

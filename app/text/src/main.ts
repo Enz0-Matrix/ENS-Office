@@ -34,6 +34,8 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { captionDialog } from './captions-ui';
+import { listCaptions } from './captions';
 import { bookmarkDialog } from './bookmarks-ui';
 import { gotoBookmark, isHidden, listBookmarks } from './bookmarks';
 import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
@@ -923,6 +925,7 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'insert.caption', label: 'Вставить название (подпись)…', keywords: ['подпись', 'название', 'рисунок', 'таблица', 'формула', 'нумерация', 'seq', 'caption'], run: () => captionDialog(view) },
   { id: 'insert.bookmark', label: 'Закладка…', keywords: ['закладка', 'bookmark', 'якорь', 'перейти', 'метка места'], keys: ['Ctrl+Shift+F5'], run: () => bookmarkDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
@@ -1304,7 +1307,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }] },
       {
         name: 'По-русски',
         items: [
@@ -2505,6 +2508,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listCaptions: () => listCaptions(view.state.doc), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
