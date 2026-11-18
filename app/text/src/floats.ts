@@ -69,11 +69,12 @@ export function placeFloats(ctx: Ctx): boolean {
     let ox = ctx.fixed?.originX ?? 0;
     let oy = ctx.fixed?.originY ?? 0;
     if (!box) {
+      // Лист абзаца: последний, чей верх выше абзаца (при листах рядами — и левый край левее).
       let idx = 0;
-      for (let i = 0; i < ctx.boxes.length; i++) if (ctx.boxes[i].top <= paraY + 1) idx = i;
+      for (let i = 0; i < ctx.boxes.length; i++) if (ctx.boxes[i].top <= paraY + 1 && (ctx.boxes[i].left ?? 0) <= paraX + 1) idx = i;
       box = ctx.boxes[idx];
       if (!box) continue;
-      ox = (ctx.sheetW - box.W) / 2;
+      ox = (box.left ?? 0) + (ctx.sheetW - box.W) / 2;
       oy = box.top;
     }
     const pg = box.page;
@@ -117,7 +118,7 @@ export function placeFloats(ctx: Ctx): boolean {
       else if (f.vAlign === 'bottom') y = c1 - h;
       else y = c0 + num(f.vOff);
     }
-    // Абзац в колонке сдвинут (position: relative) — рисунок отсчитывается от него, а не от корня.
+    // Абзац в колонке или на листе в ряду сдвинут (position: relative) — рисунок отсчитывается от него.
     let cx = 0, cy = 0;
     const op = img.offsetParent as HTMLElement | null;
     if (op && op !== ctx.root && ctx.root.contains(op)) {
