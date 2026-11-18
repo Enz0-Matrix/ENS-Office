@@ -117,8 +117,16 @@ export function placeFloats(ctx: Ctx): boolean {
       else if (f.vAlign === 'bottom') y = c1 - h;
       else y = c0 + num(f.vOff);
     }
-    img.style.left = `${ox + x}px`;
-    img.style.top = `${oy + y}px`;
+    // Абзац в колонке сдвинут (position: relative) — рисунок отсчитывается от него, а не от корня.
+    let cx = 0, cy = 0;
+    const op = img.offsetParent as HTMLElement | null;
+    if (op && op !== ctx.root && ctx.root.contains(op)) {
+      const r = op.getBoundingClientRect();
+      cx = (r.left - rootRect.left) / ctx.scale + op.clientLeft;
+      cy = (r.top - rootRect.top) / ctx.scale + op.clientTop;
+    }
+    img.style.left = `${ox + x - cx}px`;
+    img.style.top = `${oy + y - cy}px`;
   }
   return flow;
 }
