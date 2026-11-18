@@ -610,6 +610,27 @@ await test('колонки: текст перетекает из колонки 
     const r = await p.evaluate(() => window.__colBad());
     eq(r.bad, [], `знаки вне колонок (${n})`);
     eq(await p.evaluate(() => window.ens.pagStats.stuck), false, `расчёт сошёлся (${n}, ${count})`);
+    // Каждая колонка первых двух листов начинается ровно у верхнего поля.
+    const tops = await p.evaluate(() => {
+      const E = window.ens, v = E.view, boxes = E.pageBoxes(), papers = [...document.querySelectorAll('.paper')];
+      const out = {};
+      v.state.doc.descendants((node, pos) => {
+        if (!node.isTextblock) return true;
+        for (let q = pos + 1; q < pos + 1 + node.content.size; q += 3) {
+          const c = v.coordsAtPos(q, 1);
+          papers.slice(0, 2).forEach((pp, i) => {
+            const r = pp.getBoundingClientRect(), b = boxes[i];
+            if (c.top < r.top || c.top > r.bottom) return;
+            const k = b.cols.x.findIndex((x, j) => c.left - r.left - b.page.left * E.PX >= x - 2 && c.left - r.left - b.page.left * E.PX <= x + b.cols.w[j] + 2);
+            const key = i + ':' + k, d = c.top - (r.top + b.eff.top * E.PX);
+            if (!(key in out) || d < out[key]) out[key] = Math.round(d);
+          });
+        }
+        return false;
+      });
+      return out;
+    });
+    ok(Object.values(tops).every((d) => Math.abs(d) <= 4), `колонки начинаются не у верхнего поля (${n}, ${count}): ${JSON.stringify(tops)}`);
     const pages = await p.evaluate(() => window.ens.pageCount());
     for (let k = 0; k < n; k++) ok(r.used.includes(`0:${k}`) && r.used.includes(`1:${k}`), `колонка ${k + 1} на листах 1 и 2 занята (${n}): ${r.used}`);
     ok(pages >= 2 && pages <= single + 1, `листов ${pages}, одной полосой ${single}`);

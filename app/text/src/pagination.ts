@@ -372,7 +372,12 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
       let end = R.end;
       let next = R.start + seg.vP;
       let j = k;
+      let from = 0;
       for (let safety = 0; safety < 200 && j < n; safety++) {
+        // Остаток внизу колонки меньше строки: в следующую колонку уходит на строку больше, и она начинается ровно
+        // сверху (распорка ниже строки сдвинула бы хвост на целую строку). Висячие строки при этом не нарушаем.
+        if (cols && next - (lines[j].top + local) < pitch && j - 1 - from >= (from === 0 && atTop ? 1 : 2)) j -= 1;
+        from = j;
         const spacer = Math.max(next - (lines[j].top + local), pitch);
         splits.push({ pos: lines[j].pos, h: spacer, v: vIdx(next) });
         if (cols) markSep(vIdx(next) - 1, seg.g.C);
@@ -579,8 +584,9 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
         const stateSig = st.boxes.map(boxKey).join('|');
         if (boxSig !== lastSig) { lastSig = boxSig; onPages(pages, boxes); }
         const order = (a: { from: number; to: number; spec: Spec }, b: { from: number; to: number; spec: Spec }) => a.from - b.from || a.to - b.to || (a.spec.pg < b.spec.pg ? -1 : a.spec.pg > b.spec.pg ? 1 : 0);
-        // Одинаковые наборы — с допуском в доли пикселя: субпиксельное округление вёрстки иначе качало бы расчёт.
-        const same = close(old.sort(order), fresh.sort(order));
+        // Обычно расчёт сходится за 2–3 прохода и сравнение точное; дальше — с допуском в доли пикселя:
+        // субпиксельное округление вёрстки иначе качало бы расчёт.
+        const same = passes >= 3 ? close(old.sort(order), fresh.sort(order)) : sig(old.sort(order)) === sig(fresh.sort(order));
         stats.stuck = false;
         if (same && boxSig === stateSig) { passes = 0; return; }
         // Защита от зацикливания. Неравным колонкам нужно больше проходов: ширина блока зависит от его колонки.
