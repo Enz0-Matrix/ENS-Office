@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { findToc, insertToc, refreshTocs, setPageResolver, tocViews } from './toc';
 import { captionDialog } from './captions-ui';
 import { listCaptions } from './captions';
 import { bookmarkDialog } from './bookmarks-ui';
@@ -358,6 +359,8 @@ function applyPage(): void {
 
 /** Листы-подложки: по одному на страницу; положение, ширина и высота — как у расчёта разрывов (у разделов они разные). */
 function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
+  // Страницы перестроены — номера страниц в оглавлении могли сдвинуться (после отрисовки, вне транзакции).
+  scheduleTocRefresh();
   const g = geometry(effPage());
   const list: PageBox[] = boxes.length === pages ? boxes
     : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
@@ -443,12 +446,12 @@ function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): v
   });
 }
 
-/** Страница (с 1), на которой стоит курсор. */
-function currentPage(n = pageCount(view)): number {
+/** Страница (с 1), на которой стоит курсор (или позиция pos). */
+function currentPage(n = pageCount(view), pos = view.state.selection.head): number {
   try {
     const box = view.dom.getBoundingClientRect();
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
-    const c = view.coordsAtPos(view.state.selection.head);
+    const c = view.coordsAtPos(pos);
     const y = (c.top - box.top) / scale + 1;
     const x = (c.left - box.left) / scale + 1;
     const boxes = pageBoxes(view);
@@ -542,14 +545,23 @@ function setZoom(z: number, fromMode = false): void {
 
 // ---------------------------------------------------------------- редактор
 
+let tocTimer = 0;
+function scheduleTocRefresh(): void {
+  if (tocTimer) return;
+  tocTimer = window.setTimeout(() => { tocTimer = 0; refreshTocs(); }, 0);
+}
+
 const paginationPlugin = pagination(() => meta.page, effOf, (n, boxes) => drawPapers(n, boxes));
 let lastSecSig = '';
 let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
+// Оглавление: номер страницы заголовка и перестройка страниц, если оглавление выросло или уменьшилось.
+setPageResolver((pos) => currentPage(pageCount(view), Math.min(pos + 1, view.state.doc.content.size)), () => replan(view), () => view.state.doc);
+
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
-  nodeViews: frameViews,
+  nodeViews: { ...frameViews, ...tocViews },
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
@@ -798,6 +810,7 @@ function openHref(href: string): void {
 }
 
 function afterChange(docChanged: boolean): void {
+  if (docChanged) refreshTocs();
   // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
   if (docChanged) hideContextMenu();
   updateUi();
@@ -925,6 +938,18 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  {
+    id: 'insert.toc', label: 'Оглавление', keywords: ['оглавление', 'содержание', 'toc', 'заголовки', 'номера страниц'],
+    run: (v) => {
+      const levels = Number(v) || 3;
+      const have = findToc(view.state.doc);
+      // Оглавление уже есть: меняем число уровней и показываем его, второе не вставляем.
+      if (have) { const tr = view.state.tr.setNodeMarkup(have.pos, undefined, { levels: Number(v) || have.node.attrs.levels }); view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, have.pos)).scrollIntoView()); }
+      else view.dispatch(insertToc(view.state, levels));
+      setSelect('insert.toc', '');
+      view.focus();
+    },
+  },
   { id: 'insert.caption', label: 'Вставить название (подпись)…', keywords: ['подпись', 'название', 'рисунок', 'таблица', 'формула', 'нумерация', 'seq', 'caption'], run: () => captionDialog(view) },
   { id: 'insert.bookmark', label: 'Закладка…', keywords: ['закладка', 'bookmark', 'якорь', 'перейти', 'метка места'], keys: ['Ctrl+Shift+F5'], run: () => bookmarkDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
@@ -1219,6 +1244,11 @@ const STYLES = [
   { value: '4', label: 'Заголовок 4' }, { value: '5', label: 'Заголовок 5' }, { value: '6', label: 'Заголовок 6' },
 ];
 
+const TOC_OPTIONS = [
+  { value: '', label: 'Оглавление…' },
+  { value: '3', label: 'Уровни 1–3' }, { value: '2', label: 'Уровни 1–2' }, { value: '1', label: 'Только уровень 1' }, { value: '4', label: 'Уровни 1–4' },
+];
+
 const PAGE_NUMBER_POSITIONS = [
   { value: '', label: 'Номер страницы…' },
   { value: 'footer-center', label: 'Внизу, по центру' }, { value: 'footer-right', label: 'Внизу, справа' }, { value: 'footer-left', label: 'Внизу, слева' },
@@ -1307,7 +1337,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }, { type: 'select', command: 'insert.toc', options: TOC_OPTIONS, width: 130 }] },
       {
         name: 'По-русски',
         items: [

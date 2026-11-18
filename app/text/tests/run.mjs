@@ -3281,6 +3281,70 @@ await test('новый документ не считается изменённ
   await p.context().close();
 });
 
+// --- Оглавление
+const tocRows = (p) => p.evaluate(() => [...document.querySelectorAll('.ProseMirror .toc-row')].map((r) => [Number(r.dataset.level), r.querySelector('.toc-text').textContent, r.querySelector('.toc-page').textContent]));
+await test('оглавление: строится по заголовкам, номера страниц и строки обновляются сами, щелчок ведёт к заголовку', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t)), H = (l, t) => s.nodes.heading.create({ level: l }, s.text(t));
+    const filler = Array.from({ length: 45 }, (_, i) => P('Строка текста номер ' + i));
+    E.loadDoc(s.nodes.doc.create(null, [P('Титул'), H(1, 'Введение'), P('Текст'), H(2, 'Цели'), H(4, 'Глубокий уровень'), ...filler, H(1, 'Основная часть')]), E.getMeta(), 'toc');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1)));
+  });
+  await p.click('#tabs button.tab:text-is("Вставка")');
+  await p.selectOption('select[data-command="insert.toc"]', '3');
+  await p.waitForSelector('.ProseMirror .toc-row');
+  await p.waitForTimeout(300);
+  const rows = await tocRows(p);
+  eq(rows.map((r) => r.slice(0, 2)), [[1, 'Введение'], [2, 'Цели'], [1, 'Основная часть']], 'уровни 1–3, четвёртый не входит');
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(0).textContent), 'СОДЕРЖАНИЕ', 'заголовок «СОДЕРЖАНИЕ»');
+  ok(rows[0][2] === '1' && Number(rows[2][2]) >= 2, `номера страниц: ${JSON.stringify(rows)}`);
+  // Новый заголовок появляется в оглавлении сам.
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.insert(E.view.state.doc.content.size, s.nodes.heading.create({ level: 1 }, s.text('Заключение')))); });
+  await p.waitForTimeout(200);
+  eq((await tocRows(p)).map((r) => r[1]), ['Введение', 'Цели', 'Основная часть', 'Заключение'], 'новая строка');
+  // Правка текста заголовка.
+  await p.evaluate(() => { const E = window.ens; let at = 0; E.view.state.doc.forEach((n, pos) => { if (n.textContent === 'Цели') at = pos; }); E.view.dispatch(E.view.state.tr.insertText(' и задачи', at + 5)); });
+  await p.waitForTimeout(200);
+  eq((await tocRows(p))[1][1], 'Цели и задачи', 'текст строки обновлён');
+  // Номер страницы сдвигается, если выше вставить разрыв страницы.
+  const before = Number((await tocRows(p))[2][2]);
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.insert(4 + 13, s.nodes.paragraph.create({ pageBreakBefore: true }, s.text('Новая страница')))); });
+  await p.waitForFunction((b) => Number(document.querySelectorAll('.ProseMirror .toc-row')[2]?.querySelector('.toc-page').textContent) === b + 1, before, { timeout: 5000 });
+  // Щелчок по строке — переход к заголовку.
+  await p.click('.ProseMirror .toc-row:nth-child(3) .toc-text');
+  const at = await p.evaluate(() => { const { $from } = window.ens.view.state.selection; return $from.parent.textContent; });
+  eq(at, 'Основная часть', 'курсор в заголовке');
+  // Повторная команда меняет уровни, а не вставляет второе оглавление.
+  await p.evaluate(() => window.ens.run('insert.toc', '1'));
+  await p.waitForTimeout(200);
+  eq(await p.evaluate(() => { let n = 0; window.ens.view.state.doc.forEach((x) => { if (x.type.name === 'toc') n++; }); return n; }), 1, 'одно оглавление');
+  eq((await tocRows(p)).map((r) => r[1]), ['Введение', 'Основная часть', 'Заключение'], 'только уровень 1');
+  await p.context().close();
+});
+await test('оглавление в docx: поле TOC с готовыми строками туда и обратно, оглавление Word читается', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t)), H = (l, t) => s.nodes.heading.create({ level: l }, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.toc.create({ levels: 2 }), H(1, 'Первый'), P('текст'), H(2, 'Второй')]), E.getMeta(), 'toc');
+  });
+  await p.waitForSelector('.ProseMirror .toc-row');
+  await p.waitForTimeout(200);
+  const r = await p.evaluate(() => {
+    const E = window.ens;
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    return { xml, same: back.doc.eq(E.view.state.doc), back: back.doc.toJSON(), lossy: back.meta.lossy };
+  });
+  ok(r.xml.includes('<w:docPartGallery w:val="Table of Contents"/>'), 'блок оглавления Word');
+  ok(r.xml.includes('<w:instrText xml:space="preserve"> TOC \\o "1-2" \\u </w:instrText>'), 'поле TOC с уровнями');
+  ok(/Первый<\/w:t><\/w:r><w:r><w:tab\/><\/w:r><w:r><w:t>1<\/w:t>/.test(r.xml), 'строка с номером страницы');
+  ok(r.xml.includes('w:leader="dot"'), 'точки до номера');
+  ok(r.same, `документ тот же после круга: ${JSON.stringify(r.back).slice(0, 300)}`);
+  eq(r.lossy, [], 'без потерь');
+  await p.context().close();
+});
 // --- Подписи (названия) рисунков и таблиц
 const shownCaptions = (p) => p.evaluate(() => [...document.querySelectorAll('.ProseMirror p')].filter((e) => e.querySelector('span.seq'))
   .map((e) => [...e.childNodes].map((n) => n.nodeType === 3 ? n.textContent : n.classList?.contains('seq') ? n.getAttribute('data-n') : n.textContent).join('')));
