@@ -3280,6 +3280,176 @@ await test('новый документ не считается изменённ
   eq(await p.evaluate(() => window.ens.isDirty()), false, 'чистый документ при запуске');
   await p.context().close();
 });
+
+// --- Сравнение документов и исправления
+const REV_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+  const A = s.nodes.doc.create(null, [P('Мама мыла раму вчера.'), P('Этот абзац удалят.'), P('Общий конец.')]);
+  const B = s.nodes.doc.create(null, [P('Мама мыла окно вчера вечером.'), P('Общий конец.'), P('Новый абзац.')]);
+  const m = E.getMeta();
+  window.__rev = { A, B, meta: m };
+  const res = E.compareSides({ doc: A, meta: m, name: 'a.docx' }, { doc: B, meta: m, name: 'b.docx' }, 'Рецензент', new Date('2026-11-17T10:00:00Z'));
+  E.loadDoc(res.doc, res.meta, res.name);
+  return { ins: res.inserted, del: res.deleted };
+};
+const docText = (p) => p.evaluate(() => { const d = window.ens.view.state.doc; return d.textBetween(0, d.content.size, '|'); });
+await test('сравнение: правки по словам, целые абзацы, «было / стало» совпадают с исходниками', async () => {
+  const p = await page();
+  const n = await p.evaluate(REV_SETUP);
+  ok(n.ins >= 2 && n.del >= 2, `исправлений мало: ${JSON.stringify(n)}`);
+  const r = await p.evaluate(() => {
+    const E = window.ens, revs = E.listRevisions(), doc = E.view.state.doc;
+    const text = (x) => doc.textBetween(x.from, x.to, '|');
+    return { revs: revs.map((x) => [x.kind, text(x), x.author]),
+      ins: [...document.querySelectorAll('.ProseMirror ins.rev-ins')].map((e) => e.textContent),
+      del: [...document.querySelectorAll('.ProseMirror del.rev-del')].map((e) => e.textContent),
+      blocks: [...document.querySelectorAll('.ProseMirror [data-rev-block]')].map((e) => e.dataset.revBlock) };
+  });
+  ok(r.revs.some(([k, t]) => k === 'del' && t === 'раму') && r.revs.some(([k, t]) => k === 'ins' && t === 'окно'), `по словам: ${JSON.stringify(r.revs)}`);
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.includes('вечером')), 'вставка в конце абзаца');
+  ok(r.revs.every(([, , a]) => a === 'Рецензент'), 'автор правок');
+  eq(r.blocks.sort(), ['del', 'ins'], 'удалённый и новый абзацы помечены целиком');
+  ok(!r.revs.some(([, t]) => t.includes('Мама')), 'общие слова не помечены');
+  // «Было» и «Стало»: видимый текст листа совпадает с исходниками.
+  const visible = () => p.evaluate(() => [...document.querySelectorAll('.ProseMirror > *')].filter((e) => e.offsetParent !== null || getComputedStyle(e).display !== 'none').map((e) => e.innerText.trim()).filter(Boolean).join('|'));
+  await p.evaluate(() => window.ens.run('rev.view', 'original'));
+  eq(await visible(), 'Мама мыла раму вчера.|Этот абзац удалят.|Общий конец.', 'было');
+  await p.evaluate(() => window.ens.run('rev.view', 'final'));
+  eq(await visible(), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'стало');
+  await p.evaluate(() => window.ens.run('rev.view', 'markup'));
+  eq(await p.evaluate(() => window.ens.revView()), 'markup', 'режим исправлений');
+  await p.context().close();
+});
+await test('исправления: принять и отклонить по одной, принять все = новая редакция, отклонить все = старая', async () => {
+  const p = await page();
+  await p.evaluate(REV_SETUP);
+  const count = () => p.evaluate(() => window.ens.listRevisions().length);
+  const total = await count();
+  // Курсор в начало: первое исправление — удаление «раму». Отклоняем его — слово остаётся без пометки.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.evaluate(() => window.ens.run('rev.reject'));
+  eq(await count(), total - 1, 'одно исправление снято');
+  ok((await docText(p)).startsWith('Мама мыла раму'), `«раму» осталось: ${await docText(p)}`);
+  // Следующее (выделено автоматически) — вставка «окно»; принимаем.
+  const sel = await p.evaluate(() => { const E = window.ens, { from, to } = E.view.state.selection; return E.view.state.doc.textBetween(from, to); });
+  eq(sel, 'окно', 'после решения выделено следующее исправление');
+  await p.keyboard.press('Control+Alt+KeyA');
+  eq(await count(), total - 2, 'Ctrl+Alt+A принимает');
+  ok((await docText(p)).startsWith('Мама мыла рамуокно'), await docText(p)); // пробел общий: «раму» отклонено, «окно» принято
+  await p.keyboard.press('Control+KeyZ');
+  eq(await count(), total - 1, 'отмена возвращает исправление');
+  // Все сразу.
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await count(), 0, 'исправлений не осталось');
+  eq(await docText(p), 'Мама мыла рамуокно вчера вечером.|Общий конец.|Новый абзац.', 'принято всё (кроме отклонённого)');
+  await p.evaluate(REV_SETUP);
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await docText(p), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'принять все = новая редакция');
+  await p.evaluate(REV_SETUP);
+  await p.evaluate(() => window.ens.run('rev.rejectAll'));
+  eq(await docText(p), 'Мама мыла раму вчера.|Этот абзац удалят.|Общий конец.', 'отклонить все = старая редакция');
+  eq(await p.evaluate(() => window.ens.view.state.doc.toJSON()), await p.evaluate(() => window.__rev.A.toJSON()), 'старая редакция совпадает узел в узел');
+  await p.context().close();
+});
+await test('исправления: таблицы и списки сравниваются по ячейкам, целиком новая таблица отклоняется целиком', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const row = (...t) => s.nodes.table_row.create(null, t.map(cell));
+    const T = (...rows) => s.nodes.table.create(null, rows);
+    const li = (t) => s.nodes.list_item.create(null, P(t));
+    const A = s.nodes.doc.create(null, [P('Начало'), T(row('Яблоко', '10'), row('Груша', '5')), s.nodes.bullet_list.create(null, [li('первый'), li('второй')])]);
+    const B = s.nodes.doc.create(null, [P('Начало'), T(row('Яблоко', '12'), row('Груша', '5'), row('Слива', '7')), s.nodes.bullet_list.create(null, [li('первый пункт'), li('второй')]), T(row('Новая', 'таблица'))]);
+    const m = E.getMeta();
+    const res = E.compareSides({ doc: A, meta: m, name: 'a' }, { doc: B, meta: m, name: 'b' }, 'Я');
+    E.loadDoc(res.doc, res.meta, res.name);
+    const doc = E.view.state.doc, revs = E.listRevisions().map((x) => [x.kind, doc.textBetween(x.from, x.to, '|')]);
+    const tables = () => { let n = 0; E.view.state.doc.descendants((x) => { if (x.type.name === 'table') n++; }); return n; };
+    const before = tables();
+    E.run('rev.rejectAll');
+    return { revs, before, after: tables(), text: E.view.state.doc.textBetween(0, E.view.state.doc.content.size, '|'), A: A.toJSON(), now: E.view.state.doc.toJSON() };
+  });
+  ok(r.revs.some(([k, t]) => k === 'del' && t === '10') && r.revs.some(([k, t]) => k === 'ins' && t === '12'), `правка в ячейке: ${JSON.stringify(r.revs)}`);
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.includes('Слива')), 'новая строка');
+  ok(r.revs.some(([k, t]) => k === 'ins' && t.trim() === 'пункт'), 'правка в пункте списка');
+  eq([r.before, r.after], [2, 1], 'новая таблица убрана целиком при отклонении');
+  eq(r.now, r.A, 'отклонить все = исходный документ');
+  await p.context().close();
+});
+await test('исправления в docx: w:ins/w:del туда и обратно, исправления Word читаются', async () => {
+  const p = await page();
+  await p.evaluate(REV_SETUP);
+  const r = await p.evaluate(() => {
+    const E = window.ens, before = E.listRevisions().map((x) => [x.kind, x.author, E.view.state.doc.textBetween(x.from, x.to, '|')]);
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    E.loadDoc(back.doc, back.meta, 'back');
+    const after = E.listRevisions().map((x) => [x.kind, x.author, E.view.state.doc.textBetween(x.from, x.to, '|')]);
+    return { xml, before, after, lossy: back.meta.lossy, same: back.doc.eq(window.__cmpDoc ?? back.doc) };
+  });
+  ok(/<w:ins w:id="\d+" w:author="Рецензент" w:date="2026-11-17T10:00:00Z">/.test(r.xml), 'w:ins с автором и датой');
+  ok(/<w:del [^>]*><w:r>(<w:rPr>.*?<\/w:rPr>)?<w:delText xml:space="preserve">раму<\/w:delText>/.test(r.xml), 'удалённое — w:delText');
+  ok(/<w:pPr><w:rPr><w:del [^>]*\/><\/w:rPr><\/w:pPr>/.test(r.xml), 'знак удалённого абзаца');
+  eq(r.lossy, [], 'без потерь');
+  eq(r.after, r.before, 'исправления те же после открытия');
+  // Принять все в прочитанном файле — новая редакция.
+  await p.evaluate(() => window.ens.run('rev.acceptAll'));
+  eq(await docText(p), 'Мама мыла окно вчера вечером.|Общий конец.|Новый абзац.', 'после круга принимаются как раньше');
+  await p.context().close();
+});
+await test('сравнение: окно «Сравнить» с двумя файлами DOCX открывает новый документ, текущий не меняется', async () => {
+  const p = await page();
+  const files = await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const m = E.getMeta();
+    const a = E.exportDocx(s.nodes.doc.create(null, [P('Договор поставки № 1'), P('Срок — десять дней.')]), m, 'a');
+    const b = E.exportDocx(s.nodes.doc.create(null, [P('Договор поставки № 2'), P('Срок — пять дней.')]), m, 'b');
+    return { a: [...a], b: [...b] };
+  });
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Мой текущий текст');
+  await p.evaluate(() => window.ens.run('review.compare'));
+  await p.waitForSelector('#dialog:not([hidden]) .compare-dialog, #dialog:not([hidden]).compare-dialog, .compare-dialog');
+  await p.selectOption('select[data-compare="older"]', 'file');
+  await p.setInputFiles('input[data-compare="older-file"]', { name: 'Договор v1.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files.a) });
+  await p.selectOption('select[data-compare="newer"]', 'file');
+  await p.setInputFiles('input[data-compare="newer-file"]', { name: 'Договор v2.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from(files.b) });
+  await p.click('.compare-dialog button.primary');
+  // Текущий документ изменён: программа спрашивает о сохранении — не сохраняем.
+  const btn = await p.waitForSelector('#dialog:not([hidden]) button:has-text("Не сохранять")', { timeout: 3000 }).catch(() => null);
+  if (btn) await btn.click();
+  await p.waitForFunction(() => window.ens.listRevisions().length > 0);
+  const r = await p.evaluate(() => ({ name: document.title, revs: window.ens.listRevisions().map((x) => [x.kind, window.ens.view.state.doc.textBetween(x.from, x.to)]) }));
+  ok(r.name.includes('Сравнение — Договор v1 и Договор v2'), r.name);
+  eq(r.revs, [['del', '1'], ['ins', '2'], ['del', 'десять'], ['ins', 'пять']], 'правки по словам');
+  // Кнопки ленты: «Принять» на вкладке «Проверка».
+  await p.click('#tabs button.tab:text-is("Проверка")');
+  await p.click('button[data-command="rev.accept"]');
+  eq(await p.evaluate(() => window.ens.listRevisions().length), 3, 'кнопка «Принять»');
+  await p.context().close();
+});
+await test('сравнение: версия из истории против текущего документа', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Первая редакция текста');
+  await p.evaluate(() => window.ens.snap('named', 'черновик'));
+  await p.keyboard.press('End');
+  await p.keyboard.type(' с дополнением');
+  await p.evaluate(() => window.ens.run('ver.history'));
+  await p.click('#dialog button:has-text("Сравнить с исправлениями")');
+  await p.waitForSelector('.compare-dialog');
+  eq(await p.$eval('select[data-compare="newer"]', (s) => s.value), 'current', 'новая сторона — текущий документ');
+  ok((await p.$eval('select[data-compare="older"]', (s) => s.value)).startsWith('v:'), 'старая сторона — версия');
+  await p.click('.compare-dialog button.primary');
+  const btn = await p.waitForSelector('#dialog:not([hidden]) button:has-text("Не сохранять")', { timeout: 3000 }).catch(() => null);
+  if (btn) await btn.click();
+  await p.waitForFunction(() => window.ens.listRevisions().length > 0);
+  const r = await p.evaluate(() => window.ens.listRevisions().map((x) => [x.kind, window.ens.view.state.doc.textBetween(x.from, x.to)]));
+  eq(r, [['ins', ' с дополнением']], 'вставка относительно версии');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

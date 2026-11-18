@@ -465,3 +465,19 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu > button { gap: 8px !important; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
+
+/* Исправления (рецензирование): вставка подчёркнута, удаление зачёркнуто, у абзаца — черта на поле, как в Word. */
+.ProseMirror ins.rev-ins { color: #1a6fb5; text-decoration: underline; text-decoration-color: currentColor; }
+.ProseMirror del.rev-del { color: #c0262d; text-decoration: line-through; }
+.ProseMirror [data-rev-block] { box-shadow: -6px 0 0 -4px #8a8a8a; }
+:root[data-night-sheet] .ProseMirror ins.rev-ins { color: #7cb8ff; }
+:root[data-night-sheet] .ProseMirror del.rev-del { color: #ff8a8f; }
+/* «Было»: без вставленного; «Стало»: без удалённого, пометки сняты. */
+:root[data-rev-view="original"] .ProseMirror ins.rev-ins,
+:root[data-rev-view="original"] .ProseMirror [data-rev-block="ins"],
+:root[data-rev-view="final"] .ProseMirror del.rev-del,
+:root[data-rev-view="final"] .ProseMirror [data-rev-block="del"] { display: none; }
+:root[data-rev-view] .ProseMirror ins.rev-ins,
+:root[data-rev-view] .ProseMirror del.rev-del { color: inherit; text-decoration: none; }
+:root[data-rev-view] .ProseMirror [data-rev-block] { box-shadow: none; }
+.compare-dialog .dlg-row select { max-width: 360px; }

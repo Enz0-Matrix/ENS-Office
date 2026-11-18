@@ -30,6 +30,8 @@ export interface HistoryHost {
   revert(range: [number, number], nodes: PMNode[]): void;
   /** Открыть копию с диска в новом окне. */
   openCopy(path: string): void;
+  /** Сравнить версию с текущим документом по словам: новый документ с исправлениями. */
+  compare?(v: Version): void;
   /** Показать сразу сравнение с этой версией. */
   focus?: string;
 }
@@ -91,6 +93,7 @@ function renderVersions(host: HistoryHost, body: HTMLElement, select?: string, i
     sel.value = against === 'previous' && prev ? 'previous' : 'current';
     sel.addEventListener('change', () => { against = sel.value as typeof against; render(); });
     bar.prepend(sel);
+    if (against === 'current' && host.compare) bar.append(el('button', { textContent: 'Сравнить с исправлениями…', title: 'Новый документ: правки по словам, принимаются по одной', onclick: () => { close2(); host.compare!(v); } }));
     if (against === 'current') bar.append(el('button', { class: 'danger', textContent: 'Восстановить документ целиком', onclick: () => { host.restore(v); close2(); } }));
     detail.append(el('div', { class: 'hist-title', textContent: `${v.kind === 'named' && v.label ? `«${v.label}»` : KIND_LABEL[v.kind]} · ${fmtWhen(v.t)} · ${v.u}` }));
     // Что показываем: старая сторона — выбранная версия; новая — текущий документ или предыдущая версия.
