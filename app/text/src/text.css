@@ -456,3 +456,21 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu > button { gap: 8px !important; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
+
+/* Символ и формула. */
+.symbols-dialog { width: min(620px, 96vw); }
+.symbols-dialog input[type=search] { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.sym-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.sym-tabs button.on { background: var(--accent, #2b579a); color: #fff; }
+.sym-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: 3px; max-height: 240px; overflow: auto; }
+.sym-grid .sym, .sym-recent .sym { font-size: 18px; height: 36px; min-width: 36px; padding: 0; }
+.sym-recent { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-top: 8px; }
+.sym-info { min-height: 1.4em; color: var(--muted); }
+.ProseMirror span.math { display: inline-block; padding: 0 1px; cursor: pointer; }
+.ProseMirror span.math:hover { background: rgba(43, 87, 154, .1); border-radius: 2px; }
+.ProseMirror span.math math { font-size: 1.05em; }
+.math-dialog { width: min(640px, 96vw); }
+.math-dialog textarea { width: 100%; box-sizing: border-box; font-family: monospace; }
+.math-templates { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }
+.math-templates button { min-width: 36px; }
+.math-preview { min-height: 48px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; margin: 6px 0; font-size: 18px; text-align: center; background: #fff; color: #000; }

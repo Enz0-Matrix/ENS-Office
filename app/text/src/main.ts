@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { mathDialog, mathPlugin, symbolsDialog } from './symbols-ui';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -460,7 +461,7 @@ let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuot
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, mathPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -831,6 +832,8 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'insert.symbol', label: 'Символ…', keywords: ['символ', 'знак', 'спецсимвол', 'рубль', 'градус', 'стрелка', 'кавычки'], run: () => symbolsDialog(view) },
+  { id: 'insert.equation', label: 'Формула…', keywords: ['формула', 'уравнение', 'дробь', 'корень', 'степень', 'latex', 'математика'], keys: ['Alt+Equal'], run: () => mathDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
@@ -1198,6 +1201,7 @@ const TABS: RibbonTab[] = [
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      { name: 'Символы', items: [{ type: 'large', command: 'insert.equation', icon: 'math_formula', label: 'Формула' }, { type: 'large', command: 'insert.symbol', icon: 'symbols', label: 'Символ' }] },
       {
         name: 'По-русски',
         items: [
@@ -1944,7 +1948,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, mathPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();

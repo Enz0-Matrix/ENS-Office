@@ -5,6 +5,7 @@ import { Schema, type DOMOutputSpec, type MarkSpec, type Node as PMNode, type No
 import { tableNodes } from 'prosemirror-tables';
 import { fontStack } from '../../table/src/fonts';
 import { FLOAT_CLASS, floatStyle, type Float } from './floats';
+import { parseTex, toMathML } from './math';
 
 /** Рамка надписи: линия и поля внутри. */
 export interface FrameLine { w: number; c: string; s: 'solid' | 'dashed' | 'dotted' | 'double' }
@@ -217,6 +218,23 @@ const nodes: Record<string, NodeSpec> = {
       const p = n.attrs.page as { w: number; h: number } | null;
       const label = p ? `Разрыв раздела · ${p.w > p.h ? 'альбомная' : 'книжная'}` : 'Разрыв раздела';
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
+    },
+  },
+  /** Формула: запись в стиле LaTeX (tex); на листе — MathML, в docx — формула Word (OMML). */
+  math: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { tex: { default: '' } },
+    parseDOM: [{ tag: 'span.math[data-tex]', getAttrs: (d) => ({ tex: (d as HTMLElement).getAttribute('data-tex') ?? '' }) }],
+    toDOM: (n) => {
+      const span = document.createElement('span');
+      span.className = 'math';
+      span.dataset.tex = n.attrs.tex as string;
+      span.title = 'Формула — дважды щёлкните, чтобы изменить';
+      span.contentEditable = 'false';
+      span.innerHTML = toMathML(parseTex(n.attrs.tex as string));
+      return span;
     },
   },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */

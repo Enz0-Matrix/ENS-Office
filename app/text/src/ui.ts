@@ -59,6 +59,10 @@ export function dialog(build: (box: HTMLElement, close: () => void) => void, sma
   build(box, close);
   ov.replaceChildren(box);
   ov.hidden = false;
+  // Окно может само выбрать, куда поставить фокус (например, во встроенный редактор): data-autofocus.
+  const own = box.querySelector<HTMLElement>('[data-autofocus]');
+  // Встроенный редактор ProseMirror ставит фокус сам (сразу с курсором), иначе браузер на миг оставит каретку в начале.
+  if (own) { const f = (own as HTMLElement & { ensFocus?: () => void }).ensFocus; if (f) f(); else own.focus(); return; }
   box.querySelector<HTMLElement>('input,button.primary,.menu-close')?.focus();
 }
 
