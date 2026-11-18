@@ -22,10 +22,10 @@ impl<'a> Model<'a> {
                 CalcResult::Number(value) => {
                     f(value);
                 }
-                CalcResult::Boolean(value) if !matches!(arg, Node::ReferenceKind { .. }) => {
+                CalcResult::Boolean(value) if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) => {
                     f(if value { 1.0 } else { 0.0 });
                 }
-                CalcResult::String(value) if !matches!(arg, Node::ReferenceKind { .. }) => {
+                CalcResult::String(value) if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) => {
                     if let Some(parsed) = self.cast_number(&value) {
                         f(parsed);
                     } else {
@@ -115,10 +115,10 @@ impl<'a> Model<'a> {
                 CalcResult::Number(value) => {
                     f(value);
                 }
-                CalcResult::Boolean(value) if !matches!(arg, Node::ReferenceKind { .. }) => {
+                CalcResult::Boolean(value) if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) => {
                     f(if value { 1.0 } else { 0.0 });
                 }
-                CalcResult::String(value) if !matches!(arg, Node::ReferenceKind { .. }) => {
+                CalcResult::String(value) if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) => {
                     if let Some(parsed) = self.cast_number(&value) {
                         f(parsed);
                     } else {
@@ -283,7 +283,7 @@ impl<'a> Model<'a> {
                     sum += value;
                 }
                 CalcResult::String(s) => {
-                    if let Node::ReferenceKind { .. } = arg {
+                    if let Node::ReferenceKind { .. } = arg.structured_inner() {
                         // Do nothing
                         count += 1.0;
                     } else if let Some(t) = parse_finite_number(&s) {
@@ -334,11 +334,11 @@ impl<'a> Model<'a> {
                 CalcResult::Number(_) => {
                     result += 1.0;
                 }
-                CalcResult::Boolean(_) if !matches!(arg, Node::ReferenceKind { .. }) => {
+                CalcResult::Boolean(_) if !matches!(arg.structured_inner(), Node::ReferenceKind { .. }) => {
                     result += 1.0;
                 }
                 CalcResult::String(s)
-                    if !matches!(arg, Node::ReferenceKind { .. })
+                    if !matches!(arg.structured_inner(), Node::ReferenceKind { .. })
                         && parse_finite_number(&s).is_some() =>
                 {
                     result += 1.0;
@@ -859,7 +859,7 @@ impl<'a> Model<'a> {
                 Err(e) => return e,
             },
             CalcResult::Boolean(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     vec![Some(if value { 1.0 } else { 0.0 })]
                 } else {
                     return CalcResult::Error {
@@ -870,7 +870,7 @@ impl<'a> Model<'a> {
                 }
             }
             CalcResult::Number(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     vec![Some(value)]
                 } else {
                     return CalcResult::Error {
@@ -881,7 +881,7 @@ impl<'a> Model<'a> {
                 }
             }
             CalcResult::String(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     if let Some(parsed) = self.cast_number(&value) {
                         vec![Some(parsed)]
                     } else {
@@ -959,7 +959,7 @@ impl<'a> Model<'a> {
                 Err(e) => return e,
             },
             CalcResult::Boolean(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     vec![Some(if value { 1.0 } else { 0.0 })]
                 } else {
                     return CalcResult::Error {
@@ -970,7 +970,7 @@ impl<'a> Model<'a> {
                 }
             }
             CalcResult::Number(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     vec![Some(value)]
                 } else {
                     return CalcResult::Error {
@@ -981,7 +981,7 @@ impl<'a> Model<'a> {
                 }
             }
             CalcResult::String(value) => {
-                if !matches!(args[0], Node::ReferenceKind { .. }) {
+                if !matches!(args[0].structured_inner(), Node::ReferenceKind { .. }) {
                     if let Some(parsed) = self.cast_number(&value) {
                         vec![Some(parsed)]
                     } else {

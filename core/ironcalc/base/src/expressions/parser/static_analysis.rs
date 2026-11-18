@@ -167,6 +167,9 @@ pub fn add_implicit_intersection(node: &mut Node, add: bool) {
         Node::TableNameKind(_) => {
             // noop for now
         }
+        Node::StructuredKind { .. } => {
+            // как диапазон: неявное пересечение в файле не пишется
+        }
         Node::FunctionKind { kind, args } => {
             let arg_count = args.len();
             let signature = get_function_args_signature(kind, arg_count);
@@ -237,6 +240,7 @@ pub fn remove_redundant_implicit_intersection(node: &mut Node, add: bool) {
         | Node::DefinedNameKind(_)
         | Node::NamedVariableKind { .. }
         | Node::TableNameKind(_)
+        | Node::StructuredKind { .. }
         | Node::LambdaDefKind { .. }
         | Node::LambdaCallKind { .. } => {}
         Node::ImplicitIntersection { child, .. } => {
@@ -382,6 +386,7 @@ pub(crate) fn run_static_analysis_on_node(node: &Node) -> StaticResult {
         }
         Node::NamedVariableKind { .. } => StaticResult::Scalar,
         Node::TableNameKind(_) => StaticResult::Unknown,
+        Node::StructuredKind { resolved, .. } => run_static_analysis_on_node(resolved),
         Node::FunctionKind { kind, args } => static_analysis_on_function(kind, args),
         Node::ImplicitIntersection { .. } => StaticResult::Scalar,
         Node::SpillRangeOperator { .. } => StaticResult::Unknown,

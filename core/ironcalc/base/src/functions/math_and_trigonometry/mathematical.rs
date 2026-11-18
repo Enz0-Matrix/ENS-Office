@@ -236,7 +236,7 @@ impl<'a> Model<'a> {
         let mut result = 0.0;
         for arg in args {
             // Handle reference special case. Behaviour of a reference is equivalent to a range of one cell.
-            let arg = match arg {
+            let arg = match arg.structured_inner() {
                 Node::ReferenceKind {
                     column,
                     absolute_column,
@@ -435,7 +435,7 @@ impl<'a> Model<'a> {
 
         for arg in args {
             // Handle reference special case. Behaviour of a reference is equivalent to a range of one cell.
-            let arg = match arg {
+            let arg = match arg.structured_inner() {
                 Node::ReferenceKind {
                     column,
                     absolute_column,

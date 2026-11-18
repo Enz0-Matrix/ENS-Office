@@ -134,7 +134,7 @@ impl<'a> Model<'a> {
 
     /// Whether what `node` gives is a reference, as ISREF sees it.
     fn gives_reference(&mut self, node: &Node, cell: CellReferenceIndex) -> bool {
-        match node {
+        match node.structured_inner() {
             Node::ReferenceKind { .. } | Node::RangeKind { .. } | Node::OpRangeKind { .. } => true,
             // INDEX gives a reference when what it indexes is one, even to a
             // single cell, where what it gives here is the value. So it is
@@ -318,6 +318,13 @@ impl<'a> Model<'a> {
                     };
                 }
             }
+            // ENS-Office: SHEET(Таблица1[]) — лист таблицы
+            Node::StructuredKind { resolved, .. } => match resolved.as_ref() {
+                Node::ReferenceKind { sheet_index, .. } | Node::RangeKind { sheet_index, .. } => {
+                    return CalcResult::Number(*sheet_index as f64 + 1.0)
+                }
+                _ => {}
+            },
             Node::TableNameKind(name) => {
                 // Now let's see if it is a table
                 for (table_name, table) in &self.workbook.tables {

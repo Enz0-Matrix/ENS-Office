@@ -19,34 +19,79 @@ use super::{Lexer, LexerError};
 impl<'a> Lexer<'a> {
     fn consume_table_specifier(&mut self) -> Result<Option<TableSpecifier>> {
         if self.peek_char() == Some('#') {
-            // It's a specifier
-            // TODO(TD): There are better ways of doing this :)
-            let rest_of_formula: String = self.chars[self.position..self.len].iter().collect();
-            let specifier = if rest_of_formula.starts_with("#This Row]") {
-                self.position += "#This Row]".len();
-                TableSpecifier::ThisRow
-            } else if rest_of_formula.starts_with("#All]") {
-                self.position += "#All]".len();
-                TableSpecifier::All
-            } else if rest_of_formula.starts_with("#Data]") {
-                self.position += "#Data]".len();
-                TableSpecifier::Data
-            } else if rest_of_formula.starts_with("#Headers]") {
-                self.position += "#Headers]".len();
-                TableSpecifier::Headers
-            } else if rest_of_formula.starts_with("#Totals]") {
-                self.position += "#Totals]".len();
-                TableSpecifier::Totals
-            } else {
-                return Err(LexerError {
-                    position: self.position,
-                    message: "Invalid structured reference".to_string(),
-                });
-            };
-            Ok(Some(specifier))
+            // ENS-Office: как в английском и русском Excel, без учёта регистра (ADR-013)
+            const NAMES: [(&str, TableSpecifier); 10] = [
+                ("#this row]", TableSpecifier::ThisRow),
+                ("#all]", TableSpecifier::All),
+                ("#data]", TableSpecifier::Data),
+                ("#headers]", TableSpecifier::Headers),
+                ("#totals]", TableSpecifier::Totals),
+                ("#эта строка]", TableSpecifier::ThisRow),
+                ("#все]", TableSpecifier::All),
+                ("#данные]", TableSpecifier::Data),
+                ("#заголовки]", TableSpecifier::Headers),
+                ("#итоги]", TableSpecifier::Totals),
+            ];
+            let rest: String = self.chars[self.position..self.len].iter().collect::<String>().to_lowercase();
+            for (name, specifier) in NAMES {
+                if rest.starts_with(name) {
+                    self.position += name.chars().count();
+                    return Ok(Some(specifier));
+                }
+            }
+            Err(LexerError {
+                position: self.position,
+                message: "Invalid structured reference".to_string(),
+            })
         } else {
             Ok(None)
         }
+    }
+
+    /// ENS-Office: имя столбца без скобок после `@` (`[@Цена]`) — до `]`; `'` экранирует знак.
+    fn consume_bare_column(&mut self) -> Result<String> {
+        let mut out = String::new();
+        while self.position < self.len {
+            let ch = self.chars[self.position];
+            if ch == ']' {
+                return Ok(out.trim().to_string());
+            }
+            if ch == '\'' && self.position + 1 < self.len {
+                self.position += 1;
+                out.push(self.chars[self.position]);
+            } else {
+                out.push(ch);
+            }
+            self.position += 1;
+        }
+        Err(LexerError {
+            position: self.position,
+            message: "Invalid column name".to_string(),
+        })
+    }
+
+    /// ENS-Office: после `[@`: `]`, `Цена]`, `[Цена с НДС]]`, `[Янв]:[Мар]]`.
+    fn consume_this_row_short(&mut self, table_name: &str) -> Result<TokenType> {
+        let reference = if self.peek_char() == Some(']') {
+            None
+        } else if self.peek_char() == Some('[') {
+            let left = self.consume_column_reference()?;
+            if self.peek_char() == Some(':') {
+                self.position += 1;
+                let right = self.consume_column_reference()?;
+                Some(TableReference::RangeReference((left, right)))
+            } else {
+                Some(TableReference::ColumnReference(left))
+            }
+        } else {
+            Some(TableReference::ColumnReference(self.consume_bare_column()?))
+        };
+        self.expect(TokenType::RightBracket)?;
+        Ok(TokenType::StructuredReference {
+            table_name: table_name.to_string(),
+            specifier: Some(TableSpecifier::ThisRow),
+            table_reference: reference,
+        })
     }
 
     fn consume_column_reference(&mut self) -> Result<String> {
@@ -115,12 +160,29 @@ impl<'a> Lexer<'a> {
     //     MyTable[[#This Row], [Jan]:[Dec]] => MyTable[@[Jan]:[Dec]]
     //   But this is only a UI thing that we will ignore for now.
     pub(crate) fn consume_structured_reference(&mut self, table_name: &str) -> Result<TokenType> {
+        let outer = self.in_structured;
+        self.in_structured = true;
+        let result = self.consume_structured_reference_inner(table_name);
+        self.in_structured = outer;
+        result
+    }
+
+    fn consume_structured_reference_inner(&mut self, table_name: &str) -> Result<TokenType> {
         self.expect(TokenType::LeftBracket)?;
         let peek_char = self.peek_char();
         if peek_char == Some(']') {
             // This is just a reference to the full table
             self.expect(TokenType::RightBracket)?;
-            return Ok(TokenType::Ident(table_name.to_string()));
+            return Ok(TokenType::StructuredReference {
+                table_name: table_name.to_string(),
+                specifier: None,
+                table_reference: None,
+            });
+        }
+        if peek_char == Some('@') {
+            // ENS-Office: Таблица1[@Цена] — то же, что Таблица1[[#This Row],[Цена]]
+            self.position += 1;
+            return self.consume_this_row_short(table_name);
         }
         if peek_char == Some('#') {
             // Expecting MyTable[#Totals]
@@ -150,7 +212,7 @@ impl<'a> Lexer<'a> {
         let specifier = self.consume_table_specifier()?;
         if specifier.is_some() {
             let peek_token = self.peek_token();
-            if peek_token == TokenType::Comma {
+            if peek_token == TokenType::Comma || peek_token == TokenType::Semicolon {
                 self.advance_token();
                 self.expect(TokenType::LeftBracket)?;
             } else if peek_token == TokenType::RightBracket {
