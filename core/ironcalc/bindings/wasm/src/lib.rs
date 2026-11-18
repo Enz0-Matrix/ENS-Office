@@ -1611,6 +1611,18 @@ impl Model {
         self.model.ens_import_sheet(bytes, index).map_err(to_js_error)
     }
 
+    /// ENS-Office: значения прямоугольника в байтах (для «Вставить связь» в другой книге).
+    #[wasm_bindgen(js_name = "rangeValues")]
+    pub fn range_values(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Vec<u8> {
+        self.model.ens_range_values(sheet, r1, c1, r2, c2)
+    }
+
+    /// ENS-Office: значения из другой книги (`rangeValues`) — в кэш ссылок на её лист `sheet`.
+    #[wasm_bindgen(js_name = "mergeExternalValues")]
+    pub fn merge_external_values(&mut self, file: &str, target: &str, sheet: &str, bytes: &[u8]) -> Result<(), JsError> {
+        self.model.ens_merge_external_values(file, target, sheet, bytes).map_err(to_js_error)
+    }
+
     /// ENS-Office: обновляет ссылки на книгу `file` из байтов её xlsx (файл читается с диска,
     /// запускать его не нужно). Возвращает листы, которых в ней нет.
     #[cfg(feature = "xlsx")]

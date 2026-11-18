@@ -408,3 +408,40 @@ pub fn sheet_package_from_bytes(bytes: &[u8]) -> Result<SheetPackage, String> {
     bitcode::decode(bytes).map_err(|e| format!("Повреждённые данные листа: {e}"))
 }
 
+/// Значения ячеек диапазона (для «Вставить связь» в другой книге): в байтах.
+pub type PackedValues = Vec<(i32, i32, u8, f64, String)>;
+
+impl<'a> Model<'a> {
+    /// Значения прямоугольника листа (пустые ячейки пропускаются).
+    pub fn ens_range_values(&self, sheet: u32, r1: i32, c1: i32, r2: i32, c2: i32) -> Vec<u8> {
+        let values: PackedValues = self
+            .sheet_values(sheet)
+            .into_iter()
+            .filter(|(r, c, _)| *r >= r1 && *r <= r2 && *c >= c1 && *c <= c2)
+            .map(|(r, c, v)| {
+                let (k, n, t) = pack_value(&v);
+                (r, c, k, n, t)
+            })
+            .collect();
+        bitcode::encode(&values)
+    }
+
+    /// Дописывает значения в служебный лист `[file]sheet` (остальные его ячейки остаются).
+    /// Как и «Обновить связи», это кэш значений: в историю отмены не идёт.
+    pub fn ens_merge_external_values(&mut self, file: &str, target: &str, sheet: &str, bytes: &[u8]) -> Result<(), String> {
+        let values: PackedValues = bitcode::decode(bytes).map_err(|e| format!("Повреждённые значения: {e}"))?;
+        self.ensure_external_book(file, target);
+        let (index, created) = self.ensure_external_sheet(file, sheet);
+        let mut all: Vec<(i32, i32, ExternalValue)> = self
+            .sheet_values(index)
+            .into_iter()
+            .filter(|(r, c, _)| !values.iter().any(|(vr, vc, ..)| vr == r && vc == c))
+            .collect();
+        all.extend(values.iter().map(|(r, c, k, n, t)| (*r, *c, unpack_value(*k, *n, t))));
+        self.set_external_values(file, sheet, &all)?;
+        if created {
+            self.reset_parsed_structures();
+        }
+        Ok(())
+    }
+}
