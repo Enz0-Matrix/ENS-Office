@@ -3354,6 +3354,312 @@ await test('примечания в docx: comments.xml и commentsExtended.xml (
   eq(r.text, 'Начало отмечено и здесь|продолжение конец', 'текст');
   await p.context().close();
 });
+// --- Сноски
+await test('сноски: Ctrl+Alt+F вставляет сноску с текстом, номера по порядку, подсказка при наведении, правка двойным щелчком', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Первое утверждение');
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog .note-editor .ProseMirror');
+  await p.keyboard.type('Источник первый');
+  await p.keyboard.press('Control+Enter');
+  await p.keyboard.type(' и второе');
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog .note-editor .ProseMirror');
+  await p.keyboard.type('Источник второй');
+  await p.click('.note-dialog button:has-text("Готово")');
+  const nums = () => p.$$eval('.ProseMirror sup.fn', (s) => s.map((e) => [e.dataset.n, e.dataset.tip]));
+  eq(await nums(), [['1', 'Источник первый'], ['2', 'Источник второй']], 'номера и тексты');
+  eq(await text(p), 'Первое утверждение и второе', 'основной текст без текста сносок');
+  // Новая сноска в начале — номера сдвигаются.
+  await p.keyboard.press('Home');
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 7))); });
+  await p.keyboard.press('Control+Alt+KeyF');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type('Новая');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums()).map((x) => x.join(':')), ['1:Новая', '2:Источник первый', '3:Источник второй'], 'перенумерация');
+  // Подсказка при наведении.
+  await p.hover('.ProseMirror sup.fn >> nth=1');
+  const tip = await p.$eval('.ProseMirror sup.fn >> nth=1', (e) => getComputedStyle(e, '::before').content);
+  ok(tip.includes('Источник первый'), `подсказка: ${tip}`);
+  // Двойной щелчок — правка.
+  await p.dblclick('.ProseMirror sup.fn >> nth=1');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type(', с. 25');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums())[1][1], 'Источник первый, с. 25', 'текст изменён');
+  // Концевая сноска — римские номера (курсор в конец абзаца).
+  await p.evaluate(() => { const E = window.ens, d = E.view.state.doc; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.atEnd(d))); });
+  await p.keyboard.press('Control+Alt+KeyD');
+  await p.waitForSelector('.note-dialog');
+  await p.keyboard.type('Концевая');
+  await p.keyboard.press('Control+Enter');
+  eq((await nums()).slice(-1)[0], ['i', 'Концевая'], 'концевая сноска');
+  // Отмена убирает сноску вместе с текстом.
+  const before = (await nums()).length;
+  await p.keyboard.press('Control+KeyZ');
+  await p.keyboard.press('Control+KeyZ');
+  ok((await nums()).length < before, 'отмена');
+  await p.context().close();
+});
+await test('сноски в docx: footnotes.xml и endnotes.xml туда и обратно, текст с форматированием, без потерь', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const note = (t, end = false) => s.nodes.footnote.create({ end, content: [s.nodes.paragraph.create(null, [s.text('См. '), s.text(t, [s.marks.em.create()])]).toJSON()] });
+    const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, [s.text('Текст'), note('Иванов И. И.'), s.text(' дальше'), note('второй'), note('конец', true)])]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const f = E.unzip(bytes), dec = (n) => f[n] ? new TextDecoder().decode(f[n]) : '';
+    const back = E.importDocx(bytes);
+    return { doc: dec('word/document.xml'), fn: dec('word/footnotes.xml'), en: dec('word/endnotes.xml'), rels: dec('word/_rels/document.xml.rels'), ct: dec('[Content_Types].xml'),
+      same: back.doc.eq(doc), back: JSON.stringify(back.doc.toJSON()).slice(0, 400), lossy: back.meta.lossy };
+  });
+  ok(r.doc.includes('<w:footnoteReference w:id="1"/>') && r.doc.includes('<w:footnoteReference w:id="2"/>') && r.doc.includes('<w:endnoteReference w:id="1"/>'), 'ссылки в тексте');
+  ok(r.fn.includes('w:type="separator" w:id="-1"') && r.fn.includes('<w:footnote w:id="2">'), 'часть сносок с разделителями');
+  ok(/<w:footnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"\/><\/w:rPr><w:footnoteRef\/><\/w:r>/.test(r.fn), 'номер в начале текста сноски');
+  ok(r.fn.includes('<w:i/>'), 'курсив в сноске');
+  ok(r.en.includes('<w:endnoteRef/>'), 'концевые');
+  ok(r.rels.includes('/footnotes" Target="footnotes.xml"') && r.ct.includes('/word/footnotes.xml'), 'связи и типы');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, `документ тот же после круга: ${r.back}`);
+  await p.context().close();
+});
+// --- Оглавление
+const tocRows = (p) => p.evaluate(() => [...document.querySelectorAll('.ProseMirror .toc-row')].map((r) => [Number(r.dataset.level), r.querySelector('.toc-text').textContent, r.querySelector('.toc-page').textContent]));
+await test('оглавление: строится по заголовкам, номера страниц и строки обновляются сами, щелчок ведёт к заголовку', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t)), H = (l, t) => s.nodes.heading.create({ level: l }, s.text(t));
+    const filler = Array.from({ length: 45 }, (_, i) => P('Строка текста номер ' + i));
+    E.loadDoc(s.nodes.doc.create(null, [P('Титул'), H(1, 'Введение'), P('Текст'), H(2, 'Цели'), H(4, 'Глубокий уровень'), ...filler, H(1, 'Основная часть')]), E.getMeta(), 'toc');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1)));
+  });
+  await p.click('#tabs button.tab:text-is("Вставка")');
+  await p.selectOption('select[data-command="insert.toc"]', '3');
+  await p.waitForSelector('.ProseMirror .toc-row');
+  await p.waitForTimeout(300);
+  const rows = await tocRows(p);
+  eq(rows.map((r) => r.slice(0, 2)), [[1, 'Введение'], [2, 'Цели'], [1, 'Основная часть']], 'уровни 1–3, четвёртый не входит');
+  eq(await p.evaluate(() => window.ens.view.state.doc.child(0).textContent), 'СОДЕРЖАНИЕ', 'заголовок «СОДЕРЖАНИЕ»');
+  ok(rows[0][2] === '1' && Number(rows[2][2]) >= 2, `номера страниц: ${JSON.stringify(rows)}`);
+  // Новый заголовок появляется в оглавлении сам.
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.insert(E.view.state.doc.content.size, s.nodes.heading.create({ level: 1 }, s.text('Заключение')))); });
+  await p.waitForTimeout(200);
+  eq((await tocRows(p)).map((r) => r[1]), ['Введение', 'Цели', 'Основная часть', 'Заключение'], 'новая строка');
+  // Правка текста заголовка.
+  await p.evaluate(() => { const E = window.ens; let at = 0; E.view.state.doc.forEach((n, pos) => { if (n.textContent === 'Цели') at = pos; }); E.view.dispatch(E.view.state.tr.insertText(' и задачи', at + 5)); });
+  await p.waitForTimeout(200);
+  eq((await tocRows(p))[1][1], 'Цели и задачи', 'текст строки обновлён');
+  // Номер страницы сдвигается, если выше вставить разрыв страницы.
+  const before = Number((await tocRows(p))[2][2]);
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.insert(4 + 13, s.nodes.paragraph.create({ pageBreakBefore: true }, s.text('Новая страница')))); });
+  await p.waitForFunction((b) => Number(document.querySelectorAll('.ProseMirror .toc-row')[2]?.querySelector('.toc-page').textContent) === b + 1, before, { timeout: 5000 });
+  // Щелчок по строке — переход к заголовку.
+  await p.click('.ProseMirror .toc-row:nth-child(3) .toc-text');
+  const at = await p.evaluate(() => { const { $from } = window.ens.view.state.selection; return $from.parent.textContent; });
+  eq(at, 'Основная часть', 'курсор в заголовке');
+  // Повторная команда меняет уровни, а не вставляет второе оглавление.
+  await p.evaluate(() => window.ens.run('insert.toc', '1'));
+  await p.waitForTimeout(200);
+  eq(await p.evaluate(() => { let n = 0; window.ens.view.state.doc.forEach((x) => { if (x.type.name === 'toc') n++; }); return n; }), 1, 'одно оглавление');
+  eq((await tocRows(p)).map((r) => r[1]), ['Введение', 'Основная часть', 'Заключение'], 'только уровень 1');
+  await p.context().close();
+});
+await test('оглавление в docx: поле TOC с готовыми строками туда и обратно, оглавление Word читается', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t)), H = (l, t) => s.nodes.heading.create({ level: l }, s.text(t));
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.toc.create({ levels: 2 }), H(1, 'Первый'), P('текст'), H(2, 'Второй')]), E.getMeta(), 'toc');
+  });
+  await p.waitForSelector('.ProseMirror .toc-row');
+  await p.waitForTimeout(200);
+  const r = await p.evaluate(() => {
+    const E = window.ens;
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    return { xml, same: back.doc.eq(E.view.state.doc), back: back.doc.toJSON(), lossy: back.meta.lossy };
+  });
+  ok(r.xml.includes('<w:docPartGallery w:val="Table of Contents"/>'), 'блок оглавления Word');
+  ok(r.xml.includes('<w:instrText xml:space="preserve"> TOC \\o "1-2" \\u </w:instrText>'), 'поле TOC с уровнями');
+  ok(/Первый<\/w:t><\/w:r><w:r><w:tab\/><\/w:r><w:r><w:t>1<\/w:t>/.test(r.xml), 'строка с номером страницы');
+  ok(r.xml.includes('w:leader="dot"'), 'точки до номера');
+  ok(r.same, `документ тот же после круга: ${JSON.stringify(r.back).slice(0, 300)}`);
+  eq(r.lossy, [], 'без потерь');
+  await p.context().close();
+});
+// --- Подписи (названия) рисунков и таблиц
+const shownCaptions = (p) => p.evaluate(() => [...document.querySelectorAll('.ProseMirror p')].filter((e) => e.querySelector('span.seq'))
+  .map((e) => [...e.childNodes].map((n) => n.nodeType === 3 ? n.textContent : n.classList?.contains('seq') ? n.getAttribute('data-n') : n.textContent).join('')));
+await test('подписи: «Таблица N» над таблицей, «Рисунок N» под рисунком, номера пересчитываются сами', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+    const cell = (t) => s.nodes.table_cell.create(null, P(t));
+    const T = s.nodes.table.create(null, [s.nodes.table_row.create(null, [cell('А'), cell('Б')])]);
+    const img = s.nodes.paragraph.create(null, s.nodes.image.create({ src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', width: 40, height: 40 }));
+    E.loadDoc(s.nodes.doc.create(null, [P('Текст'), T, img, P('Конец')]), E.getMeta(), 'cap');
+    // Курсор в таблице.
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 11)));
+  });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  eq(await p.$eval('.caption-dialog select[aria-label="Подпись"]', (s) => s.value), 'Таблица', 'в таблице — «Таблица»');
+  eq(await p.$eval('.caption-dialog select[aria-label="Положение"]', (s) => s.value), 'above', 'над таблицей (ГОСТ)');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Исходные данные');
+  eq(await p.textContent('.caption-preview'), 'Таблица 1 – Исходные данные', 'предпросмотр');
+  await p.click('.caption-dialog button.primary');
+  // Курсор у рисунка.
+  await p.evaluate(() => { const E = window.ens, d = E.view.state.doc; let at = 0; d.descendants((n, pos) => { if (n.type.name === 'image') at = pos; }); E.view.dispatch(E.view.state.tr.setSelection(E.pm.NodeSelection.create(d, at))); });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  eq(await p.$eval('.caption-dialog select[aria-label="Положение"]', (s) => s.value), 'below', 'под рисунком');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Схема');
+  await p.keyboard.press('Enter');
+  eq(await shownCaptions(p), ['Таблица 1 – Исходные данные', 'Рисунок 1 – Схема'], 'подписи вставлены');
+  const r = await p.evaluate(() => { const d = window.ens.view.state.doc; return [d.child(1).type.name, d.child(1).attrs.align, d.child(2).type.name, d.child(4).type.name, d.child(4).attrs.align]; });
+  eq(r, ['paragraph', null, 'table', 'paragraph', 'center'], 'место и выравнивание по ГОСТ');
+  // Ещё одна таблица выше первой — номера ниже сдвигаются сами.
+  await p.evaluate(() => { const E = window.ens, s = E.schema; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.evaluate(() => window.ens.run('insert.caption'));
+  await p.waitForSelector('.caption-dialog');
+  await p.selectOption('.caption-dialog select[aria-label="Подпись"]', 'Таблица');
+  await p.selectOption('.caption-dialog select[aria-label="Положение"]', 'above');
+  await p.fill('.caption-dialog input[aria-label="Текст подписи"]', 'Новая');
+  await p.click('.caption-dialog button.primary');
+  eq(await shownCaptions(p), ['Таблица 1 – Новая', 'Таблица 2 – Исходные данные', 'Рисунок 1 – Схема'], 'номера пересчитаны');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await shownCaptions(p), ['Таблица 1 – Исходные данные', 'Рисунок 1 – Схема'], 'отмена возвращает номера');
+  await p.context().close();
+});
+await test('подписи в docx: поле SEQ с числом туда и обратно, поля SEQ из Word читаются', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const cap = (name, t) => s.nodes.paragraph.create(null, [s.text(name + ' '), s.nodes.seq.create({ name }), s.text(' – ' + t)]);
+    const doc = s.nodes.doc.create(null, [cap('Рисунок', 'один'), cap('Таблица', 'первая'), cap('Рисунок', 'два')]);
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    // Сложное поле из Word: begin / instr / separate / результат / end.
+    const files = E.unzip(bytes);
+    files['word/document.xml'] = new TextEncoder().encode(xml.replace('<w:fldSimple w:instr=" SEQ Рисунок \\* ARABIC "><w:r><w:t>1</w:t></w:r></w:fldSimple>',
+      '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> SEQ Рисунок \\* ARABIC </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'));
+    const word = E.importDocx(E.zip(files));
+    E.loadDoc(word.doc, word.meta, 'w');
+    return { xml, same: back.doc.eq(doc), lossy: back.meta.lossy, wordLossy: word.meta.lossy, caps: E.listCaptions().map((c) => [c.name, c.n, c.text]) };
+  });
+  ok(r.xml.includes('<w:fldSimple w:instr=" SEQ Рисунок \\* ARABIC "><w:r><w:t>2</w:t>'), 'второй рисунок записан с числом 2');
+  ok(r.xml.includes('SEQ Таблица'), 'таблица');
+  ok(r.same, 'документ тот же после круга');
+  eq([r.lossy, r.wordLossy], [[], []], 'без потерь');
+  eq(r.caps, [['Рисунок', 1, 'один'], ['Таблица', 1, 'первая'], ['Рисунок', 2, 'два']], 'сложное поле SEQ → номер, число пересчитано');
+  await p.context().close();
+});
+// --- Закладки
+const BM_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+  E.loadDoc(s.nodes.doc.create(null, [P('Введение к документу'), P('Глава первая: цели'), P('Заключение и выводы')]), E.getMeta(), 'bm');
+};
+const caret = (p) => p.evaluate(() => window.ens.view.state.selection.from);
+await test('закладки: добавить из окна, перейти, ссылка «Место в документе», Ctrl+щелчок ведёт к закладке', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  // Выделяем «Глава первая» и вставляем закладку: имя подсказано из текста.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 23, 35))); });
+  await p.keyboard.press('Control+Shift+F5');
+  await p.waitForSelector('.bookmark-dialog');
+  eq(await p.$eval('.bookmark-dialog input[type=text]', (i) => i.value), 'Глава_первая', 'имя по выделению');
+  await p.fill('.bookmark-dialog input[type=text]', 'Цели');
+  await p.click('.bookmark-dialog button:has-text("Добавить")');
+  const bms = await p.evaluate(() => window.ens.listBookmarks());
+  eq(bms.map((b) => [b.name, b.context]), [['Цели', 'Глава первая: цели']], 'закладка в начале выделения');
+  // Неверное имя.
+  await p.evaluate(() => window.ens.run('insert.bookmark'));
+  await p.fill('.bookmark-dialog input[type=text]', '1 неверное');
+  await p.click('.bookmark-dialog button:has-text("Добавить")');
+  ok((await p.textContent('.bookmark-dialog .bm-status')).includes('начинается с буквы'), 'проверка имени');
+  // Перейти из списка.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1))); });
+  await p.selectOption('.bookmark-dialog .bm-list', 'Цели');
+  await p.click('.bookmark-dialog button:has-text("Перейти")');
+  eq(await caret(p), bms[0].pos + 1, 'курсор у закладки');
+  // Ссылка на закладку из окна «Гиперссылка».
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 1, 9))); });
+  await p.keyboard.press('Control+KeyK');
+  await p.selectOption('select[aria-label="Место в документе"]', '#Цели');
+  await p.click('#dialog button:has-text("Применить")');
+  const href = await p.evaluate(() => { const n = window.ens.view.state.doc.nodeAt(2); return n.marks.find((m) => m.type.name === 'link')?.attrs.href; });
+  eq(href, '#Цели', 'ссылка на закладку');
+  // Ctrl+щелчок по ссылке — переход к закладке.
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 50))); });
+  const box = await p.$eval('.ProseMirror a[href="#Цели"]', (a) => { const r = a.getBoundingClientRect(); return { x: r.x + 5, y: r.y + r.height / 2 }; });
+  await p.keyboard.down('Control');
+  await p.mouse.click(box.x, box.y);
+  await p.keyboard.up('Control');
+  eq(await caret(p), bms[0].pos + 1, 'Ctrl+щелчок перешёл к закладке');
+  await p.context().close();
+});
+await test('закладки: переименование обновляет ссылки, удаление предупреждает и показывает ссылки без цели', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, st = E.view.state;
+    const tr = st.tr.insert(23, s.nodes.bookmark.create({ name: 'Цели' }));
+    tr.addMark(1, 9, s.marks.link.create({ href: '#Цели' }));
+    E.view.dispatch(tr.setMeta('addToHistory', false));
+  });
+  await p.evaluate(() => window.ens.run('insert.bookmark'));
+  await p.selectOption('.bookmark-dialog .bm-list', 'Цели');
+  ok((await p.$eval('.bookmark-dialog .bm-list option', (o) => o.textContent)).includes('ссылок: 1'), 'в списке видно число ссылок');
+  await p.fill('.bookmark-dialog input[type=text]', 'Задачи');
+  await p.click('.bookmark-dialog button:has-text("Переименовать")');
+  const r = await p.evaluate(() => ({ names: window.ens.listBookmarks().map((b) => b.name), href: window.ens.view.state.doc.nodeAt(2).marks.find((m) => m.type.name === 'link').attrs.href }));
+  eq(r, { names: ['Задачи'], href: '#Задачи' }, 'ссылка переименована вместе с закладкой');
+  await p.selectOption('.bookmark-dialog .bm-list', 'Задачи');
+  await p.click('.bookmark-dialog button:has-text("Удалить")');
+  await p.waitForSelector('#dialog button:has-text("Отмена")');
+  ok((await p.textContent('#dialog')).includes('ведут ссылки: 1'), 'предупреждение о ссылках');
+  await p.click('#dialog button.danger:has-text("Удалить")');
+  await p.waitForSelector('.bookmark-dialog');
+  eq(await p.evaluate(() => window.ens.listBookmarks().length), 0, 'удалена');
+  ok((await p.textContent('.bookmark-dialog .bm-broken')).includes('Ссылки без цели: 1'), 'список ссылок без цели');
+  await p.click('.bookmark-dialog .bm-broken-item');
+  eq(await p.evaluate(() => { const { from, to } = window.ens.view.state.selection; return [from, to]; }), [1, 9], 'переход к битой ссылке');
+  await p.keyboard.press('Control+KeyZ');
+  eq(await p.evaluate(() => window.ens.listBookmarks().map((b) => b.name)), ['Задачи'], 'отмена возвращает закладку');
+  await p.context().close();
+});
+await test('закладки: docx туда и обратно, _GoBack не переносится, повтор имени при вставке убирается', async () => {
+  const p = await page();
+  await p.evaluate(BM_SETUP);
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    E.view.dispatch(E.view.state.tr.insert(23, s.nodes.bookmark.create({ name: 'Цели' })).insert(1, s.nodes.bookmark.create({ name: '_Toc1' })).addMark(2, 10, s.marks.link.create({ href: '#Цели' })));
+    const bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    let xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    // Файл из Word: служебная закладка _GoBack.
+    const files = E.unzip(bytes);
+    files['word/document.xml'] = new TextEncoder().encode(xml.replace('<w:bookmarkStart w:id="0" w:name="_Toc1"/>', '<w:bookmarkStart w:id="0" w:name="_GoBack"/>'));
+    const zipped = E.zip(files);
+    return { xml, names: [], back: back.doc.toJSON(), now: E.view.state.doc.toJSON(), lossy: back.meta.lossy, goBack: E.importDocx(zipped).doc.toJSON() };
+  });
+  ok(/<w:bookmarkStart w:id="\d+" w:name="Цели"\/><w:bookmarkEnd w:id="\d+"\/>/.test(r.xml), 'w:bookmarkStart/End');
+  ok(r.xml.includes('<w:hyperlink w:anchor="Цели"'), 'ссылка на закладку — w:anchor');
+  eq(r.back, r.now, 'документ тот же после круга');
+  eq(r.lossy, [], 'без потерь');
+  ok(!JSON.stringify(r.goBack).includes('_GoBack'), '_GoBack не переносится');
+  // Повтор имени: вставка копии абзаца с закладкой.
+  const names = await p.evaluate(() => {
+    const E = window.ens, st = E.view.state, para = st.doc.child(1);
+    E.view.dispatch(st.tr.insert(st.doc.content.size, para));
+    return window.ens.listBookmarks().map((b) => b.name);
+  });
+  eq(names, ['_Toc1', 'Цели'], 'одна закладка на имя');
+  await p.context().close();
+});
 
 // --- Сравнение документов и исправления
 const REV_SETUP = () => {

@@ -486,6 +486,51 @@ svg.ic-l, svg.ic-m { display: none; }
 .cmt-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 .cmt-actions button { font-size: 12px; padding: 2px 6px; }
 .cmt-empty { color: var(--muted); }
+/* Сноска: номер надстрочным (из data-n), текст — подсказкой при наведении. */
+.ProseMirror sup.fn { position: relative; cursor: pointer; color: inherit; }
+.ProseMirror sup.fn::after { content: attr(data-n); }
+.ProseMirror sup.fn:hover { background: rgba(43, 87, 154, .12); border-radius: 2px; }
+.ProseMirror sup.fn:hover::before {
+  content: attr(data-tip); position: absolute; left: 0; bottom: 1.6em; z-index: 30; width: max-content; max-width: 320px;
+  white-space: pre-wrap; font-size: 9pt; line-height: 1.35; font-weight: normal; font-style: normal; text-indent: 0; text-align: left;
+  background: #fffdf3; color: #222; border: 1px solid #c9c2a0; border-radius: 4px; padding: 6px 8px; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+@media print { .ProseMirror sup.fn:hover::before { display: none; } }
+.note-dialog { width: min(560px, 94vw); }
+.note-dialog .note-editor .ProseMirror { min-height: 90px; max-height: 260px; overflow: auto; border: 1px solid var(--border, #bbb); border-radius: 4px; padding: 6px 8px; background: #fff; color: #222; font-size: 11pt; }
+.note-dialog .note-editor .ProseMirror p { margin: 0 0 4px; }
+/* Оглавление: строки с точками до номера страницы, отступ по уровню. */
+.ProseMirror div.toc { margin: 0 0 12pt; cursor: default; user-select: none; }
+.ProseMirror div.toc.ProseMirror-selectednode { outline: 2px solid var(--accent, #2b579a); outline-offset: 2px; }
+.ProseMirror .toc-row { display: flex; align-items: baseline; gap: 4px; line-height: 1.5; cursor: pointer; }
+.ProseMirror .toc-row:hover .toc-text { text-decoration: underline; }
+.ProseMirror .toc-row[data-level="2"] { padding-left: 12pt; }
+.ProseMirror .toc-row[data-level="3"] { padding-left: 24pt; }
+.ProseMirror .toc-row[data-level="4"] { padding-left: 36pt; }
+.ProseMirror .toc-row[data-level="5"] { padding-left: 48pt; }
+.ProseMirror .toc-row[data-level="6"] { padding-left: 60pt; }
+.ProseMirror .toc-dots { flex: 1; border-bottom: 1px dotted currentColor; min-width: 12px; transform: translateY(-4px); }
+.ProseMirror .toc-page { min-width: 1.5em; text-align: right; }
+.ProseMirror .toc-empty { color: #777; font-style: italic; border: 1px dashed #aaa; padding: 6px 8px; }
+@media print { .ProseMirror .toc-empty { display: none; } .ProseMirror div.toc.ProseMirror-selectednode { outline: none; } }
+/* Номер подписи (поле SEQ): число ставит плагин captions.ts в data-n. */
+.ProseMirror span.seq::after { content: attr(data-n); }
+.ProseMirror span.seq { background: rgba(0, 0, 0, .06); border-radius: 2px; }
+@media print { .ProseMirror span.seq { background: none; } }
+:root[data-night-sheet] .ProseMirror span.seq { background: rgba(255, 255, 255, .1); }
+.caption-dialog { width: min(520px, 94vw); }
+.caption-preview { font-weight: 600; margin: 8px 0; }
+/* Закладка: точка нулевой ширины; видна серой скобкой при «Отобразить все знаки» и вспышкой при переходе. */
+.ProseMirror span.bm { display: inline-block; width: 0; height: 1em; vertical-align: text-bottom; position: relative; }
+.ProseMirror.show-marks span.bm::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 3px; border: 1px solid #8a8a8a; border-right: 0; }
+.ProseMirror span.bm.bm-flash::before { content: ""; position: absolute; left: -2px; top: -2px; bottom: -2px; width: 4px; background: var(--accent, #2b579a); animation: bm-flash 1.2s ease-out forwards; }
+@keyframes bm-flash { from { opacity: 1; } to { opacity: 0; } }
+.bookmark-dialog .bm-list { width: 100%; min-height: 140px; margin: 6px 0; }
+.bookmark-dialog .bm-hidden { margin-left: 12px; }
+.bookmark-dialog .bm-broken { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.bookmark-dialog .bm-broken-item { text-align: left; background: none; border: 0; color: #b3261e; cursor: pointer; padding: 2px 0; }
+.bookmark-dialog { width: min(560px, 94vw); }
+.bookmark-dialog .dlg-actions { flex-wrap: wrap; }
 /* Исправления (рецензирование): вставка подчёркнута, удаление зачёркнуто, у абзаца — черта на поле, как в Word. */
 .ProseMirror ins.rev-ins { color: #1a6fb5; text-decoration: underline; text-decoration-color: currentColor; }
 .ProseMirror del.rev-del { color: #c0262d; text-decoration: line-through; }
