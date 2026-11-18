@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { outlineOpen, renderOutline, sections, toggleOutline } from './outline';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -704,6 +705,7 @@ function openHref(href: string): void {
 }
 
 function afterChange(docChanged: boolean): void {
+  renderOutline();
   // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
   if (docChanged) hideContextMenu();
   updateUi();
@@ -877,6 +879,7 @@ register(
   { id: 'page.size', label: 'Размер страницы', run: (v) => setPageSize(v ?? 'a4') },
   { id: 'page.orientation', label: 'Ориентация', run: (v) => setOrientation(v === 'landscape') },
   { id: 'page.margins', label: 'Поля', run: (v) => setMargins(v ?? 'normal') },
+  { id: 'view.outline', label: 'Структура (область навигации)', keywords: ['структура', 'навигация', 'заголовки', 'главы', 'оглавление', 'переместить главу'], keys: ['Ctrl+Alt+KeyN'], checked: () => outlineOpen(), run: () => { toggleOutline(view); updateUi(); } },
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
@@ -1434,6 +1437,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.zoomReset', icon: 'document_text', label: '100%' },
         ],
       },
+      { name: 'Показ', items: [{ type: 'large', command: 'view.outline', icon: 'text_bullet_list_tree', label: 'Структура' }] },
       { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }, { type: 'large', command: 'view.ruler', icon: 'grid', label: 'Линейка' }] },
     ],
   },
@@ -2272,6 +2276,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), sections: () => sections(view.state.doc), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
