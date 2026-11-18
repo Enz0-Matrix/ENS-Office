@@ -34,6 +34,8 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
+import { listRevisions } from './compare';
 import { compatDialog } from './compat-ui';
 import { readabilityDialog } from './readability-ui';
 import { saveTemplateDialog, templatesDialog, type TemplateHost } from './templates-ui';
@@ -257,6 +259,7 @@ const historyHost: HistoryHost = {
     view.dispatch(view.state.tr.replaceWith(at(range[0]), at(range[1]), insert));
   },
   openCopy: (path) => { void desktop.openCopy(path); },
+  compare: (v) => openCompare(v.id),
 };
 
 setInterval(() => {
@@ -925,6 +928,14 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  { id: 'review.compare', label: 'Сравнить документы…', keywords: ['сравнение', 'сравнить', 'различия', 'было', 'стало', 'исправления', 'редакции', 'версии'], run: () => openCompare() },
+  { id: 'rev.next', label: 'Следующее исправление', keywords: ['исправление', 'правка', 'рецензирование'], run: () => { goRevision(active(), 1); active().focus(); } },
+  { id: 'rev.prev', label: 'Предыдущее исправление', keywords: ['исправление', 'правка', 'рецензирование'], run: () => { goRevision(active(), -1); active().focus(); } },
+  { id: 'rev.accept', label: 'Принять исправление', keywords: ['принять', 'правка', 'рецензирование'], keys: ['Ctrl+Alt+KeyA'], run: () => { resolveOne(active(), true); active().focus(); } },
+  { id: 'rev.reject', label: 'Отклонить исправление', keywords: ['отклонить', 'правка', 'рецензирование'], keys: ['Ctrl+Alt+KeyX'], run: () => { resolveOne(active(), false); active().focus(); } },
+  { id: 'rev.acceptAll', label: 'Принять все исправления', keywords: ['принять все', 'правки'], run: () => { snap('before', 'Перед принятием всех исправлений'); resolveAll(active(), true); active().focus(); } },
+  { id: 'rev.rejectAll', label: 'Отклонить все исправления', keywords: ['отклонить все', 'правки'], run: () => { snap('before', 'Перед отклонением всех исправлений'); resolveAll(active(), false); active().focus(); } },
+  { id: 'rev.view', label: 'Показ исправлений', keywords: ['было', 'стало', 'исходный', 'пометки'], run: (v) => setRevView((v as RevView) ?? 'markup') },
   { id: 'review.dictionary', label: 'Словарь…', keywords: ['словарь', 'орфография', 'фамилия', 'не подчёркивать', 'исключения'], run: () => dictDialog() },
   { id: 'review.check', label: 'Проверка оформления (ГОСТ)', keywords: ['гост', 'оформление', 'проверка', 'поля', 'шрифт', 'интервал'], run: () => checkDialog(checkHost, (l) => { snap('before', l); }, () => view) },
   { id: 'review.compat', label: 'Совместимость с Word', keywords: ['word', 'ворд', 'расхождения', 'плывёт', 'вёрстка', 'отправка', 'шрифты'], run: () => compatDialog({ view: () => view, meta: () => meta, pages: () => pageCount(view) }) },
@@ -1294,6 +1305,19 @@ const TABS: RibbonTab[] = [
         ],
       },
       {
+        name: 'Сравнение и исправления',
+        items: [
+          { type: 'large', command: 'review.compare', icon: 'branch_compare', label: 'Сравнить' },
+          { type: 'large', command: 'rev.accept', icon: 'checkmark_circle', label: 'Принять' },
+          { type: 'large', command: 'rev.reject', icon: 'close_circle', label: 'Отклонить' },
+          { type: 'medium', command: 'rev.prev', icon: 'arrow_up' },
+          { type: 'medium', command: 'rev.next', icon: 'arrow_down' },
+          { type: 'select', command: 'rev.view', options: (Object.keys(REV_VIEW_LABEL) as RevView[]).map((value) => ({ value, label: REV_VIEW_LABEL[value] })), width: 150 },
+          { type: 'small', command: 'rev.acceptAll', icon: 'checkmark' },
+          { type: 'small', command: 'rev.rejectAll', icon: 'close_circle' },
+        ],
+      },
+      {
         name: 'Оформление',
         items: [
           { type: 'large', command: 'review.check', icon: 'checkmark', label: 'Проверка по ГОСТ' },
@@ -1440,6 +1464,24 @@ const TABS: RibbonTab[] = [
 ];
 
 const refreshRibbon = renderRibbon($('tabs'), $('ribbon'), () => showFileMenu(), TABS);
+
+/** Показ исправлений: с пометками, «было» (исходный текст) или «стало» (как после принятия всех). */
+let revView: RevView = 'markup';
+function setRevView(v: RevView): void {
+  revView = REV_VIEW_LABEL[v] ? v : 'markup';
+  if (revView === 'markup') document.documentElement.removeAttribute('data-rev-view');
+  else document.documentElement.setAttribute('data-rev-view', revView);
+  setSelect('rev.view', revView);
+  replan(view);
+  view.focus();
+}
+
+function openCompare(olderVersion?: string): void {
+  compareDialog({
+    doc: () => view.state.doc, meta: () => meta, docName: () => docName, history: () => hist, user: me,
+    create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); setRevView('markup'); }); },
+  }, { olderVersion });
+}
 
 function setSelect(cmd: string, value: string): void {
   const sel = document.querySelector<HTMLSelectElement>(`select[data-command="${cmd}"]`);
@@ -2272,6 +2314,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }
