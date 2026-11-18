@@ -103,3 +103,45 @@ fn ens_structured_references_follow_table() {
     assert_eq!(m.get_formatted_cell_value(sheet, 7, 1).unwrap().parse::<f64>().unwrap(), before);
 }
 
+#[test]
+fn ens_header_rename_rewrites_formulas() {
+    let model = load_from_xlsx(FILE, "ru", "UTC", "ru").unwrap();
+    let mut m = UserModel::from_model(model);
+    // лист filters: Table4 (A1:D7), заголовок в строке 1 (A1 = Dogs), A7 = SUBTOTAL(109,Table4[Dogs])
+    let sheet = 3;
+    let value = m.get_formatted_cell_value(sheet, 7, 1).unwrap();
+    m.set_user_input(sheet, 1, 1, "Собаки").unwrap();
+    assert_eq!(m.get_cell_content(sheet, 7, 1).unwrap(), "=ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;Table4[Собаки])");
+    assert_eq!(m.get_formatted_cell_value(sheet, 7, 1).unwrap(), value);
+    // xlsx: имя столбца и формула согласованы
+    let out = "temp_ens_header_rename.xlsx";
+    let _ = std::fs::remove_file(out);
+    save_to_xlsx(m.get_model(), out).unwrap();
+    let f = formulas(out, 4);
+    let back = load_from_xlsx(out, "ru", "UTC", "ru").unwrap();
+    std::fs::remove_file(out).unwrap();
+    assert!(f.iter().any(|(c, f)| c == "A7" && f == "SUBTOTAL(109,Table4[Собаки])"), "{f:?}");
+    assert_eq!(back.get_formatted_cell_value(sheet, 7, 1).unwrap(), value);
+    // отмена возвращает и заголовок, и формулу
+    m.undo().unwrap();
+    assert_eq!(m.get_cell_content(sheet, 7, 1).unwrap(), "=ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;Table4[Dogs])");
+    m.redo().unwrap();
+    assert_eq!(m.get_cell_content(sheet, 7, 1).unwrap(), "=ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;Table4[Собаки])");
+    // пустой заголовок — прежнее имя, ссылки не ломаются
+    m.set_user_input(sheet, 1, 1, "").unwrap();
+    assert_eq!(m.get_cell_content(sheet, 7, 1).unwrap(), "=ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;Table4[Собаки])");
+}
+
+#[test]
+fn ens_header_rename_replays_from_journal() {
+    let model = load_from_xlsx(FILE, "ru", "UTC", "ru").unwrap();
+    let mut m = UserModel::from_model(model);
+    let snapshot = m.to_bytes();
+    let _ = m.flush_send_queue();
+    m.set_user_input(3, 1, 1, "Собаки").unwrap();
+    let journal = m.flush_send_queue();
+    let mut r = UserModel::from_bytes(&snapshot, "ru").unwrap();
+    r.apply_external_diffs(&journal).unwrap();
+    assert_eq!(r.get_cell_content(3, 7, 1).unwrap(), "=ПРОМЕЖУТОЧНЫЕ.ИТОГИ(109;Table4[Собаки])");
+    assert_eq!(r.get_formatted_cell_value(3, 7, 1).unwrap(), m.get_formatted_cell_value(3, 7, 1).unwrap());
+}

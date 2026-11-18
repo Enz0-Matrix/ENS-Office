@@ -369,6 +369,7 @@ impl<'a> UserModel<'a> {
     pub fn undo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.undo() {
             self.apply_undo_diff_list(&diff_list)?;
+            self.sync_tables();
             self.send_queue.push(QueueDiffs {
                 r#type: DiffType::Undo,
                 list: diff_list.clone(),
@@ -384,6 +385,7 @@ impl<'a> UserModel<'a> {
     pub fn redo(&mut self) -> Result<(), String> {
         if let Some(diff_list) = self.history.redo() {
             self.apply_diff_list(&diff_list)?;
+            self.sync_tables();
             self.send_queue.push(QueueDiffs {
                 r#type: DiffType::Redo,
                 list: diff_list.clone(),
@@ -473,6 +475,7 @@ impl<'a> UserModel<'a> {
                 } else {
                     self.apply_undo_diff_list(&queue_diff.list)?;
                 }
+                self.sync_tables();
             }
         } else {
             return Err("Error parsing diff list".to_string());
@@ -2503,12 +2506,20 @@ impl<'a> UserModel<'a> {
     }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
+        self.sync_tables();
         self.track_changes(&diff_list);
         self.send_queue.push(QueueDiffs {
             r#type: DiffType::Redo,
             list: diff_list.clone(),
         });
         self.history.push(diff_list);
+    }
+
+    /// ENS-Office: имена столбцов таблиц — по заголовкам, формулы — следом (ADR-013).
+    pub(crate) fn sync_tables(&mut self) {
+        if !self.model.workbook.tables.is_empty() && self.model.ens_sync_table_headers() {
+            self.evaluate_if_not_paused();
+        }
     }
 
     pub(super) fn evaluate_if_not_paused(&mut self) {
