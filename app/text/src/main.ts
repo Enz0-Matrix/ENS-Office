@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { brokenXrefs, refreshXrefPages, setXrefPages, setXrefWarning, xrefDialog, xrefPlugin } from './xref';
 import { captionDialog } from './captions-ui';
 import { listCaptions } from './captions';
 import { bookmarkDialog } from './bookmarks-ui';
@@ -358,6 +359,8 @@ function applyPage(): void {
 
 /** Листы-подложки: по одному на страницу; положение, ширина и высота — как у расчёта разрывов (у разделов они разные). */
 function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
+  // Страницы перестроены — ссылки «с. N» могли сдвинуться (после отрисовки, вне текущей транзакции).
+  setTimeout(() => refreshXrefPages(view), 0);
   const g = geometry(effPage());
   const list: PageBox[] = boxes.length === pages ? boxes
     : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
@@ -444,11 +447,11 @@ function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): v
 }
 
 /** Страница (с 1), на которой стоит курсор. */
-function currentPage(n = pageCount(view)): number {
+function currentPage(n = pageCount(view), pos = view.state.selection.head): number {
   try {
     const box = view.dom.getBoundingClientRect();
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
-    const c = view.coordsAtPos(view.state.selection.head);
+    const c = view.coordsAtPos(pos);
     const y = (c.top - box.top) / scale + 1;
     const x = (c.left - box.left) / scale + 1;
     const boxes = pageBoxes(view);
@@ -547,8 +550,12 @@ let lastSecSig = '';
 let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
+// Перекрёстные ссылки: номер страницы цели и предупреждение, если цель удалили.
+setXrefPages((pos) => currentPage(pageCount(view), Math.min(pos + 1, view.state.doc.content.size)));
+setXrefWarning((n) => toast(`Удалена цель перекрёстной ссылки: ссылок без цели — ${n}. Вернуть — Ctrl+Z; список — в окне «Перекрёстная ссылка».`));
+
 const view = new EditorView($('sheet'), {
-  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
+  state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, xrefPlugin]),
   nodeViews: frameViews,
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
@@ -926,6 +933,7 @@ register(
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.caption', label: 'Вставить название (подпись)…', keywords: ['подпись', 'название', 'рисунок', 'таблица', 'формула', 'нумерация', 'seq', 'caption'], run: () => captionDialog(view) },
+  { id: 'insert.xref', label: 'Перекрёстная ссылка…', keywords: ['перекрёстная ссылка', 'см. рисунок', 'ссылка на таблицу', 'ссылка на раздел', 'ref'], run: () => xrefDialog(view) },
   { id: 'insert.bookmark', label: 'Закладка…', keywords: ['закладка', 'bookmark', 'якорь', 'перейти', 'метка места'], keys: ['Ctrl+Shift+F5'], run: () => bookmarkDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
@@ -1307,7 +1315,7 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }, { type: 'large', command: 'insert.xref', icon: 'link_square', label: 'Перекрёстная ссылка' }] },
       {
         name: 'По-русски',
         items: [
@@ -2180,7 +2188,7 @@ function loadDoc(doc: PMNode, newMetaValue: DocMeta, name: string, dirty = false
   meta.hf ??= newMeta().hf;
   hfPx = { header: measureHf(meta.hf, meta.page, 'header'), footer: measureHf(meta.hf, meta.page, 'footer') };
   docName = name;
-  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]));
+  view.updateState(createState(doc, [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin, xrefPlugin]));
   applyPage();
   savedDoc = dirty ? emptyDoc() : doc;
   savedMeta = dirty ? '' : metaKey();
@@ -2508,6 +2516,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listCaptions: () => listCaptions(view.state.doc), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), brokenXrefs: () => brokenXrefs(view.state.doc), listCaptions: () => listCaptions(view.state.doc), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

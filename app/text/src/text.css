@@ -499,3 +499,13 @@ svg.ic-l, svg.ic-m { display: none; }
 :root[data-rev-view] .ProseMirror del.rev-del { color: inherit; text-decoration: none; }
 :root[data-rev-view] .ProseMirror [data-rev-block] { box-shadow: none; }
 .compare-dialog .dlg-row select { max-width: 360px; }
+
+/* Перекрёстная ссылка: текст из data-text; без цели — красным. */
+.ProseMirror span.xref::after { content: attr(data-text); }
+.ProseMirror span.xref { border-bottom: 1px dotted rgba(43, 87, 154, .6); }
+.ProseMirror span.xref.xref-broken { color: #c0262d; background: rgba(192, 38, 45, .1); }
+@media print { .ProseMirror span.xref { border-bottom: 0; } }
+.xref-dialog { width: min(560px, 94vw); }
+.xref-dialog .xref-list { width: 100%; min-height: 150px; margin: 6px 0; }
+.xref-broken-list { display: flex; flex-direction: column; gap: 2px; }
+.xref-broken-item { text-align: left; background: none; border: 0; color: #b3261e; cursor: pointer; padding: 2px 0; }

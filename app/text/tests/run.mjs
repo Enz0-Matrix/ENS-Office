@@ -3622,6 +3622,82 @@ await test('сравнение: версия из истории против т
   eq(r, [['ins', ' с дополнением']], 'вставка относительно версии');
   await p.context().close();
 });
+
+// --- Перекрёстные ссылки
+const XR_SETUP = () => {
+  const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, s.text(t));
+  const cap = (name, t) => s.nodes.paragraph.create({ align: 'center' }, [s.text(name + ' '), s.nodes.seq.create({ name }), s.text(' – ' + t)]);
+  E.loadDoc(s.nodes.doc.create(null, [s.nodes.heading.create({ level: 1 }, s.text('Введение')), P('Как видно на , показатели растут.'), cap('Рисунок', 'Схема'), cap('Рисунок', 'График'), s.nodes.heading.create({ level: 1 }, s.text('Итоги'))]), E.getMeta(), 'xr');
+};
+const xrefs = (p) => p.$$eval('.ProseMirror span.xref', (e) => e.map((x) => x.dataset.text));
+await test('перекрёстные ссылки: на подпись (номер), на заголовок (текст), «выше/ниже»; номера обновляются сами, Ctrl+щелчок — к цели', async () => {
+  const p = await page();
+  await p.evaluate(XR_SETUP);
+  // Курсор после «на » во втором абзаце.
+  await p.evaluate(() => { const E = window.ens; let at = 0; E.view.state.doc.forEach((n, pos) => { if (n.textContent.startsWith('Как видно')) at = pos + 1 + 'Как видно на '.length; }); E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, at))); });
+  await p.evaluate(() => window.ens.run('insert.xref'));
+  await p.waitForSelector('.xref-dialog .xref-list option');
+  eq(await p.$$eval('.xref-dialog .xref-list option', (o) => o.map((x) => x.textContent)), ['Рисунок 1 – Схема', 'Рисунок 2 – График'], 'подписи в списке');
+  await p.selectOption('.xref-dialog .xref-list', '1');
+  await p.click('.xref-dialog button.primary');
+  eq(await xrefs(p), ['рисунок 2'], 'ссылка на рисунок 2');
+  // Ссылка на заголовок целиком и «ниже».
+  await p.evaluate(() => window.ens.run('insert.xref'));
+  await p.waitForSelector('.xref-dialog');
+  await p.selectOption('.xref-dialog select[aria-label="Тип ссылки"]', 'heading');
+  await p.selectOption('.xref-dialog .xref-list', '1');
+  await p.selectOption('.xref-dialog select[aria-label="Вставить ссылку на"]', 'text');
+  await p.click('.xref-dialog button.primary');
+  await p.evaluate(() => window.ens.run('insert.xref'));
+  await p.waitForSelector('.xref-dialog');
+  await p.selectOption('.xref-dialog select[aria-label="Вставить ссылку на"]', 'above');
+  await p.click('.xref-dialog button.primary');
+  eq(await xrefs(p), ['рисунок 2', 'Итоги', 'ниже'], 'три вида ссылок');
+  // Новый рисунок выше — номер в ссылке сдвигается сам.
+  await p.evaluate(() => { const E = window.ens, s = E.schema; let at = 0; E.view.state.doc.forEach((n, pos) => { if (!at && n.textContent.includes('Схема')) at = pos; }); E.view.dispatch(E.view.state.tr.insert(at, s.nodes.paragraph.create(null, [s.text('Рисунок '), s.nodes.seq.create({ name: 'Рисунок' }), s.text(' – Новый')]))); });
+  eq((await xrefs(p))[0], 'рисунок 3', 'номер обновился сам');
+  // Ctrl+щелчок — к цели.
+  await p.keyboard.down('Control');
+  await p.click('.ProseMirror span.xref >> nth=0');
+  await p.keyboard.up('Control');
+  eq(await p.evaluate(() => window.ens.view.state.selection.$from.parent.textContent), 'Рисунок  – График', 'курсор у цели');
+  await p.context().close();
+});
+await test('перекрёстные ссылки: удаление цели — «‹нет цели›», предупреждение и список; docx — поля REF/PAGEREF туда и обратно', async () => {
+  const p = await page();
+  await p.evaluate(XR_SETUP);
+  await p.evaluate(() => { const E = window.ens; E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 14))); });
+  for (const show of ['label', 'page']) {
+    await p.evaluate(() => window.ens.run('insert.xref'));
+    await p.waitForSelector('.xref-dialog');
+    await p.selectOption('.xref-dialog select[aria-label="Вставить ссылку на"]', show);
+    await p.click('.xref-dialog button.primary');
+  }
+  await p.waitForFunction(() => [...document.querySelectorAll('.ProseMirror span.xref')].map((e) => e.dataset.text).join() === 'рисунок 1,1');
+  const r = await p.evaluate(() => {
+    const E = window.ens, bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    return { xml, same: back.doc.eq(E.view.state.doc), lossy: back.meta.lossy };
+  });
+  ok(/<w:fldSimple w:instr=" REF _Ref\w+ \\h "><w:r><w:t xml:space="preserve">рисунок 1<\/w:t>/.test(r.xml), 'REF с текстом');
+  ok(/w:instr=" PAGEREF _Ref\w+ \\h "/.test(r.xml) && /<w:bookmarkStart w:id="\d+" w:name="_Ref\w+"\/>/.test(r.xml), 'PAGEREF и скрытая закладка цели');
+  eq(r.lossy, [], 'без потерь');
+  ok(r.same, 'документ тот же после круга');
+  // Удаляем абзац-цель.
+  await p.evaluate(() => { const E = window.ens; let at = 0, size = 0; E.view.state.doc.forEach((n, pos) => { if (!at && n.textContent.includes('Схема')) { at = pos; size = n.nodeSize; } }); E.view.dispatch(E.view.state.tr.delete(at, at + size)); });
+  eq(await xrefs(p), ['‹нет цели›', '‹нет цели›'], 'ссылки без цели видны');
+  await p.waitForSelector('#toast:not([hidden])');
+  ok((await p.textContent('#toast')).includes('без цели — 2'), 'предупреждение');
+  await p.evaluate(() => window.ens.run('insert.xref'));
+  await p.waitForSelector('.xref-dialog');
+  ok((await p.textContent('.xref-broken-list')).includes('Ссылки без цели: 2'), 'список в окне');
+  await p.click('.xref-dialog button:has-text("Отмена")');
+  await p.evaluate(() => window.ens.view.focus());
+  await p.keyboard.press('Control+KeyZ');
+  eq(await xrefs(p), ['рисунок 1', '1'], 'отмена возвращает цель');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

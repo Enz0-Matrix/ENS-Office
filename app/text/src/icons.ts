@@ -59,6 +59,7 @@ import compare24 from '@fluentui/svg-icons/icons/branch_compare_24_regular.svg?r
 import checkCircle24 from '@fluentui/svg-icons/icons/checkmark_circle_24_regular.svg?raw';
 import arrowUp24 from '@fluentui/svg-icons/icons/arrow_up_24_regular.svg?raw';
 import arrowDown24 from '@fluentui/svg-icons/icons/arrow_down_24_regular.svg?raw';
+import linkSquare24 from '@fluentui/svg-icons/icons/link_square_24_regular.svg?raw';
 import maximize24 from '@fluentui/svg-icons/icons/arrow_maximize_24_regular.svg?raw';
 import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?raw';
 
@@ -67,6 +68,7 @@ Object.assign(ICONS, {
   image_text_24: caption24,
   bookmark_24: bookmark24,
   branch_compare_24: compare24, checkmark_circle_24: checkCircle24, arrow_up_24: arrowUp24, arrow_down_24: arrowDown24,
+  link_square_24: linkSquare24,
   position_to_front_24: toFront24, position_to_back_24: toBack24, delete_24: delete24, arrow_maximize_24: maximize24, arrow_minimize_24: minimize24,
 });
 

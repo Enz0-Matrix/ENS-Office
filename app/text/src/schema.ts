@@ -267,6 +267,15 @@ const nodes: Record<string, NodeSpec> = {
     parseDOM: [{ tag: 'span.bm[data-name]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-name') }) }],
     toDOM: (n) => ['span', { class: 'bm', 'data-name': n.attrs.name, title: `Закладка «${n.attrs.name}»`, contenteditable: 'false' }],
   },
+  /** Перекрёстная ссылка (поле REF/PAGEREF): target — закладка цели, show — что показывать. Текст ставит xref.ts. */
+  xref: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { target: { default: '' }, show: { default: 'label' } },
+    parseDOM: [{ tag: 'span.xref[data-target]', getAttrs: (d) => ({ target: (d as HTMLElement).getAttribute('data-target'), show: (d as HTMLElement).getAttribute('data-show') ?? 'label' }) }],
+    toDOM: (n) => ['span', { class: 'xref', 'data-target': n.attrs.target, 'data-show': n.attrs.show, title: 'Перекрёстная ссылка (обновляется сама). Ctrl+щелчок — к цели.' }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,

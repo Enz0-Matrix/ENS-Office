@@ -8,6 +8,15 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { xrefText } from './xref';
+
+/** Поле REF / PAGEREF → вид перекрёстной ссылки (\\p — «выше/ниже», \\* MERGEFORMAT — текст целиком, иначе номер). */
+function xrefFromInstr(instr: string): { target: string; show: string } | null {
+  const m = /^\s*(REF|PAGEREF)\s+(\S+)(.*)$/i.exec(instr);
+  if (!m) return null;
+  const show = m[1].toUpperCase() === 'PAGEREF' ? 'page' : /\\p\b/.test(m[3]) ? 'above' : /MERGEFORMAT/i.test(m[3]) ? 'text' : 'label';
+  return { target: m[2], show };
+}
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -479,7 +488,13 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
           const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
           const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(field.instr);
+          const xr = xrefFromInstr(field.instr);
           if (m) field.href = m[1];
+          else if (xr) {
+            // Перекрёстная ссылка: текст пересчитывается сам, сохранённый результат отбрасываем.
+            acc.nodes.push(schema.nodes.xref.create(xr, null, marks));
+            field.suppress = true;
+          }
           else if (seq) {
             // Номер подписи: число пересчитывается само, сохранённое в файле отбрасываем.
             acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marks));
@@ -577,6 +592,8 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(instr);
         const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(instr);
         const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(instr);
+        const xr = xrefFromInstr(instr);
+        if (xr) { acc.nodes.push(schema.nodes.xref.create(xr)); break; }
         if (seq) {
           const run = kid(c, 'r');
           acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
@@ -1142,6 +1159,8 @@ interface ExportCtx {
   seq: Map<string, number>;
   /** Номера закладок (w:id): общие для всего файла. */
   bookmarkId: { n: number };
+  /** Готовые тексты перекрёстных ссылок (для полей REF). */
+  xrefs: Map<PMNode, string>;
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1294,6 +1313,13 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'xref') {
+      // Перекрёстная ссылка — поле REF/PAGEREF с готовым текстом (Word обновит его по F9).
+      closeLink();
+      const show = child.attrs.show as string, target = esc(child.attrs.target as string);
+      const instr = show === 'page' ? `PAGEREF ${target} \\h` : show === 'above' ? `REF ${target} \\p \\h` : show === 'text' ? `REF ${target} \\h \\* MERGEFORMAT` : `REF ${target} \\h`;
+      const text = ctx.xrefs.get(child) ?? '';
+      out += `<w:fldSimple w:instr=" ${instr} "><w:r>${rPr}<w:t xml:space="preserve">${esc(text)}</w:t></w:r></w:fldSimple>`;
     } else if (child.type.name === 'seq') {
       // Поле SEQ с текущим числом: Word показывает его сразу, обновит при F9.
       const name = child.attrs.name as string;
@@ -1522,7 +1548,8 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 } };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 }, xrefs: new Map() };
+  doc.descendants((n, pos) => { if (n.type === schema.nodes.xref) ctx.xrefs.set(n, xrefText(doc, n, pos) ?? ''); return true; });
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
