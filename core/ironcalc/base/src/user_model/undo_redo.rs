@@ -148,6 +148,13 @@ impl<'a> UserModel<'a> {
                 Diff::SetPrintArea { sheet, new_value: _, old_value } => {
                     self.write_print_area(*sheet, *old_value)?;
                 }
+                Diff::EnsImportSheet { index, .. } => {
+                    needs_evaluation = true;
+                    let sheet_id = self.model.workbook.worksheet(*index)?.sheet_id;
+                    self.model.workbook.defined_names.retain(|dn| dn.sheet_id != Some(sheet_id));
+                    self.model.delete_sheet(*index)?;
+                    self.set_selected_sheet(index.saturating_sub(1))?;
+                }
                 Diff::SetTables { old_value, new_value: _ } => {
                     if let Some(t) = old_value {
                         self.model.workbook.tables = t.clone();
@@ -772,6 +779,11 @@ impl<'a> UserModel<'a> {
                 }
                 Diff::SetPrintArea { sheet, new_value, old_value: _ } => {
                     self.write_print_area(*sheet, *new_value)?;
+                }
+                Diff::EnsImportSheet { index, name, package } => {
+                    needs_evaluation = true;
+                    self.model.ens_import_sheet(package, *index, name)?;
+                    self.set_selected_sheet(*index)?;
                 }
                 Diff::SetTables { old_value: _, new_value } => {
                     if let Some(t) = new_value {

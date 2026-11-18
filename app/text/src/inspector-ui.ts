@@ -37,6 +37,7 @@ export function describeHere(state: EditorState, d: DocDefaults): Row[] {
   rows.push({ k: 'Интервал перед / после', v: `${a.before != null ? pt(a.before) : 'по умолчанию'} / ${a.after != null ? pt(a.after) : 'по умолчанию'}`, manual: a.before != null || a.after != null });
   rows.push({ k: 'Межстрочный', v: a.line ? String(a.line) : `${d.line} (по умолчанию)`, manual: !!a.line });
   if (a.pageBreakBefore) rows.push({ k: 'Разрыв страницы', v: 'перед абзацем', manual: true });
+  if (a.colBreakBefore) rows.push({ k: 'Разрыв колонки', v: 'перед абзацем', manual: true });
   const marks = empty ? state.storedMarks || $from.marks() : $from.marksAcross(state.doc.resolve(to)) ?? [];
   const ts = marks.find((m) => m.type.name === 'textStyle');
   rows.push({ k: 'Шрифт', v: (ts?.attrs.font as string) || `${d.font} (по умолчанию)`, manual: !!ts?.attrs.font });
