@@ -2496,7 +2496,12 @@ function afterUndoSheets(): void {
   if (grid.sheet >= props.length || props[grid.sheet]?.state !== 'visible') {
     const next = props.findIndex((p) => p.state === 'visible');
     setSheet(Math.max(0, next), false);
-  } else renderSheetTabs();
+  } else {
+    // отмена удаления листа выбирает в движке восстановленный лист: движок и сетка — на одном листе,
+    // иначе копирование возьмёт ячейки другого листа
+    model.setSelectedSheet(grid.sheet);
+    renderSheetTabs();
+  }
 }
 
 /** Нефритовые — когда можно, серые — когда нельзя. */
