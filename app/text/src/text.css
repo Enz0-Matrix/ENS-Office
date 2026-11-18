@@ -466,6 +466,19 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
 
+/* Сноска: номер надстрочным (из data-n), текст — подсказкой при наведении. */
+.ProseMirror sup.fn { position: relative; cursor: pointer; color: inherit; }
+.ProseMirror sup.fn::after { content: attr(data-n); }
+.ProseMirror sup.fn:hover { background: rgba(43, 87, 154, .12); border-radius: 2px; }
+.ProseMirror sup.fn:hover::before {
+  content: attr(data-tip); position: absolute; left: 0; bottom: 1.6em; z-index: 30; width: max-content; max-width: 320px;
+  white-space: pre-wrap; font-size: 9pt; line-height: 1.35; font-weight: normal; font-style: normal; text-indent: 0; text-align: left;
+  background: #fffdf3; color: #222; border: 1px solid #c9c2a0; border-radius: 4px; padding: 6px 8px; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+@media print { .ProseMirror sup.fn:hover::before { display: none; } }
+.note-dialog { width: min(560px, 94vw); }
+.note-dialog .note-editor .ProseMirror { min-height: 90px; max-height: 260px; overflow: auto; border: 1px solid var(--border, #bbb); border-radius: 4px; padding: 6px 8px; background: #fff; color: #222; font-size: 11pt; }
+.note-dialog .note-editor .ProseMirror p { margin: 0 0 4px; }
 /* Оглавление: строки с точками до номера страницы, отступ по уровню. */
 .ProseMirror div.toc { margin: 0 0 12pt; cursor: default; user-select: none; }
 .ProseMirror div.toc.ProseMirror-selectednode { outline: 2px solid var(--accent, #2b579a); outline-offset: 2px; }

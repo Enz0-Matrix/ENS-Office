@@ -53,6 +53,7 @@ import imageReset24 from '@fluentui/svg-icons/icons/image_arrow_counterclockwise
 import toFront24 from '@fluentui/svg-icons/icons/position_to_front_24_regular.svg?raw';
 import toBack24 from '@fluentui/svg-icons/icons/position_to_back_24_regular.svg?raw';
 import delete24 from '@fluentui/svg-icons/icons/delete_24_regular.svg?raw';
+import noteAdd24 from '@fluentui/svg-icons/icons/note_add_24_regular.svg?raw';
 import caption24 from '@fluentui/svg-icons/icons/image_alt_text_24_regular.svg?raw';
 import bookmark24 from '@fluentui/svg-icons/icons/bookmark_24_regular.svg?raw';
 import compare24 from '@fluentui/svg-icons/icons/branch_compare_24_regular.svg?raw';
@@ -64,6 +65,7 @@ import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?
 
 Object.assign(ICONS, {
   crop_24: crop24, resize_image_24: resizeImage24, image_edit_24: imageEdit24, image_arrow_counterclockwise_24: imageReset24,
+  note_add_24: noteAdd24,
   image_text_24: caption24,
   bookmark_24: bookmark24,
   branch_compare_24: compare24, checkmark_circle_24: checkCircle24, arrow_up_24: arrowUp24, arrow_down_24: arrowDown24,

@@ -248,6 +248,18 @@ const nodes: Record<string, NodeSpec> = {
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
+  /** Сноска (end: false) или концевая сноска (end: true). Текст — блоки в JSON (content), номер ставит footnotes.ts. */
+  footnote: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { content: { default: [] }, end: { default: false } },
+    parseDOM: [{ tag: 'sup.fn', getAttrs: (d) => {
+      const e = d as HTMLElement;
+      try { return { content: JSON.parse(e.getAttribute('data-content') ?? '[]'), end: e.getAttribute('data-end') === '1' }; } catch { return { content: [], end: false }; }
+    } }],
+    toDOM: (n) => ['sup', { class: 'fn', 'data-end': n.attrs.end ? '1' : '0', 'data-content': JSON.stringify(n.attrs.content) }],
+  },
   /** Оглавление (поле TOC Word). Строки строит toc.ts по заголовкам документа и обновляет сами. */
   toc: {
     group: 'block',
