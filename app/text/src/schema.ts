@@ -219,6 +219,16 @@ const nodes: Record<string, NodeSpec> = {
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
+  /** Оглавление (поле TOC Word). Строки строит toc.ts по заголовкам документа и обновляет сами. */
+  toc: {
+    group: 'block',
+    atom: true,
+    selectable: true,
+    draggable: false,
+    attrs: { levels: { default: 3 } },
+    parseDOM: [{ tag: 'div.toc[data-levels]', getAttrs: (d) => ({ levels: Number((d as HTMLElement).getAttribute('data-levels')) || 3 }) }],
+    toDOM: (n) => ['div', { class: 'toc', 'data-levels': String(n.attrs.levels), contenteditable: 'false' }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,

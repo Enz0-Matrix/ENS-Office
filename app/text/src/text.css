@@ -456,3 +456,18 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu > button { gap: 8px !important; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
+
+/* Оглавление: строки с точками до номера страницы, отступ по уровню. */
+.ProseMirror div.toc { margin: 0 0 12pt; cursor: default; user-select: none; }
+.ProseMirror div.toc.ProseMirror-selectednode { outline: 2px solid var(--accent, #2b579a); outline-offset: 2px; }
+.ProseMirror .toc-row { display: flex; align-items: baseline; gap: 4px; line-height: 1.5; cursor: pointer; }
+.ProseMirror .toc-row:hover .toc-text { text-decoration: underline; }
+.ProseMirror .toc-row[data-level="2"] { padding-left: 12pt; }
+.ProseMirror .toc-row[data-level="3"] { padding-left: 24pt; }
+.ProseMirror .toc-row[data-level="4"] { padding-left: 36pt; }
+.ProseMirror .toc-row[data-level="5"] { padding-left: 48pt; }
+.ProseMirror .toc-row[data-level="6"] { padding-left: 60pt; }
+.ProseMirror .toc-dots { flex: 1; border-bottom: 1px dotted currentColor; min-width: 12px; transform: translateY(-4px); }
+.ProseMirror .toc-page { min-width: 1.5em; text-align: right; }
+.ProseMirror .toc-empty { color: #777; font-style: italic; border: 1px dashed #aaa; padding: 6px 8px; }
+@media print { .ProseMirror .toc-empty { display: none; } .ProseMirror div.toc.ProseMirror-selectednode { outline: none; } }

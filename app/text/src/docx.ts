@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { tocEntries, tocPage } from './toc';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -189,6 +190,35 @@ interface Ctx {
   cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
+  /** Внутри результата поля TOC: глубина вложенности полей; абзацы результата пропускаются (оглавление строится заново). */
+  tocDepth?: number;
+}
+
+/** Поле TOC в абзаце: число уровней и глубина полей в конце абзаца (0 — поле закрылось в этом же абзаце). */
+function tocField(p: Element): { levels: number; depth: number } | null {
+  let depth = 0, levels = 0, seen = false, first = true;
+  for (const e of p.getElementsByTagName('*')) {
+    if (e.localName === 'fldChar') {
+      const t = attr(e, 'fldCharType');
+      if (t === 'begin') depth++;
+      else if (t === 'end') depth--;
+    } else if (e.localName === 'instrText' && first) {
+      first = false;
+      const m = /^\s*TOC\b(.*)$/i.exec(e.textContent ?? '');
+      if (!m) return null;
+      seen = true;
+      const o = /\\o\s+"(\d)\s*-\s*(\d)"/.exec(m[1]);
+      levels = o ? Math.min(6, Math.max(1, +o[2])) : 3;
+    }
+  }
+  return seen ? { levels, depth } : null;
+}
+
+/** Баланс полей в абзаце (begin − end). */
+function fieldBalance(p: Element): number {
+  let d = 0;
+  for (const e of descendants(p, 'fldChar')) { const t = attr(e, 'fldCharType'); if (t === 'begin') d++; else if (t === 'end') d--; }
+  return d;
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -847,6 +877,10 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
     for (const c of el.children) {
       switch (c.localName) {
         case 'p': {
+          // Результат поля TOC (строки старого оглавления) пропускаем: оглавление построится по заголовкам.
+          if (ctx.tocDepth) { ctx.tocDepth += fieldBalance(c); if (ctx.tocDepth <= 0) ctx.tocDepth = 0; break; }
+          const toc = tocField(c);
+          if (toc) { flushFrame(); entries.push({ node: schema.nodes.toc.create({ levels: toc.levels }) }); ctx.tocDepth = Math.max(0, toc.depth); break; }
           const es = paraEntries(ctx, c);
           const fp = kid(kid(c, 'pPr'), 'framePr');
           const sp = kid(kid(c, 'pPr'), 'sectPr');
@@ -1085,6 +1119,8 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Весь документ (для оглавления). */
+  root?: PMNode;
 }
 
 function relId(ctx: ExportCtx, type: string, target: string, external = false): string {
@@ -1401,11 +1437,32 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
       case 'frame':
         out += frameXml(ctx, n);
         break;
+      case 'toc':
+        out += tocXml(ctx, n);
+        break;
       default:
         break;
     }
   });
   return out;
+}
+
+/** Оглавление: поле TOC в блоке «Table of Contents» с готовыми строками (текст, точки до правого края, номер страницы). */
+function tocXml(ctx: ExportCtx, node: PMNode): string {
+  const levels = node.attrs.levels as number;
+  const entries = ctx.root ? tocEntries(ctx.root, levels) : [];
+  const p = ctx.meta.page;
+  const right = tw(p.w - p.left - p.right);
+  const begin = `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-${levels}" \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+  const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  const paras = entries.map((e, i) => {
+    const page = ctx.root ? tocPage(ctx.root, e.pos) : undefined;
+    return `<w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="${right}"/></w:tabs><w:spacing w:after="60"/><w:ind w:left="${(e.level - 1) * 240}"/></w:pPr>` +
+      (i === 0 ? begin : '') + `<w:r><w:t xml:space="preserve">${esc(e.text)}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>${page ?? ''}</w:t></w:r>` +
+      (i === entries.length - 1 ? end : '') + '</w:p>';
+  });
+  const body = paras.length ? paras.join('') : `<w:p>${begin}<w:r><w:t>Нет элементов оглавления.</w:t></w:r>${end}</w:p>`;
+  return `<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>${body}</w:sdtContent></w:sdt>`;
 }
 
 function stylesXml(meta: DocMeta): string {
@@ -1427,7 +1484,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), root: doc };
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
   const pagesOf: PageSetup[] = [meta.page];
