@@ -3281,6 +3281,64 @@ await test('новый документ не считается изменённ
   await p.context().close();
 });
 
+// --- Символ и формула
+await test('символ: поиск по-русски, вставка у курсора, недавние', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Цена 100 ');
+  await p.evaluate(() => window.ens.run('insert.symbol'));
+  await p.waitForSelector('.symbols-dialog');
+  await p.fill('.symbols-dialog input[type=search]', 'рубль');
+  eq(await p.$$eval('.symbols-dialog .sym-grid .sym', (b) => b.map((x) => x.textContent)), ['₽'], 'найден рубль');
+  await p.click('.symbols-dialog .sym-grid .sym');
+  await p.fill('.symbols-dialog input[type=search]', 'градус');
+  ok((await p.$$eval('.symbols-dialog .sym-grid .sym', (b) => b.map((x) => x.textContent))).includes('°'), 'градус');
+  eq(await p.$$eval('.symbols-dialog .sym-recent .sym', (b) => b.map((x) => x.textContent)), ['₽'], 'недавние');
+  await p.click('.symbols-dialog button.primary');
+  eq(await text(p), 'Цена 100 ₽', 'знак вставлен у курсора');
+  await p.context().close();
+});
+await test('формула: Alt+= — запись в стиле LaTeX, живой просмотр, MathML на листе, правка двойным щелчком', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.keyboard.type('Корни: ');
+  await p.keyboard.press('Alt+Equal');
+  await p.waitForSelector('.math-dialog textarea');
+  await p.waitForFunction(() => document.activeElement?.tagName === 'TEXTAREA');
+  await p.keyboard.type('x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}');
+  ok(await p.$('.math-dialog .math-preview math mfrac msqrt msup'), 'просмотр: дробь, корень, степень');
+  await p.keyboard.press('Control+Enter');
+  await p.waitForSelector('.ProseMirror span.math math');
+  ok(await p.$('.ProseMirror span.math math mfrac'), 'формула на листе');
+  eq(await p.evaluate(() => { let t; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'math') t = n.attrs.tex; }); return t; }), 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}', 'запись хранится');
+  await p.dblclick('.ProseMirror span.math');
+  await p.waitForSelector('.math-dialog textarea');
+  await p.fill('.math-dialog textarea', '\\alpha^2 + \\beta_1');
+  await p.click('.math-dialog button.primary');
+  ok(await p.$('.ProseMirror span.math math msub'), 'формула изменена');
+  eq(await p.$$eval('.ProseMirror span.math', (e) => e.length), 1, 'одна формула, не две');
+  await p.context().close();
+});
+await test('формулы в docx: OMML (дробь, корень, степени, индексы, сумма, скобки) туда и обратно, формулы Word читаются', async () => {
+  const p = await page();
+  const r = await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const texs = ['x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}', '\\sum_{i=1}^{n} x_i', 'S = \\pi r^2', '\\sqrt[3]{(a + b)}', 'a \\le b \\cdot c'];
+    const doc = s.nodes.doc.create(null, texs.map((t) => s.nodes.paragraph.create(null, [s.text('Ф: '), s.nodes.math.create({ tex: t })])));
+    const bytes = E.exportDocx(doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const back = E.importDocx(bytes);
+    const render = (d) => { E.loadDoc(d, E.getMeta(), 'm'); return [...document.querySelectorAll('.ProseMirror span.math')].map((e) => e.innerHTML); };
+    const a = render(doc), b = render(back.doc);
+    return { xml, a, b, lossy: back.meta.lossy, texBack: (() => { const out = []; back.doc.descendants((n) => { if (n.type.name === 'math') out.push(n.attrs.tex); }); return out; })() };
+  });
+  ok(r.xml.includes('<m:oMath><m:r>') && r.xml.includes('<m:f><m:num>') && r.xml.includes('<m:rad>') && r.xml.includes('<m:nary><m:naryPr><m:chr m:val="∑"/>'), 'OMML: дробь, корень, сумма');
+  ok(r.xml.includes('xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'), 'пространство имён m');
+  eq(r.lossy, [], 'без потерь (раньше — «формулы»)');
+  eq(r.b, r.a, `формулы те же после круга: ${JSON.stringify(r.texBack)}`);
+  await p.context().close();
+});
+
 // --- Сравнение документов и исправления
 const REV_SETUP = () => {
   const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);

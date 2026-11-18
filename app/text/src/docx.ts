@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { ommlToTex, parseTex, toOMML } from './math';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -605,8 +606,11 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         walkInline(ctx, c, acc, href);
         break;
       case 'oMath':
+        acc.nodes.push(schema.nodes.math.create({ tex: ommlToTex(c) }));
+        break;
       case 'oMathPara':
-        lose(ctx, 'формулы');
+        // Формула отдельной строкой: каждая m:oMath — свой узел (абзац остаётся как в файле).
+        for (const m of c.getElementsByTagNameNS('http://schemas.openxmlformats.org/officeDocument/2006/math', 'oMath')) acc.nodes.push(schema.nodes.math.create({ tex: ommlToTex(m) }));
         break;
       default:
         break;
@@ -1272,6 +1276,9 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'math') {
+      closeLink();
+      out += toOMML(parseTex(child.attrs.tex as string));
     }
     // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
     if (rev && child.type.name !== 'field') {
@@ -1525,7 +1532,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     parts.push({
       path, tag, kind, rels: sub.rels,
       xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-        `<w:${tag} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+        `<w:${tag} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
         'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" ' +
         'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w10="urn:schemas-microsoft-com:office:word">' +
         `${inner}</w:${tag}>`,
@@ -1543,7 +1550,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');
   const sect = sectOf(pagesOf[lastChunk], lastChunk === 0);
   const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+    `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
 
