@@ -594,7 +594,7 @@ const COLS_JS = `
   };
 `;
 async function colPage(n, count = 60, extra) {
-  const p = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
+  const p = await longPage(count === 60 ? (s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))) : (s, P) => Array.from({ length: 70 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
   await p.evaluate(COLS_JS);
   await p.evaluate(([n, extra]) => window.__cols(n, extra), [n, extra]);
   await p.waitForTimeout(400);
@@ -605,10 +605,11 @@ await test('колонки: текст перетекает из колонки 
   const one = await longPage((s, P) => Array.from({ length: 60 }, (_, i) => P(`Абзац ${i + 1}. ` + 'Съешь ещё этих мягких французских булок, да выпей же чаю. '.repeat(1 + (i % 5)))));
   const single = await one.evaluate(() => window.ens.pageCount());
   await one.context().close();
-  for (const n of [2, 3]) {
-    const p = await colPage(n);
+  for (const [n, count] of [[2, 60], [3, 60], [2, 70]]) {
+    const p = await colPage(n, count);
     const r = await p.evaluate(() => window.__colBad());
     eq(r.bad, [], `знаки вне колонок (${n})`);
+    eq(await p.evaluate(() => window.ens.pagStats.stuck), false, `расчёт сошёлся (${n}, ${count})`);
     const pages = await p.evaluate(() => window.ens.pageCount());
     for (let k = 0; k < n; k++) ok(r.used.includes(`0:${k}`) && r.used.includes(`1:${k}`), `колонка ${k + 1} на листах 1 и 2 занята (${n}): ${r.used}`);
     ok(pages >= 2 && pages <= single + 1, `листов ${pages}, одной полосой ${single}`);
@@ -699,6 +700,7 @@ await test('колонки: меню «Колонки», разрыв колон
 await test('колонки: неравные (слева), docx — ширины, разделитель и разрыв колонки туда и обратно', async () => {
   const p = await colPage(2, 60, { colW: [1, 2], colSep: true });
   eq((await p.evaluate(() => window.__colBad())).bad, [], 'знаки внутри неравных колонок');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
   const r = await p.evaluate(() => {
     const E = window.ens, s = E.schema;
     const doc = s.nodes.doc.create(null, [s.nodes.paragraph.create(null, s.text('Один')), s.nodes.paragraph.create({ colBreakBefore: true }, s.text('Два'))]);
@@ -736,6 +738,7 @@ await test('колонки: раздел с колонками между раз
   await p.waitForTimeout(300);
   const r = await p.evaluate(() => window.__colBad());
   eq(r.bad, [], 'знаки вне колонок и полей');
+  eq(await p.evaluate(() => window.ens.pagStats.stuck), false, 'расчёт сошёлся');
   ok(r.used.includes('1:0') && r.used.includes('1:1'), `второй лист — в две колонки: ${r.used}`);
   // Заключение — с нового листа, вверху, а не там, где кончился поток колонок.
   const c = await p.evaluate(() => {

@@ -80,7 +80,7 @@ export function columnsOf(p: PageSetup): ColGeo | null {
 /** Лист на экране: положение по вертикали и размер. `page` — параметры раздела, `eff` — с учётом колонтитулов.
  * `cols` — колонки листа; `sepH` — высота разделителя (по самой длинной колонке листа), px. */
 export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup; cols?: ColGeo; sepH?: number }
-interface PagState { deco: DecorationSet; pages: number; boxes: PageBox[]; rev: number }
+interface PagState { deco: DecorationSet; pages: number; boxes: PageBox[]; rev: number; /** Растёт при правке и запросе пересчёта (не от своих распорок). */ ext: number }
 
 /** Параметры одного раздела для расчёта: настоящие и с учётом колонтитулов. */
 interface SecGeo { g: Geo; page: PageSetup; eff: PageSetup; cols: ColGeo | null }
@@ -362,12 +362,18 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
         else if (!atTop) { pad += R.start + seg.vP - a; continue; }
       }
       k = Math.max(1, k);
+      // Строчная распорка не сдвигает строку меньше, чем на высоту строки (у её строки есть «подпорка» шрифта).
+      // На странице остаток всегда больше строки (поля), а в колонке бывает меньше — тогда хвост встаёт чуть ниже.
+      let pitch = Infinity;
+      for (let m = 1; m < n; m++) pitch = Math.min(pitch, lines[m].top - lines[m - 1].top);
+      // С запасом: распорка выше подпорки сдвигает ровно на свою высоту (иначе расчёт качается на доли пикселя).
+      pitch = Number.isFinite(pitch) ? Math.ceil(pitch) + 1 : 0;
       let local = acc + pad;
       let end = R.end;
       let next = R.start + seg.vP;
       let j = k;
       for (let safety = 0; safety < 200 && j < n; safety++) {
-        const spacer = next - (lines[j].top + local);
+        const spacer = Math.max(next - (lines[j].top + local), pitch);
         splits.push({ pos: lines[j].pos, h: spacer, v: vIdx(next) });
         if (cols) markSep(vIdx(next) - 1, seg.g.C);
         local += spacer;
@@ -458,6 +464,11 @@ function toDecos(out: Planned[]): Decoration[] {
 }
 
 const boxKey = (b: PageBox) => `${Math.round(b.top)}:${b.W}:${b.H}:${b.cols ? `${b.cols.n},${b.cols.sep ? 1 : 0},${b.sepH}` : ''}`;
+type Mark = { from: number; to: number; spec: Spec };
+const close = (a: Mark[], b: Mark[]): boolean => a.length === b.length && a.every((x, i) => {
+  const y = b[i];
+  return x.from === y.from && x.to === y.to && x.spec.pg === y.spec.pg && Math.abs(x.spec.h - y.spec.h) <= 0.3 && (x.spec.pg !== 'w' || x.spec.key === y.spec.key);
+});
 const sig = (list: { from: number; to: number; spec: Spec }[]) => list.map((d) => `${d.spec.pg}:${d.from}:${d.to}:${d.spec.h}:${d.spec.key ?? ''}`).join('|');
 
 /** Поля по горизонтали для блоков разделов, отличающихся от первого: страницы разной ширины стоят по центру листа-подложки. */
@@ -510,12 +521,12 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
   return new Plugin<PagState>({
     key: pagKey,
     state: {
-      init: () => ({ deco: DecorationSet.empty, pages: 1, boxes: [], rev: 0 }),
+      init: () => ({ deco: DecorationSet.empty, pages: 1, boxes: [], rev: 0, ext: 0 }),
       apply(tr, prev) {
         const meta = tr.getMeta(pagKey) as { deco?: DecorationSet; pages?: number; boxes?: PageBox[]; replan?: boolean } | undefined;
-        if (meta?.deco) return { deco: meta.deco, pages: meta.pages ?? prev.pages, boxes: meta.boxes ?? prev.boxes, rev: prev.rev + 1 };
-        if (tr.docChanged) return { ...prev, deco: prev.deco.map(tr.mapping, tr.doc), rev: prev.rev + 1 };
-        if (meta?.replan) return { ...prev, rev: prev.rev + 1 };
+        if (meta?.deco) return { deco: meta.deco, pages: meta.pages ?? prev.pages, boxes: meta.boxes ?? prev.boxes, rev: prev.rev + 1, ext: prev.ext };
+        if (tr.docChanged) return { ...prev, deco: prev.deco.map(tr.mapping, tr.doc), rev: prev.rev + 1, ext: prev.ext + 1 };
+        if (meta?.replan) return { ...prev, rev: prev.rev + 1, ext: prev.ext + 1 };
         return prev;
       },
     },
@@ -543,6 +554,7 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
     view(view) {
       let seen = -1;
       let passes = 0;
+      let seenExt = 0;
       let scheduled = false;
       let lastSig = '';
       let alive = true;
@@ -567,10 +579,12 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
         const stateSig = st.boxes.map(boxKey).join('|');
         if (boxSig !== lastSig) { lastSig = boxSig; onPages(pages, boxes); }
         const order = (a: { from: number; to: number; spec: Spec }, b: { from: number; to: number; spec: Spec }) => a.from - b.from || a.to - b.to || (a.spec.pg < b.spec.pg ? -1 : a.spec.pg > b.spec.pg ? 1 : 0);
-        const same = sig(old.sort(order)) === sig(fresh.sort(order));
+        // Одинаковые наборы — с допуском в доли пикселя: субпиксельное округление вёрстки иначе качало бы расчёт.
+        const same = close(old.sort(order), fresh.sort(order));
+        stats.stuck = false;
         if (same && boxSig === stateSig) { passes = 0; return; }
         // Защита от зацикливания. Неравным колонкам нужно больше проходов: ширина блока зависит от его колонки.
-        if (++passes > 16) return;
+        if (++passes > 16) { stats.stuck = true; return; }
         view.dispatch(view.state.tr.setMeta(pagKey, { deco: same ? st.deco : set, pages, boxes }).setMeta('addToHistory', false));
       };
       const schedule = () => {
@@ -584,7 +598,10 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
       schedule();
       return {
         update(v) {
-          const rev = pagKey.getState(v.state)?.rev ?? 0;
+          const st = pagKey.getState(v.state);
+          const rev = st?.rev ?? 0;
+          // Правка или запрос пересчёта — новый отсчёт проходов (иначе после упора в предел вёрстка замерла бы).
+          if (st && st.ext !== seenExt) { seenExt = st.ext; passes = 0; }
           if (rev === seen) return;
           seen = rev;
           schedule();
@@ -605,7 +622,7 @@ export function replan(view: EditorView): void {
 }
 
 /** Время последнего расчёта (для проверок). */
-export const stats = { ms: 0, items: 0 };
+export const stats = { ms: 0, items: 0, /** Расчёт не сошёлся за отведённые проходы. */ stuck: false };
 
 export const pageCount = (view: EditorView): number => pagKey.getState(view.state)?.pages ?? 1;
 export const pageBoxes = (view: EditorView): PageBox[] => pagKey.getState(view.state)?.boxes ?? [];
