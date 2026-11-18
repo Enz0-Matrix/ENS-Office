@@ -5,5 +5,6 @@ mod test_ens_ru_export;
 mod test_ens_tables;
 mod test_ens_preserve;
 mod test_ens_external;
+mod test_ens_sheet_transfer;
 mod test_ens_date1904;
 mod test_ens_formats;

@@ -483,3 +483,5 @@ footer { display: flex; flex-direction: column; }
 .credits-box p { margin: 6px 0; }
 .credits-box h3 { margin: 14px 0 4px; font-size: 14px; }
 .credits-small { color: var(--muted); font-size: 12px; }
+/* Группа выделенных ярлыков (Ctrl/Shift+щелчок), как в Excel: белые, без выделения цветом активного. */
+.sheet-tab.grouped { background: #fff; border-color: var(--border); border-top-color: #fff; }

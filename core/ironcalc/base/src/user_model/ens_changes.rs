@@ -152,6 +152,10 @@ impl UserModel<'_> {
                     self.ens_changes.note(format!("добавлен лист «{name}»"));
                     continue;
                 }
+                Diff::EnsImportSheet { name, package, .. } => {
+                    self.ens_changes.note(format!("добавлен лист «{name}» из книги «{}»", package.source_file));
+                    continue;
+                }
                 Diff::DeleteSheet { old_data, .. } => {
                     self.ens_changes.note(format!("удалён лист «{}»", old_data.name));
                     continue;

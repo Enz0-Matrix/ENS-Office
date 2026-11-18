@@ -433,6 +433,12 @@ pub(crate) enum Diff {
         old_value: Option<std::collections::HashMap<String, crate::types::Table>>,
         new_value: Option<std::collections::HashMap<String, crate::types::Table>>,
     },
+    /// ENS-Office: лист из другой книги («Переместить или скопировать», ADR-012).
+    EnsImportSheet {
+        index: u32,
+        name: String,
+        package: Box<crate::ens_sheet_transfer::SheetPackage>,
+    },
     // FIXME: we are missing SetViewDiffs
 }
 

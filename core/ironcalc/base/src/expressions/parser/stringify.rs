@@ -1303,6 +1303,111 @@ pub(crate) fn rename_sheet_in_node(node: &mut Node, sheet_index: u32, new_name: 
     }
 }
 
+/// ENS-Office: обходит все ссылки на ячейки и диапазоны формулы: `f(имя листа, как написано; номер листа)`.
+pub(crate) fn for_each_sheet_ref(node: &mut Node, f: &mut dyn FnMut(&mut Option<String>, u32)) {
+    match node {
+        Node::ReferenceKind {
+            sheet_name,
+            sheet_index,
+            ..
+        } => f(sheet_name, *sheet_index),
+        Node::RangeKind {
+            sheet_name,
+            sheet_index,
+            ..
+        } => f(sheet_name, *sheet_index),
+        Node::WrongReferenceKind { .. } => {}
+        Node::WrongRangeKind { .. } => {}
+        // Go next level
+        Node::OpRangeKind { left, right } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::OpConcatenateKind { left, right } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::OpSumKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::OpProductKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::OpPowerKind { left, right } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::FunctionKind { kind: _, args } => {
+            for arg in args {
+                for_each_sheet_ref(arg, f);
+            }
+        }
+        Node::NamedFunctionKind {
+            name: _,
+            args,
+            id: _,
+        } => {
+            for arg in args {
+                for_each_sheet_ref(arg, f);
+            }
+        }
+        Node::CompareKind {
+            kind: _,
+            left,
+            right,
+        } => {
+            for_each_sheet_ref(left, f);
+            for_each_sheet_ref(right, f);
+        }
+        Node::UnaryKind { kind: _, right } => {
+            for_each_sheet_ref(right, f);
+        }
+        Node::ImplicitIntersection {
+            automatic: _,
+            child,
+        } => {
+            for_each_sheet_ref(child, f);
+        }
+        Node::SpillRangeOperator { child } => {
+            for_each_sheet_ref(child, f);
+        }
+
+        // Do nothing
+        Node::BooleanKind(_) => {}
+        Node::NumberKind(_) => {}
+        Node::StringKind(_) => {}
+        Node::ErrorKind(_) => {}
+        Node::ParseErrorKind { .. } => {}
+        Node::ArrayKind(_) => {}
+        Node::DefinedNameKind(_) => {}
+        Node::TableNameKind(_) => {}
+        Node::NamedVariableKind { .. } => {}
+        Node::EmptyArgKind => {}
+        Node::LambdaDefKind {
+            parameters: _,
+            body,
+        } => {
+            for_each_sheet_ref(body, f);
+        }
+        Node::LambdaCallKind { lambda, args } => {
+            for_each_sheet_ref(lambda, f);
+            for arg in args {
+                for_each_sheet_ref(arg, f);
+            }
+        }
+    }
+}
+
 pub(crate) fn rename_defined_name_in_node(
     node: &mut Node,
     name: &str,
