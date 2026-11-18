@@ -14,8 +14,8 @@ import type { CellBorders, Edge, FrameLine } from './schema';
 
 export interface PageSetup {
   w: number; h: number; top: number; bottom: number; left: number; right: number;
-  /** Колонки раздела (w:cols): число и промежуток, pt. Пока показываются одной полосой, но сохраняются. */
-  cols?: number; colSpace?: number;
+  /** Колонки раздела (w:cols): число и промежуток, pt; colW — ширины неравных колонок, pt; colSep — линия между колонками. */
+  cols?: number; colSpace?: number; colW?: number[]; colSep?: boolean;
 }
 export interface DocDefaults { font: string; size: number; line: number; before: number; after: number }
 /** Содержимое колонтитула — документ ProseMirror в виде JSON (null — пусто). */
@@ -298,7 +298,7 @@ function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', webp: 'image/webp', svg: 'image/svg+xml' };
 
 /** Состояние разбора одного абзаца: накопленное содержимое и ссылка. */
-interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean }[]; breakNext: boolean; /** Блоки, вынесенные из абзаца (надписи): встают перед ним. */ blocks: PMNode[] }
+interface InlineAcc { nodes: PMNode[]; chunks: { nodes: PMNode[]; breakBefore: boolean; colBefore?: boolean }[]; breakNext: boolean; /** Следующий кусок начинается с новой колонки (w:br w:type="column"). */ colNext?: boolean; /** Блоки, вынесенные из абзаца (надписи): встают перед ним. */ blocks: PMNode[] }
 
 function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[] {
   const m: Mark[] = [];
@@ -505,10 +505,10 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       case 'br':
       case 'cr':
-        if (c.localName === 'br' && attr(c, 'type') === 'page') {
-          acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
+        if (c.localName === 'br' && (attr(c, 'type') === 'page' || attr(c, 'type') === 'column')) {
+          acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext, colBefore: acc.colNext });
           acc.nodes = [];
-          acc.breakNext = true;
+          if (attr(c, 'type') === 'page') { acc.breakNext = true; acc.colNext = false; } else if (!acc.breakNext) acc.colNext = true;
         } else if (!field || (field.phase === 'result' && !field.suppress)) {
           acc.nodes.push(schema.nodes.hard_break.create(null, null, marks));
         }
@@ -640,7 +640,7 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
   ctx.baseR = fromStyle.r;
   walkInline(ctx, p, acc, undefined);
   ctx.baseR = {};
-  acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext });
+  acc.chunks.push({ nodes: acc.nodes, breakBefore: acc.breakNext, colBefore: acc.colNext });
 
   const entries: Entry[] = acc.blocks.map((node) => ({ node }));
   // Знак абзаца вставлен или удалён (w:pPr/w:rPr/w:ins|w:del): целый абзац — исправление, если весь его текст — та же правка.
@@ -654,7 +654,7 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
   };
   acc.chunks.forEach((chunk, k) => {
     // Абзац, состоящий только из разрыва страницы, не оставляет пустого абзаца до разрыва.
-    if (!chunk.nodes.length && !chunk.breakBefore && k < acc.chunks.length - 1) return;
+    if (!chunk.nodes.length && !chunk.breakBefore && !chunk.colBefore && k < acc.chunks.length - 1) return;
     const attrs = {
       align: para.align && para.align !== 'left' ? para.align : null,
       indent: !info && para.left ? para.left : null,
@@ -665,6 +665,7 @@ function paraEntries(ctx: Ctx, p: Element): Entry[] {
       line: para.line && para.line !== d.line ? para.line : null,
       pageBreakBefore: !!(chunk.breakBefore || (k === 0 && para.pageBreakBefore)),
       rev: blockRev(chunk.nodes),
+      colBreakBefore: !!chunk.colBefore && !chunk.breakBefore && !(k === 0 && para.pageBreakBefore),
       ...(level ? { level } : {}),
     };
     entries.push({
@@ -997,7 +998,17 @@ export function importDocx(bytes: Uint8Array): Imported {
     page.right = mv('right', page.right);
     const cols = kid(sect, 'cols');
     const n = num(attr(cols, 'num')) ?? 1;
-    if (n > 1) { page.cols = Math.min(n, 12); const sp = num(attr(cols, 'space')); if (sp != null) page.colSpace = sp / 20; }
+    const own = kids(cols, 'col');
+    const count = Math.max(n, attr(cols, 'equalWidth') === '0' || attr(cols, 'equalWidth') === 'false' ? own.length : 0);
+    if (count > 1) {
+      page.cols = Math.min(count, 12);
+      const sp = num(attr(cols, 'space')) ?? num(attr(own[0], 'space'));
+      if (sp != null) page.colSpace = sp / 20;
+      const ws = own.map((c) => (num(attr(c, 'w')) ?? 0) / 20);
+      if ((attr(cols, 'equalWidth') === '0' || attr(cols, 'equalWidth') === 'false') && ws.length === page.cols && ws.every((x) => x > 0)) page.colW = ws;
+      const sep = attr(cols, 'sep');
+      if (sep === '1' || sep === 'true' || sep === 'on') page.colSep = true;
+    }
     return page;
   };
   // Разделы: у каждого свои размер и поля. Разрыв ставится между разделами и хранит страницу следующего за ним.
@@ -1273,6 +1284,18 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
   return out;
 }
 
+/** Колонки раздела (w:cols): равные — числом, неравные — списком w:col; линия между колонками — w:sep. */
+function colsXml(p: PageSetup): string {
+  if (!p.cols || p.cols < 2) return '';
+  const sp = tw(p.colSpace ?? 35.4);
+  const sep = p.colSep ? ' w:sep="1"' : '';
+  if (p.colW && p.colW.length === p.cols) {
+    return `<w:cols w:num="${p.cols}" w:space="${sp}"${sep} w:equalWidth="0">` +
+      p.colW.map((w, k) => `<w:col w:w="${tw(w)}"${k + 1 < p.cols! ? ` w:space="${sp}"` : ''}/>`).join('') + '</w:cols>';
+  }
+  return `<w:cols w:num="${p.cols}" w:space="${sp}"${sep}/>`;
+}
+
 function pPrXml(node: PMNode, extra: { num?: { id: number; level: number }; indentLeft?: number } = {}): string {
   const a = node.attrs;
   let x = '';
@@ -1292,7 +1315,9 @@ function pPrXml(node: PMNode, extra: { num?: { id: number; level: number }; inde
 }
 
 function paragraphXml(ctx: ExportCtx, node: PMNode, extra?: Parameters<typeof pPrXml>[1]): string {
-  return `<w:p>${pPrXml(node, extra)}${runsXml(ctx, node)}</w:p>`;
+  // Разрыв колонки перед абзацем: в Word это знак w:br w:type="column" в начале абзаца.
+  const col = node.attrs.colBreakBefore && !node.attrs.pageBreakBefore ? '<w:r><w:br w:type="column"/></w:r>' : '';
+  return `<w:p>${pPrXml(node, extra)}${col}${runsXml(ctx, node)}</w:p>`;
 }
 
 /** Определения нумерации одного верхнего списка: уровни со своим форматом. */
@@ -1512,7 +1537,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     (hf.differentFirst ? hfRef(hf.firstHeader, 'header', 'first') + hfRef(hf.firstFooter, 'footer', 'first') : '');
   const sectOf = (p: PageSetup, first: boolean): string => `<w:sectPr>${first ? refs : ''}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(p.w)}" w:h="${tw(p.h)}"${p.w > p.h ? ' w:orient="landscape"' : ''}/>` +
     `<w:pgMar w:top="${tw(p.top)}" w:right="${tw(p.right)}" w:bottom="${tw(p.bottom)}" w:left="${tw(p.left)}" w:header="${tw(hf.headerDist)}" w:footer="${tw(hf.footerDist)}" w:gutter="0"/>` +
-    (p.cols && p.cols > 1 ? `<w:cols w:num="${p.cols}" w:space="${tw(p.colSpace ?? 35.4)}"/>` : '') +
+    colsXml(p) +
     `${first && hf.differentFirst ? '<w:titlePg/>' : ''}</w:sectPr>`;
   // Колонтитулы описаны в первом разделе, остальные их наследуют (так делает и Word).
   const body = chunkXml.map((x, i) => (i < lastChunk ? `${x}<w:p><w:pPr>${sectOf(pagesOf[i], i === 0)}</w:pPr></w:p>` : x)).join('');

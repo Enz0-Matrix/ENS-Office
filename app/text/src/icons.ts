@@ -39,6 +39,11 @@ import ccw24 from '@fluentui/svg-icons/icons/arrow_counterclockwise_24_regular.s
 import wand24 from '@fluentui/svg-icons/icons/wand_24_regular.svg?raw';
 import numRot24 from '@fluentui/svg-icons/icons/text_number_list_ltr_rotate_270_24_regular.svg?raw';
 import check24 from '@fluentui/svg-icons/icons/checkmark_24_regular.svg?raw';
+import columns24 from '@fluentui/svg-icons/icons/column_triple_24_regular.svg?raw';
+import columns20 from '@fluentui/svg-icons/icons/column_triple_20_regular.svg?raw';
+import onePage24 from '@fluentui/svg-icons/icons/document_one_page_24_regular.svg?raw';
+import multiPage24 from '@fluentui/svg-icons/icons/document_one_page_multiple_24_regular.svg?raw';
+import pageWidth24 from '@fluentui/svg-icons/icons/arrow_autofit_width_24_regular.svg?raw';
 import person24 from '@fluentui/svg-icons/icons/person_24_regular.svg?raw';
 
 import crop24 from '@fluentui/svg-icons/icons/crop_24_regular.svg?raw';
@@ -63,6 +68,8 @@ Object.assign(ICONS, {
 
 Object.assign(ICONS, {
   person_24: person24,
+  one_page_24: onePage24, multi_page_24: multiPage24, page_width_24: pageWidth24,
+  columns_24: columns24, columns_20: columns20,
   checkmark_24: check24,
   arrow_counterclockwise_24: ccw24, wand_24: wand24, text_number_list_ltr_rotate_270_24: numRot24,
   history_24: history24,

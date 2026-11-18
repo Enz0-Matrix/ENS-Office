@@ -19,7 +19,7 @@ import { ICONS } from '../../table/src/icons';
 import { APP_VERSION } from './version';
 import { schema } from './schema';
 import {
-  clearFormatting, createState, insertField, currentLevel, currentStyle, fmtActive, findKey, findStep, indent, insertImage, insertPageBreak, insertTable, linkAt,
+  clearFormatting, createState, insertField, currentLevel, currentStyle, fmtActive, findKey, findStep, indent, insertImage, insertPageBreak, insertColumnBreak, insertTable, linkAt,
   listKind, markActive, paraAttr, replaceAll, replaceMatch, setLink, setParaAttrs, setStyle, setTextStyle, toggle, toggleList, toggles,
 } from './editor';
 import { A4, exportDocx, importDocx, newMeta, type DocMeta, type HfDoc, type PageSetup } from './docx';
@@ -357,15 +357,28 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   const g = geometry(effPage());
   const list: PageBox[] = boxes.length === pages ? boxes
     : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
-  const sheetW = Math.max(...list.map((b) => b.W));
+  const pageW = Math.max(...list.map((b) => b.W));
+  // Листы рядами: подложка шире листа, текст (поток) остаётся шириной в лист у левого края.
+  const sheetW = layout.perRow > 1 ? Math.max(...list.map((b) => (b.left ?? 0) + pageW)) : pageW;
+  $('sheet').style.width = `${sheetW}px`;
+  view.dom.style.width = layout.perRow > 1 ? `${pageW}px` : '';
   const papers = $('papers');
   const wm = meta.watermark?.trim() ?? '';
-  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.top)}:${b.W}:${b.H}`).join(',')}`;
+  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols?.sep ? `${b.cols.x.join('/')}:${b.sepH}:${b.eff.top}:${b.page.left}` : ''}`).join(',')}`;
   if (papers.dataset.sig !== sig) {
     papers.replaceChildren(...list.map((b) => {
       const d = document.createElement('div');
       d.className = 'paper';
-      d.style.cssText = `top:${b.top}px;height:${b.H}px;left:${(sheetW - b.W) / 2}px;right:auto;width:${b.W}px`;
+      d.style.cssText = `top:${b.top}px;height:${b.H}px;left:${(b.left ?? 0) + (pageW - b.W) / 2}px;right:auto;width:${b.W}px`;
+      if (b.cols?.sep && b.sepH) {
+        // Линия между колонками — посередине промежутка, высотой по самой длинной колонке листа.
+        for (let k = 1; k < b.cols.n; k++) {
+          const ln = document.createElement('div');
+          ln.className = 'col-sep';
+          ln.style.cssText = `left:${b.page.left * PX + b.cols.x[k] - b.cols.gap / 2}px;top:${b.eff.top * PX}px;height:${b.sepH}px`;
+          d.append(ln);
+        }
+      }
       if (wm) {
         // Подложка: по центру листа под 45°, размер — по длине надписи и диагонали листа.
         const w = document.createElement('div');
@@ -398,7 +411,7 @@ function layoutFloats(): void {
     const dom = view.dom as HTMLElement;
     const scale = dom.getBoundingClientRect().width / (dom.offsetWidth || 1) || 1;
     // Если у рамок с обтеканием сменились поля, строки вокруг них перераскладываются — страницы считаем заново.
-    if (placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: $('sheet').offsetWidth, scale })) replan(view);
+    if (placeFloats({ root: dom, boxes: pageBoxes(view), sheetW: dom.offsetWidth, scale })) replan(view);
     updateOverlay();
   });
 }
@@ -433,8 +446,9 @@ function currentPage(n = pageCount(view)): number {
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
     const c = view.coordsAtPos(view.state.selection.head);
     const y = (c.top - box.top) / scale + 1;
+    const x = (c.left - box.left) / scale + 1;
     const boxes = pageBoxes(view);
-    if (boxes.length) { let idx = 0; for (let i = 0; i < boxes.length; i++) if (boxes[i].top <= y) idx = i; return Math.min(n, idx + 1); }
+    if (boxes.length) { let idx = 0; for (let i = 0; i < boxes.length; i++) if (boxes[i].top <= y && (boxes[i].left ?? 0) <= x) idx = i; return Math.min(n, idx + 1); }
     return Math.min(n, Math.max(1, Math.floor(y / geometry(effPage()).P) + 1));
   } catch {
     return 1; // вид ещё не готов
@@ -446,8 +460,75 @@ function updatePageStatus(pages = pageCount(view)): void {
   $('status-page').textContent = `Страница ${currentPage(pages)} из ${pages}`;
 }
 
-function setZoom(z: number): void {
-  zoom = Math.min(3, Math.max(0.3, Math.round(z * 10) / 10));
+/** Режим просмотра: обычный, «Одна страница», «Несколько страниц» (листы рядами), «По ширине». */
+type ViewMode = 'normal' | 'one' | 'multi' | 'width';
+let viewMode: ViewMode = 'normal';
+
+/** Место для листов на экране (без полос прокрутки и отступов), px. */
+function deskRoom(): { w: number; h: number } {
+  const d = $('desk');
+  return { w: Math.max(200, d.clientWidth - 48), h: Math.max(200, d.clientHeight - 32) };
+}
+
+/** Сколько листов помещается в ряд при масштабе z (в режиме «Несколько страниц» — не меньше двух). */
+function rowFit(z: number): number {
+  const b = pageBoxes(view);
+  const W = b.length ? Math.max(...b.map((x) => x.W)) : meta.page.w * PX;
+  return Math.max(2, Math.floor((deskRoom().w / z + layout.gap) / (W + layout.gap)));
+}
+
+function setPerRow(k: number): void {
+  if (layout.perRow === k) return;
+  layout.perRow = k;
+  replan(view);
+}
+
+function setViewMode(mode: ViewMode): void {
+  const b = pageBoxes(view);
+  const W = b.length ? Math.max(...b.map((x) => x.W)) : meta.page.w * PX;
+  const H = b.length ? Math.max(...b.map((x) => x.H)) : meta.page.h * PX;
+  const room = deskRoom();
+  viewMode = mode;
+  if (mode === 'multi') {
+    // Как в Word: две страницы рядом целиком; при меньшем масштабе в ряд встаёт больше листов.
+    const z = Math.min((room.w - layout.gap) / (2 * W), room.h / H);
+    setZoom(z, true);
+    setPerRow(rowFit(zoom));
+  } else {
+    setPerRow(1);
+    if (mode === 'one') setZoom(Math.min(room.w / W, room.h / H), true);
+    else if (mode === 'width') setZoom(room.w / W, true);
+  }
+  // Первый лист (при «Одна страница» — текущий) в начале окна.
+  requestAnimationFrame(() => scrollToPage(mode === 'one' ? currentPage() - 1 : -1));
+  updateUi();
+}
+
+// Окно изменило размер: «Одна страница» и «По ширине» вписываются заново, «Несколько страниц» перестраивает ряды.
+let fitTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(fitTimer);
+  fitTimer = window.setTimeout(() => {
+    if (viewMode === 'multi') setPerRow(rowFit(zoom));
+    else if (viewMode === 'one' || viewMode === 'width') setViewMode(viewMode);
+  }, 150);
+});
+
+/** Прокрутить так, чтобы лист i (-1 — оставить по вертикали) был вверху окна. */
+function scrollToPage(i: number): void {
+  if (i < 0) return;
+  const b = pageBoxes(view)[i];
+  if (!b) return;
+  const desk = $('desk');
+  const sheet = $('sheet').getBoundingClientRect();
+  desk.scrollTop += sheet.top + b.top * zoom - desk.getBoundingClientRect().top - 8;
+}
+
+function setZoom(z: number, fromMode = false): void {
+  // Ручная смена масштаба выключает «Одна страница» и «По ширине»; «Несколько страниц» перестраивает ряды.
+  if (!fromMode && viewMode !== 'multi') viewMode = 'normal';
+  zoom = Math.min(3, Math.max(0.1, Math.round(z * 100) / 100));
+  if (!fromMode && viewMode === 'multi') setPerRow(rowFit(zoom));
   ($('sheet-wrap').style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
   $('zoom-val').textContent = `${Math.round(zoom * 100)}%`;
   updateOverlay();
@@ -840,6 +921,9 @@ register(
   { id: 'insert.dateRu', label: 'Дата «29» октября 2026 г.', keywords: ['дата', 'сегодня'], run: () => { const v = active(); v.dispatch(v.state.tr.insertText(dateRu(new Date())).scrollIntoView()); v.focus(); } },
   { id: 'insert.sectionBreak', label: 'Разрыв раздела (со следующей страницы)', keywords: ['раздел', 'ориентация', 'альбомная', 'книжная', 'страница'], run: () => insertSectionBreak() },
   { id: 'insert.pageBreak', label: 'Разрыв страницы', run: () => dispatchCmd(insertPageBreak) },
+  { id: 'insert.columnBreak', label: 'Разрыв колонки', keywords: ['колонка', 'столбец текста', 'следующая колонка'], keys: ['Ctrl+Shift+Enter'], run: () => dispatchCmd(insertColumnBreak) },
+  { id: 'layout.columns', label: 'Колонки', keywords: ['колонки', 'две колонки', 'три колонки', 'газетные колонки', 'столбцы текста'], run: () => columnsMenu() },
+  { id: 'layout.columnsDialog', label: 'Другие колонки…', keywords: ['колонки', 'ширина колонок', 'промежуток', 'разделитель'], run: () => columnsDialog() },
   { id: 'table.rowBefore', label: 'Вставить строку выше', run: () => dispatchCmd(addRowBefore) },
   { id: 'table.rowAfter', label: 'Вставить строку ниже', run: () => dispatchCmd(addRowAfter) },
   { id: 'table.colBefore', label: 'Вставить столбец слева', run: () => dispatchCmd(addColumnBefore) },
@@ -883,6 +967,9 @@ register(
   { id: 'view.zoomIn', label: 'Увеличить масштаб', run: () => setZoom(zoom + 0.1) },
   { id: 'view.zoomOut', label: 'Уменьшить масштаб', run: () => setZoom(zoom - 0.1) },
   { id: 'view.zoomReset', label: 'Масштаб 100%', run: () => setZoom(1) },
+  { id: 'view.onePage', label: 'Одна страница', keywords: ['масштаб', 'страница целиком', 'вписать'], checked: () => viewMode === 'one', run: () => setViewMode('one') },
+  { id: 'view.multiPage', label: 'Несколько страниц', keywords: ['масштаб', 'страницы рядом', 'две страницы', 'рядами'], checked: () => viewMode === 'multi', run: () => setViewMode('multi') },
+  { id: 'view.pageWidth', label: 'По ширине страницы', keywords: ['масштаб', 'по ширине', 'вписать'], checked: () => viewMode === 'width', run: () => setViewMode('width') },
   {
     id: 'list.scheme', label: 'Нумерация пунктов',
     run: (v) => {
@@ -1243,6 +1330,7 @@ const TABS: RibbonTab[] = [
         name: 'Рисунок',
         items: [{ type: 'select', command: 'image.wrap', width: 150, options: [{ value: '', label: 'Обтекание: выделите рисунок' }, { value: 'inline', label: 'В тексте' }, { value: 'left', label: 'Слева, текст справа' }, { value: 'right', label: 'Справа, текст слева' }, { value: 'behind', label: 'За текстом' }, { value: 'front', label: 'Перед текстом' }] }],
       },
+      { name: 'Колонки', items: [{ type: 'large', command: 'layout.columns', icon: 'columns', label: 'Колонки' }, { type: 'small', command: 'insert.columnBreak', icon: 'page_break' }] },
       { name: 'Разделы', items: [{ type: 'large', command: 'insert.sectionBreak', icon: 'page_break', label: 'Разрыв раздела' }] },
       {
         name: 'Текст и фон',
@@ -1456,6 +1544,9 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'view.zoomIn', icon: 'zoom_in', label: 'Увеличить' },
           { type: 'large', command: 'view.zoomOut', icon: 'zoom_in', label: 'Уменьшить' },
           { type: 'large', command: 'view.zoomReset', icon: 'document_text', label: '100%' },
+          { type: 'large', command: 'view.onePage', icon: 'one_page', label: 'Одна страница' },
+          { type: 'large', command: 'view.multiPage', icon: 'multi_page', label: 'Несколько страниц' },
+          { type: 'large', command: 'view.pageWidth', icon: 'page_width', label: 'По ширине' },
         ],
       },
       { name: 'Оформление', items: [{ type: 'large', command: 'view.theme', icon: 'paint_brush', label: 'Тема' }, { type: 'large', command: 'view.ruler', icon: 'grid', label: 'Линейка' }] },
@@ -1645,6 +1736,82 @@ function setOrientation(landscape: boolean): void {
   changePage(landscape ? { w: hi, h: lo } : { w: lo, h: hi });
 }
 
+/** Колонки раздела, где стоит курсор: n равных или «слева»/«справа» (узкая колонка — треть ширины). */
+function setColumns(n: number, side?: 'left' | 'right', extra: Partial<PageSetup> = {}): void {
+  const p = curPage();
+  const colW = side ? (side === 'left' ? [1, 2] : [2, 1]) : undefined;
+  changePage({ cols: n > 1 ? n : undefined, colW: n > 1 ? colW : undefined, colSpace: n > 1 ? (p.colSpace ?? 35.4) : p.colSpace, colSep: n > 1 ? p.colSep : undefined, ...extra });
+}
+
+function columnsMenu(): void {
+  const p = curPage();
+  const n = p.cols && p.cols > 1 ? p.cols : 1;
+  const side = n === 2 && p.colW?.length === 2 ? (p.colW[0] < p.colW[1] ? 'left' : p.colW[0] > p.colW[1] ? 'right' : '') : '';
+  const at = ribbonButton('layout.columns') ?? { x: 300, y: 120 };
+  popMenu(at, [
+    { label: 'Одна', checked: n === 1, run: () => setColumns(1) },
+    { label: 'Две', checked: n === 2 && !side, run: () => setColumns(2) },
+    { label: 'Три', checked: n === 3 && !p.colW, run: () => setColumns(3) },
+    { label: 'Слева (узкая слева)', checked: side === 'left', run: () => setColumns(2, 'left') },
+    { label: 'Справа (узкая справа)', checked: side === 'right', run: () => setColumns(2, 'right') },
+    '-',
+    { label: 'Разрыв колонки', keys: 'Ctrl+Shift+Enter', run: () => dispatchCmd(insertColumnBreak) },
+    { label: 'Другие колонки…', run: () => columnsDialog() },
+  ], 'columns-menu');
+}
+
+/** «Другие колонки…»: число, ширина и промежуток (см), равная ширина, линия-разделитель. Для раздела с курсором. */
+function columnsDialog(): void {
+  const p0 = curPage();
+  const CMPT = 28.3465;
+  const cm = (pt: number) => String(Math.round((pt / CMPT) * 100) / 100).replace('.', ',');
+  const val = (i: HTMLInputElement) => parseFloat(i.value.replace(',', '.'));
+  dialog((box, close) => {
+    const text = p0.w - p0.left - p0.right;
+    const count = el('input', { type: 'number', value: String(p0.cols && p0.cols > 1 ? p0.cols : 1), min: '1', max: '12' });
+    const space = el('input', { type: 'text', value: cm(p0.colSpace ?? 35.4), size: 5 });
+    const equal = el('input', { type: 'checkbox', checked: !p0.colW });
+    const sep = el('input', { type: 'checkbox', checked: !!p0.colSep });
+    const widths = el('span', { class: 'col-widths' });
+    let inputs: HTMLInputElement[] = [];
+    const draw = () => {
+      const n = Math.min(12, Math.max(1, Math.round(+count.value || 1)));
+      const sp = Math.max(0, (val(space) || 0) * CMPT);
+      const free = Math.max(18, text - sp * (n - 1));
+      const own = p0.colW && p0.colW.length === n ? p0.colW : null;
+      const sum = own ? own.reduce((a, b) => a + b, 0) : 0;
+      inputs = Array.from({ length: n }, (_, k) => el('input', { type: 'text', size: 5, value: cm(own && !equal.checked ? (own[k] * free) / sum : free / n), disabled: equal.checked || n < 2 }));
+      widths.replaceChildren(...inputs.flatMap((x, k) => [`${k + 1}: `, x, ' ']));
+    };
+    count.addEventListener('input', draw);
+    space.addEventListener('change', draw);
+    equal.addEventListener('change', draw);
+    draw();
+    const ok = el('button', { class: 'primary', textContent: 'ОК' });
+    const go = () => {
+      const n = Math.min(12, Math.max(1, Math.round(+count.value || 1)));
+      const sp = Math.max(0, (val(space) || 0) * CMPT);
+      const ws = inputs.map((x) => (val(x) || 0) * CMPT);
+      const own = !equal.checked && n > 1 && ws.every((x) => x > 9) ? ws : undefined;
+      close();
+      setColumns(n, undefined, { colSpace: n > 1 ? sp : p0.colSpace, colW: own, colSep: n > 1 && sep.checked ? true : undefined });
+      view.focus();
+    };
+    ok.addEventListener('click', go);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    box.append(
+      el('h2', { textContent: 'Колонки' }),
+      el('p', { textContent: 'Для раздела, где стоит курсор. Текст перетекает из колонки в колонку; разрыв колонки — Ctrl+Shift+Enter.' }),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Число колонок' }), count),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Промежуток, см' }), space),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Колонки одинаковой ширины' }), equal),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Ширина, см' }), widths),
+      el('div', { class: 'dlg-row' }, el('label', { textContent: 'Разделитель' }), sep),
+      el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
+    );
+  });
+}
+
 function setMargins(key: string): void {
   const [top, bottom, left, right] = MARGIN_SETS[key] ?? MARGIN_SETS.normal;
   changePage({ top, bottom, left, right });
@@ -1786,9 +1953,9 @@ function openHf(kind: HfKind, pageIndex = currentPage() - 1): void {
   const first = meta.hf.differentFirst && pageIndex === 0;
   const box = pageBoxes(view)[pageIndex];
   const e = box?.eff ?? effPage();
-  const sheetW = $('sheet').offsetWidth;
+  const sheetW = (view.dom as HTMLElement).offsetWidth;
   hfSession = openHfEditor({
-    sheet: $('sheet'), kind, first, pageIndex, pageTop: box?.top ?? pageIndex * geometry(e).P, offsetX: box ? (sheetW - box.W) / 2 : 0, page: e, hf: meta.hf,
+    sheet: $('sheet'), kind, first, pageIndex, pageTop: box?.top ?? pageIndex * geometry(e).P, offsetX: box ? (box.left ?? 0) + (sheetW - box.W) / 2 : 0, page: e, hf: meta.hf,
     onChange: () => { refreshHf(); updateUi(); scheduleRecovery(); },
   });
   $('sheet').classList.add('hf-mode');
@@ -1833,12 +2000,15 @@ $('sheet').addEventListener('dblclick', (e) => {
   const scale = rect.width / ($('sheet') as HTMLElement).offsetWidth || 1;
   const boxes = pageBoxes(view);
   const y = (e.clientY - rect.top) / scale;
-  const i = boxes.findIndex((b) => y >= b.top && y <= b.top + b.H);
+  const x = (e.clientX - rect.left) / scale;
+  const pageW = (view.dom as HTMLElement).offsetWidth;
+  // Листы рядами: лист под щелчком — и по горизонтали.
+  const i = boxes.findIndex((b) => y >= b.top && y <= b.top + b.H && x >= (b.left ?? 0) && x <= (b.left ?? 0) + pageW);
   if (i < 0) return;
   const box = boxes[i];
   const eff = box.eff;
   const inPage = y - box.top;
-  const side = ((($('sheet') as HTMLElement).offsetWidth) - box.W) / 2;
+  const side = (box.left ?? 0) + (pageW - box.W) / 2;
   if (hfSession && (e.target as HTMLElement).closest('.hf-edit')) return;
   if (inPage < eff.top * PX - 4) { e.preventDefault(); openHf('header', i); }
   else if (inPage > box.H - eff.bottom * PX + 4) { e.preventDefault(); openHf('footer', i); }
@@ -1857,9 +2027,13 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && hfSessio
 // ---------------------------------------------------------------- печать
 
 /** Печать по нашей вёрстке: страницы вплотную, поля внутри страницы, колонтитулы на каждом листе — как на экране. */
+/** Листов в ряду до печати (печать всегда столбиком). */
+let printPerRow = 0;
+
 async function printPrepare(): Promise<void> {
   closeHf();
   layout.gap = 0;
+  if (layout.perRow > 1) { printPerRow = layout.perRow; layout.perRow = 1; }
   replan(view);
   applyPage();
   await new Promise((r) => setTimeout(r, pagStats.items > 600 ? 400 : 120));
@@ -1868,6 +2042,7 @@ async function printPrepare(): Promise<void> {
 function printRestore(): void {
   if (layout.gap === 16) return;
   layout.gap = 16;
+  if (printPerRow) { layout.perRow = printPerRow; printPerRow = 0; }
   replan(view);
   applyPage();
 }

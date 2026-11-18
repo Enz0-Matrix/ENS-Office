@@ -212,13 +212,13 @@ function finishMove(d: Drag): void {
   const m = d.moved;
   if (!m) { host.relayout(); return; }
   const boxes = host.boxes();
-  const sheetW = host.sheet.offsetWidth;
-  const cy = m.top + d.h / 2;
+  const sheetW = (host.view().dom as HTMLElement).offsetWidth;
+  const cy = m.top + d.h / 2, cx = m.left + d.w / 2;
   let idx = 0;
-  for (let i = 0; i < boxes.length; i++) if (boxes[i].top <= cy) idx = i;
+  for (let i = 0; i < boxes.length; i++) if (boxes[i].top <= cy && (boxes[i].left ?? 0) <= cx) idx = i;
   const box = boxes[idx];
   if (!box) { host.relayout(); return; }
-  const side = (sheetW - box.W) / 2;
+  const side = (box.left ?? 0) + (sheetW - box.W) / 2;
   const f = floatOf(d.node)!;
   const nf: Float = { ...f, hRel: 'page', hOff: Math.round(m.left - side), hAlign: null, vRel: 'page', vOff: Math.round(m.top - box.top), vAlign: null };
   const v = host.view();
