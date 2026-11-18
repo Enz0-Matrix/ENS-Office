@@ -466,6 +466,26 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
 
+/* Примечания: отмеченный текст и панель справа. */
+.ProseMirror span.cmt { background: rgba(255, 196, 0, .28); border-bottom: 1px solid rgba(200, 140, 0, .7); }
+.ProseMirror span.cmt.cmt-done { background: rgba(160, 160, 160, .18); border-bottom-color: rgba(120, 120, 120, .5); }
+.ProseMirror span.cmt.cmt-active { background: rgba(255, 170, 0, .5); }
+@media print { .ProseMirror span.cmt { background: none; border-bottom: 0; } .comments-pane { display: none; } }
+.comments-pane { position: fixed; z-index: 44; right: 12px; top: 128px; bottom: 36px; width: 300px; overflow: auto; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.2); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.cmt-pane-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -8px; background: var(--panel); padding: 4px 0; }
+.cmt-card { border: 1px solid var(--border); border-left: 4px solid #e0a800; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
+.cmt-card.active { box-shadow: 0 0 0 2px var(--accent, #2b579a); }
+.cmt-card.done { border-left-color: #9a9a9a; opacity: .75; }
+.cmt-head { display: flex; justify-content: space-between; gap: 6px; }
+.cmt-date { color: var(--muted); font-size: 11px; }
+.cmt-quote { color: var(--muted); font-style: italic; margin: 2px 0 4px; border-left: 2px solid var(--border); padding-left: 6px; }
+.cmt-text { white-space: pre-wrap; margin: 2px 0 4px; }
+.cmt-reply { margin: 4px 0 4px 10px; padding-left: 6px; border-left: 2px solid var(--border); }
+.cmt-card textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; margin: 4px 0; }
+.cmt-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.cmt-actions button { font-size: 12px; padding: 2px 6px; }
+.cmt-empty { color: var(--muted); }
 /* Сноска: номер надстрочным (из data-n), текст — подсказкой при наведении. */
 .ProseMirror sup.fn { position: relative; cursor: pointer; color: inherit; }
 .ProseMirror sup.fn::after { content: attr(data-n); }

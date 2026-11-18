@@ -190,6 +190,8 @@ interface Ctx {
   cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
+  /** Примечания из comments.xml (ветки без ответов-«детей») и открытые сейчас диапазоны примечаний. */
+  comments?: { threads: Map<string, CommentThread>; replies: Set<string>; open: string[]; used: Set<string> };
   /** Тексты сносок и концевых сносок из word/footnotes.xml и word/endnotes.xml (по w:id) и связи этих частей. */
   notes?: { foot: Map<string, Element>; end: Map<string, Element>; footRels: Ctx['rels']; endRels: Ctx['rels'] };
   /** Внутри результата поля TOC: глубина вложенности полей; абзацы результата пропускаются (оглавление строится заново). */
@@ -197,6 +199,44 @@ interface Ctx {
   /** Текущее исправление (внутри w:ins / w:del) и счётчик номеров исправлений. */
   rev?: { kind: 'ins' | 'del'; id: number; author: string; date: string } | null;
   revSeq: number;
+}
+
+interface CommentThread { id: number; author: string; date: string; text: string; replies: { author: string; date: string; text: string }[]; done: boolean }
+
+const W14 = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const W15 = 'http://schemas.microsoft.com/office/word/2012/wordml';
+
+/** comments.xml + commentsExtended.xml → ветки: ответы прикреплены к родителю, «решено» — из w15:done. */
+function readComments(files: Record<string, Uint8Array>, rels: Ctx['rels']): NonNullable<Ctx['comments']> {
+  const out: NonNullable<Ctx['comments']> = { threads: new Map(), replies: new Set(), open: [], used: new Set() };
+  const part = [...rels.values()].find((r) => /\/comments$/.test(r.type));
+  if (!part || !files[part.target]) return out;
+  const ext = [...rels.values()].find((r) => /\/commentsExtended$/.test(r.type));
+  const info = new Map<string, { parent: string | null; done: boolean }>();
+  if (ext && files[ext.target]) {
+    for (const e of parseXml(strFromU8(files[ext.target])).documentElement.getElementsByTagNameNS(W15, 'commentEx')) {
+      info.set(e.getAttributeNS(W15, 'paraId') ?? '', { parent: e.getAttributeNS(W15, 'paraIdParent'), done: e.getAttributeNS(W15, 'done') === '1' });
+    }
+  }
+  const byPara = new Map<string, string>();
+  const all: { id: string; paraId: string; t: CommentThread }[] = [];
+  for (const c of kids(parseXml(strFromU8(files[part.target])).documentElement, 'comment')) {
+    const id = attr(c, 'id') ?? '';
+    const paras = kids(c, 'p');
+    const text = paras.map((p) => descendants(p, 't').map((t) => t.textContent ?? '').join('')).join('\n').trim();
+    const paraId = paras.length ? paras[paras.length - 1].getAttributeNS(W14, 'paraId') ?? '' : '';
+    if (paraId) byPara.set(paraId, id);
+    all.push({ id, paraId, t: { id: Number(id) || 0, author: attr(c, 'author') ?? '', date: attr(c, 'date') ?? '', text, replies: [], done: !!info.get(paraId)?.done } });
+  }
+  const map = new Map(all.map((x) => [x.id, x.t]));
+  for (const x of all) {
+    const parent = x.paraId ? info.get(x.paraId)?.parent : null;
+    const pid = parent ? byPara.get(parent) : undefined;
+    const p = pid ? map.get(pid) : undefined;
+    if (p && pid !== x.id) { p.replies.push({ author: x.t.author, date: x.t.date, text: x.t.text }); out.replies.add(x.id); }
+  }
+  for (const x of all) if (!out.replies.has(x.id)) out.threads.set(x.id, x.t);
+  return out;
 }
 
 /** Поле TOC в абзаце: число уровней и глубина полей в конце абзаца (0 — поле закрылось в этом же абзаце). */
@@ -345,6 +385,10 @@ function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[
   const size = fmt.size && fmt.size !== d.size ? fmt.size : null;
   if (font || size || fmt.color || fmt.bg) m.push(schema.marks.textStyle.create({ font, size, color: fmt.color ?? null, bg: fmt.bg ?? null }));
   if (href) m.push(schema.marks.link.create({ href }));
+  if (ctx.comments?.open.length) for (const id of ctx.comments.open) {
+    const t = ctx.comments.threads.get(id);
+    if (t) { m.push(schema.marks.comment.create(t)); ctx.comments.used.add(id); }
+  }
   if (ctx.rev) m.push(schema.marks[ctx.rev.kind].create({ id: ctx.rev.id, author: ctx.rev.author, date: ctx.rev.date }));
   return Mark.setFrom(m);
 }
@@ -594,7 +638,8 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       }
       case 'commentReference':
-        lose(ctx, 'примечания');
+        // Само примечание прочитано из comments.xml и лежит меткой на отмеченном тексте.
+        if (!ctx.comments?.threads.has(attr(c, 'id') ?? '') && !ctx.comments?.replies.has(attr(c, 'id') ?? '')) lose(ctx, 'примечания');
         break;
       default:
         break;
@@ -653,6 +698,14 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
       }
       case 'sdt':
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
+        break;
+      case 'commentRangeStart': {
+        const id = attr(c, 'id') ?? '';
+        if (ctx.comments?.threads.has(id) && !ctx.comments.open.includes(id)) ctx.comments.open.push(id);
+        break;
+      }
+      case 'commentRangeEnd':
+        if (ctx.comments) ctx.comments.open = ctx.comments.open.filter((x) => x !== (attr(c, 'id') ?? ''));
         break;
       case 'bookmarkStart': {
         // Закладки — точки в начале; служебная «_GoBack» (последняя правка в Word) не переносится.
@@ -1016,8 +1069,9 @@ export function importDocx(bytes: Uint8Array): Imported {
     lossy: new Map(), baseR: {}, fields: [], sects: [], revSeq: 0,
   };
   for (const [, rel] of ctx.rels) {
-    if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
+    if (/\/(footnotes|endnotes)$/.test(rel.type)) { /* считаем по ссылкам в тексте */ }
   }
+  ctx.comments = readComments(files, ctx.rels);
   // Сноски: тексты по номерам (служебные разделители separator/continuationSeparator не нужны).
   const notePart = (kind: 'footnotes' | 'endnotes') => {
     const rel = [...ctx.rels.values()].find((r) => new RegExp(`/${kind}$`).test(r.type));
@@ -1142,6 +1196,8 @@ export function importDocx(bytes: Uint8Array): Imported {
     if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
     if (allSects.some((x) => x !== sect && (kids(x, 'headerReference').length || kids(x, 'footerReference').length) && kids(x, 'headerReference').map((r) => relAttr(r, 'id')).join() !== kids(sect, 'headerReference').map((r) => relAttr(r, 'id')).join())) lose(ctx, 'колонтитулы разных разделов (всюду — колонтитулы первого раздела)');
   }
+  // Примечание, у которого в тексте не нашлось отмеченного куска, не переносится — предупреждаем.
+  if (ctx.comments) for (const id of ctx.comments.threads.keys()) if (!ctx.comments.used.has(id)) lose(ctx, 'примечания без отмеченного текста');
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
   const settingsXml = files['word/settings.xml'] ? strFromU8(files['word/settings.xml']) : '';
   const hy = /<w:autoHyphenation\b([^>]*)\/?>/.exec(settingsXml);
@@ -1206,6 +1262,54 @@ interface ExportCtx {
   seq: Map<string, number>;
   /** Номера закладок (w:id): общие для всего файла. */
   bookmarkId: { n: number };
+  /** Примечания: номера w:id ветки и ответов, сколько отмеченных кусков осталось записать, начат ли диапазон. */
+  cmt: Map<number, { ids: number[]; left: number; started: boolean; thread: CommentThread }>;
+}
+
+/** Примечания документа по порядку: номера w:id (ветка, затем ответы) и число отмеченных кусков. */
+function collectComments(doc: PMNode): ExportCtx['cmt'] {
+  const out: ExportCtx['cmt'] = new Map();
+  let next = 0;
+  doc.descendants((node) => {
+    if (!node.isInline) return true;
+    for (const m of node.marks) {
+      if (m.type.name !== 'comment') continue;
+      const t = m.attrs as CommentThread;
+      let c = out.get(t.id);
+      if (!c) { c = { ids: [next++, ...(t.replies ?? []).map(() => next++)], left: 0, started: false, thread: t }; out.set(t.id, c); }
+      c.left++;
+    }
+    return false;
+  });
+  return out;
+}
+
+/** comments.xml и commentsExtended.xml: тексты, авторы, ответы (paraIdParent) и «решено» (done). */
+function commentsParts(ctx: ExportCtx): { comments: string; ext: string } | null {
+  if (!ctx.cmt.size) return null;
+  const para = (n: number) => (0x10000000 + n).toString(16).toUpperCase();
+  let comments = '', ext = '';
+  const one = (id: number, author: string, date: string, text: string) => {
+    const lines = (text || ' ').split('\n');
+    const initials = author.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 3);
+    comments += `<w:comment w:id="${id}" w:author="${esc(author || 'ENS-Text')}"${date ? ` w:date="${esc(date)}"` : ''} w:initials="${esc(initials)}">` +
+      lines.map((l, i) => `<w:p${i === lines.length - 1 ? ` w14:paraId="${para(id)}" w14:textId="77777777"` : ''}>${i === 0 ? '<w:r><w:annotationRef/></w:r>' : ''}<w:r><w:t xml:space="preserve">${esc(l)}</w:t></w:r></w:p>`).join('') +
+      '</w:comment>';
+  };
+  for (const c of ctx.cmt.values()) {
+    const [main, ...rest] = c.ids;
+    one(main, c.thread.author, c.thread.date, c.thread.text);
+    ext += `<w15:commentEx w15:paraId="${para(main)}" w15:done="${c.thread.done ? 1 : 0}"/>`;
+    (c.thread.replies ?? []).forEach((r, i) => {
+      one(rest[i], r.author, r.date, r.text);
+      ext += `<w15:commentEx w15:paraId="${para(rest[i])}" w15:paraIdParent="${para(main)}" w15:done="${c.thread.done ? 1 : 0}"/>`;
+    });
+  }
+  const mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"';
+  return {
+    comments: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="${NS.w}" xmlns:w14="${W14}" ${mc} mc:Ignorable="w14">${comments}</w:comments>`,
+    ext: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w15:commentsEx xmlns:w15="${W15}" ${mc} mc:Ignorable="w15">${ext}</w15:commentsEx>`,
+  };
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1323,6 +1427,9 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
   let openHref: string | null = null;
   const closeLink = () => { if (openHref !== null) { out += '</w:hyperlink>'; openHref = null; } };
   para.forEach((child) => {
+    // Начало диапазона примечания (и его ответов: в Word у ответа тот же диапазон).
+    const cmts = child.marks.filter((m) => m.type.name === 'comment').map((m) => ctx.cmt.get(m.attrs.id as number)).filter((c) => !!c);
+    for (const c of cmts) if (!c.started) { c.started = true; for (const id of c.ids) out += `<w:commentRangeStart w:id="${id}"/>`; }
     const link = child.marks.find((m) => m.type.name === 'link');
     const href = link ? (link.attrs.href as string) : null;
     if (href !== openHref) {
@@ -1380,6 +1487,11 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       let runs = out.slice(start);
       if (rev.type.name === 'del') runs = runs.replace(/<w:t( [^>]*)?>/g, '<w:delText$1>').replace(/<\/w:t>/g, '</w:delText>');
       out = out.slice(0, start) + revOpen(rev.type.name, rev.attrs) + runs + `</w:${rev.type.name}>`;
+    }
+    // Последний отмеченный кусок: конец диапазона и знак примечания.
+    for (const c of cmts) if (--c.left === 0) {
+      closeLink();
+      for (const id of c.ids) out += `<w:commentRangeEnd w:id="${id}"/><w:r><w:commentReference w:id="${id}"/></w:r>`;
     }
   });
   closeLink();
@@ -1614,7 +1726,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 }, root: doc, notes: { foot: [], end: [] } };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 }, root: doc, notes: { foot: [], end: [] }, cmt: collectComments(doc) };
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
@@ -1630,7 +1742,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   if (chunkXml[lastChunk].endsWith('</w:tbl>')) chunkXml[lastChunk] += '<w:p/>';
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
-  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' | 'footnotes' | 'endnotes' }[] = [];
+  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' | 'footnotes' | 'endnotes' | 'comments' | 'commentsExtended' }[] = [];
   const wmText = meta.watermark?.trim() || '';
   const emptyHfDoc = (): HfDoc => schema.nodes.doc.create(null, [schema.nodes.paragraph.create()]).toJSON() as HfDoc;
   const hfRef = (json: HfDoc, kind: 'header' | 'footer', type: 'default' | 'first'): string => {
@@ -1670,6 +1782,13 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
 
+  const cp = commentsParts(ctx);
+  if (cp) {
+    parts.push({ path: 'word/comments.xml', tag: 'comments', kind: 'comments', rels: [], xml: cp.comments });
+    parts.push({ path: 'word/commentsExtended.xml', tag: 'commentsEx', kind: 'commentsExtended', rels: [], xml: cp.ext });
+    relId(ctx, `${REL_BASE}/comments`, 'comments.xml');
+    relId(ctx, 'http://schemas.microsoft.com/office/2011/relationships/commentsExtended', 'commentsExtended.xml');
+  }
   // Сноски: свои части с разделителями Word и текстами (абзацы — как в основном тексте, со своими связями).
   for (const end of [false, true]) {
     const list = ctx.notes[end ? 'end' : 'foot'];

@@ -379,6 +379,20 @@ const marks: Record<string, MarkSpec> = {
   strike: { parseDOM: [{ tag: 's' }, { tag: 'del' }, { tag: 'strike' }, { style: 'text-decoration=line-through' }], toDOM: () => ['s', 0] },
   sup: { excludes: 'sub', parseDOM: [{ tag: 'sup' }], toDOM: () => ['sup', 0] },
   sub: { excludes: 'sup', parseDOM: [{ tag: 'sub' }], toDOM: () => ['sub', 0] },
+  /**
+   * Примечание (комментарий рецензента) на куске текста. Вся ветка — в атрибутах: автор, время, текст, ответы,
+   * «решено». Одинаковые атрибуты на всех кусках одного примечания (id связывает их). Метки разных примечаний
+   * могут лежать на одном тексте (excludes: '').
+   */
+  comment: {
+    attrs: { id: {}, author: { default: '' }, date: { default: '' }, text: { default: '' }, replies: { default: [] }, done: { default: false } },
+    inclusive: false,
+    excludes: '',
+    parseDOM: [{ tag: 'span.cmt[data-cmt]', getAttrs: (d) => {
+      try { return JSON.parse((d as HTMLElement).getAttribute('data-cmt') ?? ''); } catch { return false; }
+    } }],
+    toDOM: (m) => ['span', { class: `cmt${m.attrs.done ? ' cmt-done' : ''}`, 'data-cmt-id': String(m.attrs.id), 'data-cmt': JSON.stringify(m.attrs) }, 0],
+  },
   ins: revMark('ins'),
   del: revMark('del'),
   /** Шрифт, кегль (pt), цвет текста и заливка (#RRGGBB) — одним слоем. */
