@@ -292,6 +292,14 @@ export interface Model {
   externalBooks?(): { file: string; target: string }[];
   /** Обновить значения ссылок на книгу `file` из байтов её xlsx; вернуть листы, которых в ней нет. */
   updateExternalBook?(file: string, bytes: Uint8Array): string[];
+  /** Лист в байтах для вставки в другую книгу (ADR-012): file — имя этой книги, target — её путь. */
+  exportSheet?(sheet: number, file: string, target: string): Uint8Array;
+  /** Лист из другой книги перед листом index; одно действие отмены; ответ — номер нового листа. */
+  importSheet?(bytes: Uint8Array, index: number): number;
+  /** Значения прямоугольника в байтах (для «Вставить связь» в другой книге). */
+  rangeValues?(sheet: number, r1: number, c1: number, r2: number, c2: number): Uint8Array;
+  /** Значения из другой книги — в кэш ссылок на её лист (как «Обновить связи», не отменяется). */
+  mergeExternalValues?(file: string, target: string, sheet: string, bytes: Uint8Array): void;
   toBytes(): Uint8Array;
   flushSendQueue(): Uint8Array;
   applyExternalDiffs(diffs: Uint8Array): void;
