@@ -526,3 +526,11 @@ svg.ic-l, svg.ic-m { display: none; }
 :root[data-rev-view] .ProseMirror del.rev-del { color: inherit; text-decoration: none; }
 :root[data-rev-view] .ProseMirror [data-rev-block] { box-shadow: none; }
 .compare-dialog .dlg-row select { max-width: 360px; }
+/* Сноски внизу страницы (рисует pagination.ts → drawPapers): линия и тексты 10 пт, как «Текст сноски» в Word. */
+.paper .fn-area, .fn-area { position: absolute; overflow: hidden; pointer-events: none; color: #000; }
+.fn-area.fn-measure { left: -10000px; top: 0; visibility: hidden; }
+.fn-area .fn-sep { width: min(48mm, 33%); border-top: 1px solid currentColor; margin: 6px 0 7px; }
+.fn-note { font-family: var(--doc-font); font-size: 10pt; line-height: normal; text-align: left; }
+.fn-note p, .fn-note h1, .fn-note h2, .fn-note h3 { margin: 0 !important; padding: 0 !important; text-indent: 0 !important; font-size: inherit; }
+.fn-note .fn-label { font-size: 0.75em; vertical-align: super; line-height: 0; }
+:root[data-night-sheet] .paper .fn-area { color: #ddd; }

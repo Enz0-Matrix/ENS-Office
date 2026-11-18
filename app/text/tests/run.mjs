@@ -3330,6 +3330,46 @@ await test('сноски: Ctrl+Alt+F вставляет сноску с текс
   ok((await nums()).length < before, 'отмена');
   await p.context().close();
 });
+await test('сноски внизу страницы: место вычитается из страницы, текст сноски на своей странице, номер и текст', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema;
+    const note = (t) => s.nodes.footnote.create({ content: [s.nodes.paragraph.create(null, [s.text(t, [s.marks.em.create()])]).toJSON()] });
+    const long = 'Длинный абзац основного текста для проверки разрыва страницы со сносками внизу листа. '.repeat(6);
+    const paras = [];
+    for (let i = 0; i < 24; i++) paras.push(s.nodes.paragraph.create(null, [s.text(`${i + 1}. ${long}`), ...(i === 1 ? [note('Первая сноска: источник ' + 'очень длинный, '.repeat(12))] : []), ...(i === 2 ? [note('Вторая сноска')] : []), ...(i === 20 ? [note('Третья сноска на дальней странице')] : [])]));
+    E.loadDoc(s.nodes.doc.create(null, paras), E.getMeta(), 'Сноски');
+  });
+  await p.waitForFunction(() => window.ens.pageBoxes().some((b) => b.notes?.length));
+  await p.waitForTimeout(400);
+  const r = await p.evaluate(() => {
+    const E = window.ens, boxes = E.pageBoxes();
+    const areas = [...document.querySelectorAll('#papers .paper')].map((paper, i) => ({ i, notes: [...paper.querySelectorAll('.fn-note')].map((n) => n.textContent.trim()), area: paper.querySelector('.fn-area')?.getBoundingClientRect() ?? null }));
+    return { pages: boxes.length, labels: boxes.map((b) => (b.notes ?? []).flatMap((a) => a.list.map((x) => x.label))), areas, stuck: E.pagStats.stuck };
+  });
+  ok(r.pages >= 3, 'несколько страниц: ' + r.pages);
+  eq(r.labels[0], ['1', '2'], 'сноски 1 и 2 на первой странице');
+  ok(r.labels.slice(1).some((l) => l.includes('3')), 'третья сноска на своей странице: ' + JSON.stringify(r.labels));
+  ok(r.areas[0].notes[0].startsWith('1') && r.areas[0].notes[0].includes('Первая сноска'), 'текст сноски с номером: ' + r.areas[0].notes[0]);
+  ok(!r.stuck, 'вёрстка сошлась');
+  // Последняя строка текста первой страницы — выше места сносок.
+  const lastLine = await p.evaluate(() => {
+    const E = window.ens, paper0 = document.querySelectorAll('#papers .paper')[0].getBoundingClientRect(), area = document.querySelector('#papers .paper .fn-area').getBoundingClientRect();
+    const walker = document.createTreeWalker(E.view.dom, NodeFilter.SHOW_TEXT);
+    let low = 0;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const rg = document.createRange(); rg.selectNodeContents(n);
+      for (const rc of rg.getClientRects()) if (rc.top < paper0.bottom && rc.bottom > paper0.top) low = Math.max(low, rc.bottom);
+    }
+    return { low, areaTop: area.top };
+  });
+  ok(lastLine.low <= lastLine.areaTop + 1, `текст не налезает на сноски: ${lastLine.low} ≤ ${lastLine.areaTop}`);
+  // Без сносок места внизу не остаётся: удалили — область исчезла.
+  await p.evaluate(() => { const E = window.ens; const tr = E.view.state.tr; const list = E.listNotes().reverse(); for (const n of list) tr.delete(n.pos, n.pos + 1); E.view.dispatch(tr); });
+  await p.waitForFunction(() => !document.querySelector('#papers .fn-area'));
+  await p.context().close();
+});
+
 await test('сноски в docx: footnotes.xml и endnotes.xml туда и обратно, текст с форматированием, без потерь', async () => {
   const p = await page();
   const r = await p.evaluate(() => {
