@@ -8,7 +8,7 @@
 import { baseKeymap } from 'prosemirror-commands';
 import { history, redo, undo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
-import type { Node as PMNode } from 'prosemirror-model';
+import { DOMSerializer, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, Plugin, TextSelection, type Transaction } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { schema } from './schema';
@@ -38,6 +38,23 @@ export function listNotes(doc: PMNode): NoteInfo[] {
     return false;
   });
   return out;
+}
+
+/** Сноска внизу страницы: номер надстрочным и текст с форматированием (тот же элемент и для измерения высоты). */
+export function renderNote(label: string, content: unknown): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'fn-note';
+  let nodes: PMNode[] = [];
+  try { nodes = (content as Record<string, unknown>[]).map((j) => schema.nodeFromJSON(j)); } catch { nodes = []; }
+  if (!nodes.length) nodes = [schema.nodes.paragraph.create()];
+  const frag = DOMSerializer.fromSchema(schema).serializeFragment(schema.nodes.doc.create(null, nodes).content);
+  box.append(frag);
+  const sup = document.createElement('sup');
+  sup.className = 'fn-label';
+  sup.textContent = label;
+  const first = box.firstElementChild;
+  if (first) first.prepend(sup, ' '); else box.append(sup);
+  return box;
 }
 
 function build(doc: PMNode): DecorationSet {

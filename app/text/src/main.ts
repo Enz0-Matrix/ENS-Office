@@ -34,7 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
-import { gotoNote, insertNote, listNotes } from './footnotes';
+import { gotoNote, insertNote, listNotes, renderNote } from './footnotes';
 import { findToc, insertToc, refreshTocs, setPageResolver, tocViews } from './toc';
 import { captionDialog } from './captions-ui';
 import { listCaptions } from './captions';
@@ -372,7 +372,7 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
   view.dom.style.width = layout.perRow > 1 ? `${pageW}px` : '';
   const papers = $('papers');
   const wm = meta.watermark?.trim() ?? '';
-  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols?.sep ? `${b.cols.x.join('/')}:${b.sepH}:${b.eff.top}:${b.page.left}` : ''}`).join(',')}`;
+  const sig = `${layout.gap}|${sheetW}|${wm}|${list.map((b) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols?.sep ? `${b.cols.x.join('/')}:${b.sepH}:${b.eff.top}:${b.page.left}` : ''}:${b.notes ? JSON.stringify(b.notes) : ''}`).join(',')}`;
   if (papers.dataset.sig !== sig) {
     papers.replaceChildren(...list.map((b) => {
       const d = document.createElement('div');
@@ -386,6 +386,14 @@ function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
           ln.style.cssText = `left:${b.page.left * PX + b.cols.x[k] - b.cols.gap / 2}px;top:${b.eff.top * PX}px;height:${b.sepH}px`;
           d.append(ln);
         }
+      }
+      for (const a of b.notes ?? []) {
+        // Сноски внизу страницы: линия-разделитель и тексты по порядку (как в Word).
+        const area = document.createElement('div');
+        area.className = 'fn-area';
+        area.style.cssText = `left:${a.x}px;top:${a.y}px;width:${a.w}px;height:${a.h}px`;
+        area.append(Object.assign(document.createElement('div'), { className: 'fn-sep' }), ...a.list.map((n) => renderNote(n.label, n.content)));
+        d.append(area);
       }
       if (wm) {
         // Подложка: по центру листа под 45°, размер — по длине надписи и диагонали листа.

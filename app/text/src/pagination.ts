@@ -22,6 +22,7 @@ import { Plugin, PluginKey } from 'prosemirror-state';
 import { TableMap } from 'prosemirror-tables';
 import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import type { PageSetup } from './docx';
+import { listNotes, renderNote } from './footnotes';
 import { sectionsOf } from './sections';
 
 export const PX = 4 / 3;
@@ -80,7 +81,35 @@ export function columnsOf(p: PageSetup): ColGeo | null {
 
 /** Лист на экране: положение по вертикали и размер. `page` — параметры раздела, `eff` — с учётом колонтитулов.
  * `cols` — колонки листа; `sepH` — высота разделителя (по самой длинной колонке листа), px. */
-export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup; cols?: ColGeo; sepH?: number; /** Левый край листа на подложке (листы рядами), px. */ left?: number }
+/** Сноски внизу страницы (колонки): место на листе и сноски по порядку. */
+export interface NoteArea { x: number; y: number; w: number; h: number; list: { label: string; content: unknown }[] }
+export interface PageBox { top: number; H: number; W: number; page: PageSetup; eff: PageSetup; cols?: ColGeo; sepH?: number; /** Левый край листа на подложке (листы рядами), px. */ left?: number; notes?: NoteArea[] }
+
+/** Отступ над сносками: линия-разделитель и промежуток, px. */
+export const NOTE_SEP = 14;
+const noteCache = new Map<string, number>();
+let measureBox: HTMLElement | null = null;
+/** Высота текста сноски при ширине w (тем же элементом, что и на листе). */
+function noteHeight(label: string, content: unknown, w: number): number {
+  const key = `${Math.round(w)}|${label}|${JSON.stringify(content)}`;
+  const had = noteCache.get(key);
+  if (had !== undefined) return had;
+  if (!measureBox || !measureBox.isConnected) {
+    measureBox = document.createElement('div');
+    measureBox.className = 'fn-area fn-measure';
+    measureBox.setAttribute('aria-hidden', 'true');
+    document.body.append(measureBox);
+  }
+  measureBox.style.width = `${w}px`;
+  const el = renderNote(label, content);
+  measureBox.replaceChildren(el);
+  const h = el.getBoundingClientRect().height / (measureBox.getBoundingClientRect().width / (measureBox.offsetWidth || 1) || 1);
+  if (noteCache.size > 2000) noteCache.clear();
+  noteCache.set(key, h);
+  return h;
+}
+/** Шрифты загрузились или изменились параметры документа — высоты сносок меряются заново. */
+export function resetNoteCache(): void { noteCache.clear(); }
 interface PagState { deco: DecorationSet; pages: number; boxes: PageBox[]; rev: number; /** Растёт при правке и запросе пересчёта (не от своих распорок). */ ext: number }
 
 /** Параметры одного раздела для расчёта: настоящие и с учётом колонтитулов. */
@@ -252,6 +281,18 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
     return lines;
   };
 
+  // Сноски (не концевые): номер по порядку и текст; у блока — те, что в нём стоят.
+  const labels = new Map<number, { label: string; content: unknown }>();
+  for (const n of listNotes(view.state.doc)) if (!n.end) labels.set(n.pos, { label: n.label, content: view.state.doc.nodeAt(n.pos)?.attrs.content ?? [] });
+  const notesIn = (it: Item): number[] => {
+    const res: number[] = [];
+    if (!labels.size) return res;
+    it.node.descendants((c, p) => { if (c.type.name === 'footnote' && labels.has(it.pos + 1 + p)) res.push(it.pos + 1 + p); return !c.isAtom; });
+    return res;
+  };
+  /** Сноски по виртуальным страницам (ключ — раздел и номер): позиции и высота занятого места. */
+  const placed = new Map<string, { pos: number[]; h: number }>();
+
   const out: Planned[] = [];
   let acc = 0;
   // Текущий раздел: y0 — где начинается текст на его первой странице; «виртуальные страницы» (страницы или,
@@ -287,6 +328,21 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
     const p = pageOfV(v);
     sepH[p] = Math.max(sepH[p] ?? 0, Math.min(seg.g.C, h));
   };
+  const colW = (v: number) => (seg.cols ? seg.cols.w[v % seg.cols.n] : (secs[secIdx].page.w - secs[secIdx].page.left - secs[secIdx].page.right) * PX);
+  const noteH = (pos: number, v: number) => { const l = labels.get(pos)!; return noteHeight(l.label, l.content, colW(v)); };
+  /** Сколько места внизу виртуальной страницы v займут сноски, если добавить к ним ещё list. Не больше 60% высоты. */
+  const reserve = (v: number, list: number[]): number => {
+    const had = placed.get(`${secIdx}:${v}`);
+    const h = (had?.h ?? 0) + list.reduce((s, p) => s + noteH(p, v), 0);
+    return h > 0 ? Math.min(seg.g.C * 0.6, h + NOTE_SEP) : 0;
+  };
+  const place = (v: number, list: number[]) => {
+    if (!list.length) return;
+    const k = `${secIdx}:${v}`;
+    const had = placed.get(k) ?? { pos: [], h: 0 };
+    for (const p of list) { had.pos.push(p); had.h += noteH(p, v); }
+    placed.set(k, had);
+  };
   const closeSeg = (count: number) => {
     const top0 = seg.y0 - seg.g.top;
     const sg = secs[secIdx];
@@ -295,6 +351,14 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
       const b: PageBox = { top: grid ? gridTop(g) : top0 + j * seg.g.P, H: seg.g.H, W: sg.page.w * PX, page: sg.page, eff: sg.eff };
       if (grid) b.left = gridLeft(g);
       if (sg.cols) { b.cols = sg.cols; b.sepH = r1(sepH[j] ?? 0); }
+      const per = sg.cols ? sg.cols.n : 1;
+      for (let c = 0; c < per; c++) {
+        const v = j * per + c;
+        const pl = placed.get(`${secIdx}:${v}`);
+        if (!pl?.pos.length) continue;
+        const h = Math.min(seg.g.C * 0.6, pl.h + NOTE_SEP);
+        (b.notes ??= []).push({ x: sg.page.left * PX + (sg.cols ? sg.cols.x[c] : 0), y: seg.g.top + seg.g.C - h, w: colW(v), h: r1(h), list: pl.pos.map((p) => labels.get(p)!) });
+      }
       boxes.push(b);
     }
     sepH = [];
@@ -320,6 +384,7 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
       continue;
     }
     const h0 = nBottom - nTop;
+    const mine = notesIn(it);
     let pad = 0;
     const splits: { pos: number; h: number; v: number }[] = [];
     const cols = seg.cols;
@@ -348,16 +413,16 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
           if (a - R.start > 1 || R.v % cols.n) { pad += seg.y0 + (Math.floor(R.v / cols.n) + 1) * cols.n * seg.vP - a; continue; }
         } else if (a - R.start > 1) { pad += R.start + seg.vP - a; continue; }
       }
-      if (a >= R.end - 0.5) { pad += R.start + seg.vP - a; continue; }
+      if (a >= R.end - reserve(R.v, []) - 0.5) { pad += R.start + seg.vP - a; continue; }
       // Колонки разной ширины: блок сейчас свёрстан по ширине прежней колонки. Если новая уже, он станет выше —
       // высоту берём с запасом (пропорционально ширине), иначе расчёт качался бы между колонками.
       const h = cols && !cols.equal && !it.row ? h0 * Math.max(1, curW(it) / cols.w[R.v % cols.n]) : h0;
-      if (a + h <= R.end + 0.5) {
+      if (a + h <= R.end - reserve(R.v, mine) + 0.5) {
         // Заголовок не остаётся один внизу страницы: за ним должны поместиться хотя бы две строки.
         if (heading && i + 1 < items.length && !items[i + 1].sect && a - R.start > 1) {
           const n = nat[i + 1];
           const need = n.top - nTop + Math.min(n.bottom - n.top, 2 * h0);
-          if (a + need > R.end + 0.5) { pad += R.start + seg.vP - a; continue; }
+          if (a + need > R.end - reserve(R.v, mine) + 0.5) { pad += R.start + seg.vP - a; continue; }
         }
         break;
       }
@@ -371,8 +436,10 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
       if (cols && !cols.equal && !atTop) { pad += R.start + seg.vP - a; continue; }
       const lines = lineBoxes(it, i);
       const n = lines.length;
+      // Сноски строк from..to (включительно): строка сноски — та, в которой стоит её номер.
+      const lineNotes = (from: number, to: number) => mine.filter((p) => p >= lines[from].pos && (to + 1 >= n || p < lines[to + 1].pos));
       let k = 0;
-      while (k < n && lines[k].bottom + acc + pad <= R.end + 0.5) k++;
+      while (k < n && lines[k].bottom + acc + pad <= R.end - reserve(R.v, lineNotes(0, k)) + 0.5) k++;
       if (k >= n) break;
       if (k < 2 && n >= 2 && !atTop) { pad += R.start + seg.vP - a; continue; }
       if (n - k < 2) {
@@ -403,7 +470,8 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
         end += seg.vP;
         next += seg.vP;
         let m = j;
-        while (m < n && lines[m].bottom + local <= end + 0.5) m++;
+        const vNext = vIdx(next - seg.vP);
+        while (m < n && lines[m].bottom + local <= end - reserve(vNext, lineNotes(j, m)) + 0.5) m++;
         if (m >= n) break;
         if (n - m < 2 && m - 1 >= j + 2) m -= 1;
         j = Math.max(m, j + 1);
@@ -411,6 +479,17 @@ function plan(view: EditorView, secs: SecGeo[]): { out: Planned[]; pages: number
       break;
     }
 
+    if (mine.length) {
+      // Сноски — на страницу (колонку) строки со своим номером.
+      const v0n = vIdx(nTop + acc + pad);
+      const bySeg = new Map<number, number[]>();
+      for (const p of mine) {
+        let v = v0n;
+        for (const s of splits) if (p >= s.pos) v = s.v;
+        bySeg.set(v, [...(bySeg.get(v) ?? []), p]);
+      }
+      for (const [v, list] of bySeg) place(v, list);
+    }
     const padR = r1(pad);
     if (pad < -0.5) out.push({ kind: 'neg', pos: it.padPos, end: it.padPos, h: padR, cols: 0, padPos: it.padPos, padEnd: it.padPos });
     else if (pad > 0.5) {
@@ -487,7 +566,7 @@ function toDecos(out: Planned[]): Decoration[] {
   });
 }
 
-const boxKey = (b: PageBox) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols ? `${b.cols.n},${b.cols.sep ? 1 : 0},${b.sepH}` : ''}`;
+const boxKey = (b: PageBox) => `${Math.round(b.left ?? 0)}:${Math.round(b.top)}:${b.W}:${b.H}:${b.cols ? `${b.cols.n},${b.cols.sep ? 1 : 0},${b.sepH}` : ''}:${b.notes ? JSON.stringify(b.notes) : ''}`;
 type Mark = { from: number; to: number; spec: Spec };
 const close = (a: Mark[], b: Mark[]): boolean => a.length === b.length && a.every((x, i) => {
   const y = b[i];
@@ -643,6 +722,7 @@ export function pagination(getBase: () => PageSetup, eff: (p: PageSetup) => Page
 
 /** Пересчитать вёрстку (изменились поля, шрифты, картинки). */
 export function replan(view: EditorView): void {
+  resetNoteCache();
   view.dispatch(view.state.tr.setMeta(pagKey, { replan: true }).setMeta('addToHistory', false));
 }
 
