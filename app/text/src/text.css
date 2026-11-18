@@ -466,6 +466,16 @@ svg.ic-l, svg.ic-m { display: none; }
 .pop-menu .pm-check { width: 14px; font-style: normal; color: var(--accent); flex: none; }
 .pop-menu > button small { margin-left: auto; color: var(--muted); }
 
+/* Конструктор и макет таблиц: поля ячеек, автоподбор, направление текста, сетка, перо и ластик, повтор заголовка. */
+.ProseMirror table.padded td, .ProseMirror table.padded th { padding: var(--cell-pad); }
+.ProseMirror table.autofit { table-layout: auto; width: auto; }
+.ProseMirror td.dir-btLr > *, .ProseMirror td.dir-tbRl > * { writing-mode: vertical-rl; }
+.ProseMirror td.dir-btLr > * { transform: rotate(180deg); }
+:root[data-hide-grid] .ProseMirror table.plain td, :root[data-hide-grid] .ProseMirror table.plain th { border-color: transparent; }
+.ProseMirror.pen-draw td, .ProseMirror.pen-draw th { cursor: crosshair; }
+.ProseMirror.pen-erase td, .ProseMirror.pen-erase th { cursor: cell; }
+.ProseMirror tr[data-header] > td:first-child::after { content: "⟳"; position: absolute; left: -16px; top: 2px; font-size: 10px; color: #7a8ca5; }
+@media print { .ProseMirror tr[data-header] > td:first-child::after { display: none; } }
 /* Исправления (рецензирование): вставка подчёркнута, удаление зачёркнуто, у абзаца — черта на поле, как в Word. */
 .ProseMirror ins.rev-ins { color: #1a6fb5; text-decoration: underline; text-decoration-color: currentColor; }
 .ProseMirror del.rev-del { color: #c0262d; text-decoration: line-through; }

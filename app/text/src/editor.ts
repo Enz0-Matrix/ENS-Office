@@ -570,7 +570,10 @@ class BorderTableView extends TableView {
 
   /** Границы и положение на странице (после изменения ширины плагином столбцов стиль таблицы не трогаем: только поля). */
   private look(node: PMNode): void {
-    this.table.className = node.attrs.borders ? 'bordered' : 'plain';
+    const pad = node.attrs.pad as number[] | null;
+    this.table.className = `${node.attrs.borders ? 'bordered' : 'plain'}${pad ? ' padded' : ''}${node.attrs.autofit ? ' autofit' : ''}`;
+    // Поля ячеек: переменная CSS, её читают стили ячеек (text.css).
+    if (pad) this.table.style.setProperty('--cell-pad', pad.map((v) => `${v}pt`).join(' ')); else this.table.style.removeProperty('--cell-pad');
     const a = node.attrs.align as string | null;
     this.table.style.marginLeft = !a || a === 'left' ? '' : 'auto';
     this.table.style.marginRight = !a || a === 'right' ? '' : 'auto';
