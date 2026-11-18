@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { tocEntries, tocPage } from './toc';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -191,9 +192,38 @@ interface Ctx {
   sects: Element[];
   /** Тексты сносок и концевых сносок из word/footnotes.xml и word/endnotes.xml (по w:id) и связи этих частей. */
   notes?: { foot: Map<string, Element>; end: Map<string, Element>; footRels: Ctx['rels']; endRels: Ctx['rels'] };
+  /** Внутри результата поля TOC: глубина вложенности полей; абзацы результата пропускаются (оглавление строится заново). */
+  tocDepth?: number;
   /** Текущее исправление (внутри w:ins / w:del) и счётчик номеров исправлений. */
   rev?: { kind: 'ins' | 'del'; id: number; author: string; date: string } | null;
   revSeq: number;
+}
+
+/** Поле TOC в абзаце: число уровней и глубина полей в конце абзаца (0 — поле закрылось в этом же абзаце). */
+function tocField(p: Element): { levels: number; depth: number } | null {
+  let depth = 0, levels = 0, seen = false, first = true;
+  for (const e of p.getElementsByTagName('*')) {
+    if (e.localName === 'fldChar') {
+      const t = attr(e, 'fldCharType');
+      if (t === 'begin') depth++;
+      else if (t === 'end') depth--;
+    } else if (e.localName === 'instrText' && first) {
+      first = false;
+      const m = /^\s*TOC\b(.*)$/i.exec(e.textContent ?? '');
+      if (!m) return null;
+      seen = true;
+      const o = /\\o\s+"(\d)\s*-\s*(\d)"/.exec(m[1]);
+      levels = o ? Math.min(6, Math.max(1, +o[2])) : 3;
+    }
+  }
+  return seen ? { levels, depth } : null;
+}
+
+/** Баланс полей в абзаце (begin − end). */
+function fieldBalance(p: Element): number {
+  let d = 0;
+  for (const e of descendants(p, 'fldChar')) { const t = attr(e, 'fldCharType'); if (t === 'begin') d++; else if (t === 'end') d--; }
+  return d;
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -480,7 +510,13 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           field.phase = 'result';
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
           const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
+          const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(field.instr);
           if (m) field.href = m[1];
+          else if (seq) {
+            // Номер подписи: число пересчитывается само, сохранённое в файле отбрасываем.
+            acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marks));
+            field.suppress = true;
+          }
           else if (/^\s*=/.test(field.instr)) ctx.cellFormula = field.instr.trim(); // формула таблицы: результат — обычный текст
           else if (pg) {
             // Номер страницы и число страниц остаются полями; сохранённое в файле число отбрасываем.
@@ -583,6 +619,12 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         const instr = attr(c, 'instr') ?? '';
         const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(instr);
         const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(instr);
+        const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(instr);
+        if (seq) {
+          const run = kid(c, 'r');
+          acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
+          break;
+        }
         if (pg) {
           const run = kid(c, 'r');
           acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
@@ -612,6 +654,12 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
       case 'sdt':
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
         break;
+      case 'bookmarkStart': {
+        // Закладки — точки в начале; служебная «_GoBack» (последняя правка в Word) не переносится.
+        const name = attr(c, 'name');
+        if (name && name !== '_GoBack') acc.nodes.push(schema.nodes.bookmark.create({ name }));
+        break;
+      }
       case 'smartTag':
       case 'sdtContent':
       case 'customXml':
@@ -885,6 +933,10 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
     for (const c of el.children) {
       switch (c.localName) {
         case 'p': {
+          // Результат поля TOC (строки старого оглавления) пропускаем: оглавление построится по заголовкам.
+          if (ctx.tocDepth) { ctx.tocDepth += fieldBalance(c); if (ctx.tocDepth <= 0) ctx.tocDepth = 0; break; }
+          const toc = tocField(c);
+          if (toc) { flushFrame(); entries.push({ node: schema.nodes.toc.create({ levels: toc.levels }) }); ctx.tocDepth = Math.max(0, toc.depth); break; }
           const es = paraEntries(ctx, c);
           const fp = kid(kid(c, 'pPr'), 'framePr');
           const sp = kid(kid(c, 'pPr'), 'sectPr');
@@ -1148,6 +1200,12 @@ interface ExportCtx {
   linkIds: Map<string, string>;
   /** Сноски и концевые сноски по порядку: номер в файле и текст. */
   notes: { foot: PMNode[]; end: PMNode[] };
+  /** Весь документ (для оглавления). */
+  root?: PMNode;
+  /** Счётчики полей SEQ по имени (Рисунок, Таблица…). */
+  seq: Map<string, number>;
+  /** Номера закладок (w:id): общие для всего файла. */
+  bookmarkId: { n: number };
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1307,6 +1365,15 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       list.push(child);
       const tag = end ? 'endnoteReference' : 'footnoteReference';
       out += `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${tag} w:id="${list.length}"/></w:r>`;
+    } else if (child.type.name === 'seq') {
+      // Поле SEQ с текущим числом: Word показывает его сразу, обновит при F9.
+      const name = child.attrs.name as string;
+      const n = (ctx.seq.get(name) ?? 0) + 1;
+      ctx.seq.set(name, n);
+      out += `<w:fldSimple w:instr=" SEQ ${esc(/\s/.test(name) ? `"${name}"` : name)} \\* ARABIC "><w:r>${rPr}<w:t>${n}</w:t></w:r></w:fldSimple>`;
+    } else if (child.type.name === 'bookmark') {
+      const id = ctx.bookmarkId.n++;
+      out += `<w:bookmarkStart w:id="${id}" w:name="${esc(child.attrs.name as string)}"/><w:bookmarkEnd w:id="${id}"/>`;
     }
     // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
     if (rev && child.type.name !== 'field') {
@@ -1500,11 +1567,32 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
       case 'frame':
         out += frameXml(ctx, n);
         break;
+      case 'toc':
+        out += tocXml(ctx, n);
+        break;
       default:
         break;
     }
   });
   return out;
+}
+
+/** Оглавление: поле TOC в блоке «Table of Contents» с готовыми строками (текст, точки до правого края, номер страницы). */
+function tocXml(ctx: ExportCtx, node: PMNode): string {
+  const levels = node.attrs.levels as number;
+  const entries = ctx.root ? tocEntries(ctx.root, levels) : [];
+  const p = ctx.meta.page;
+  const right = tw(p.w - p.left - p.right);
+  const begin = `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-${levels}" \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+  const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  const paras = entries.map((e, i) => {
+    const page = ctx.root ? tocPage(ctx.root, e.pos) : undefined;
+    return `<w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="${right}"/></w:tabs><w:spacing w:after="60"/><w:ind w:left="${(e.level - 1) * 240}"/></w:pPr>` +
+      (i === 0 ? begin : '') + `<w:r><w:t xml:space="preserve">${esc(e.text)}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>${page ?? ''}</w:t></w:r>` +
+      (i === entries.length - 1 ? end : '') + '</w:p>';
+  });
+  const body = paras.length ? paras.join('') : `<w:p>${begin}<w:r><w:t>Нет элементов оглавления.</w:t></w:r>${end}</w:p>`;
+  return `<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>${body}</w:sdtContent></w:sdt>`;
 }
 
 function stylesXml(meta: DocMeta): string {
@@ -1526,7 +1614,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), notes: { foot: [], end: [] } };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 }, root: doc, notes: { foot: [], end: [] } };
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
@@ -1550,7 +1638,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     if (!json && kind === 'header' && wmText) json = emptyHfDoc();
     if (!json) return '';
     const node = schema.nodeFromJSON(json);
-    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1 };
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1, seq: new Map() };
     let inner = blocksXml(sub, node);
     if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
     if (kind === 'header' && wmText) inner = watermarkXml(wmText, parts.length + 1) + inner;
