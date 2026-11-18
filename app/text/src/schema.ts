@@ -248,6 +248,47 @@ const nodes: Record<string, NodeSpec> = {
       return ['div', { class: 'sect-break', 'data-label': label, 'data-page': JSON.stringify(p), contenteditable: 'false' }];
     },
   },
+  /** Сноска (end: false) или концевая сноска (end: true). Текст — блоки в JSON (content), номер ставит footnotes.ts. */
+  footnote: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { content: { default: [] }, end: { default: false } },
+    parseDOM: [{ tag: 'sup.fn', getAttrs: (d) => {
+      const e = d as HTMLElement;
+      try { return { content: JSON.parse(e.getAttribute('data-content') ?? '[]'), end: e.getAttribute('data-end') === '1' }; } catch { return { content: [], end: false }; }
+    } }],
+    toDOM: (n) => ['sup', { class: 'fn', 'data-end': n.attrs.end ? '1' : '0', 'data-content': JSON.stringify(n.attrs.content) }],
+  },
+  /** Оглавление (поле TOC Word). Строки строит toc.ts по заголовкам документа и обновляет сами. */
+  toc: {
+    group: 'block',
+    atom: true,
+    selectable: true,
+    draggable: false,
+    attrs: { levels: { default: 3 } },
+    parseDOM: [{ tag: 'div.toc[data-levels]', getAttrs: (d) => ({ levels: Number((d as HTMLElement).getAttribute('data-levels')) || 3 }) }],
+    toDOM: (n) => ['div', { class: 'toc', 'data-levels': String(n.attrs.levels), contenteditable: 'false' }],
+  },
+  /** Номер подписи (поле SEQ Word): «Рисунок 3», «Таблица 2». Число считает плагин captions.ts по порядку в документе. */
+  seq: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    attrs: { name: { default: 'Рисунок' } },
+    parseDOM: [{ tag: 'span.seq[data-seq]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-seq') }) }],
+    toDOM: (n) => ['span', { class: 'seq', 'data-seq': n.attrs.name, title: `Номер: ${n.attrs.name} (обновляется сам)` }],
+  },
+  /** Закладка (w:bookmarkStart): невидимая точка в тексте с именем; на неё ведут ссылки «#имя». */
+  bookmark: {
+    inline: true,
+    group: 'inline',
+    atom: true,
+    selectable: false,
+    attrs: { name: {} },
+    parseDOM: [{ tag: 'span.bm[data-name]', getAttrs: (d) => ({ name: (d as HTMLElement).getAttribute('data-name') }) }],
+    toDOM: (n) => ['span', { class: 'bm', 'data-name': n.attrs.name, title: `Закладка «${n.attrs.name}»`, contenteditable: 'false' }],
+  },
   /** Поле номера страницы (PAGE) или числа страниц (NUMPAGES): в колонтитулах заменяется числом на каждой странице. */
   field: {
     inline: true,
@@ -338,6 +379,20 @@ const marks: Record<string, MarkSpec> = {
   strike: { parseDOM: [{ tag: 's' }, { tag: 'del' }, { tag: 'strike' }, { style: 'text-decoration=line-through' }], toDOM: () => ['s', 0] },
   sup: { excludes: 'sub', parseDOM: [{ tag: 'sup' }], toDOM: () => ['sup', 0] },
   sub: { excludes: 'sup', parseDOM: [{ tag: 'sub' }], toDOM: () => ['sub', 0] },
+  /**
+   * Примечание (комментарий рецензента) на куске текста. Вся ветка — в атрибутах: автор, время, текст, ответы,
+   * «решено». Одинаковые атрибуты на всех кусках одного примечания (id связывает их). Метки разных примечаний
+   * могут лежать на одном тексте (excludes: '').
+   */
+  comment: {
+    attrs: { id: {}, author: { default: '' }, date: { default: '' }, text: { default: '' }, replies: { default: [] }, done: { default: false } },
+    inclusive: false,
+    excludes: '',
+    parseDOM: [{ tag: 'span.cmt[data-cmt]', getAttrs: (d) => {
+      try { return JSON.parse((d as HTMLElement).getAttribute('data-cmt') ?? ''); } catch { return false; }
+    } }],
+    toDOM: (m) => ['span', { class: `cmt${m.attrs.done ? ' cmt-done' : ''}`, 'data-cmt-id': String(m.attrs.id), 'data-cmt': JSON.stringify(m.attrs) }, 0],
+  },
   ins: revMark('ins'),
   del: revMark('del'),
   /** Шрифт, кегль (pt), цвет текста и заливка (#RRGGBB) — одним слоем. */

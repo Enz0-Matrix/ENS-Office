@@ -6,7 +6,7 @@ import './icons';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { NodeSelection, TextSelection } from 'prosemirror-state';
-import { unzipSync } from 'fflate';
+import { unzipSync, zipSync } from 'fflate';
 import { redo, redoDepth, undo, undoDepth } from 'prosemirror-history';
 import {
   addColumnAfter, addColumnBefore, addRowAfter, addRowBefore, deleteColumn, deleteRow, deleteTable, isInTable, mergeCells, splitCell,
@@ -35,6 +35,13 @@ import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
 import { outlineOpen, renderOutline, sections, toggleOutline } from './outline';
+import { addComment, closeComments, deleteThread, gotoThread, listThreads, openComments, panelOpen, renderComments, threadAt } from './comments';
+import { gotoNote, insertNote, listNotes } from './footnotes';
+import { findToc, insertToc, refreshTocs, setPageResolver, tocViews } from './toc';
+import { captionDialog } from './captions-ui';
+import { listCaptions } from './captions';
+import { bookmarkDialog } from './bookmarks-ui';
+import { gotoBookmark, isHidden, listBookmarks } from './bookmarks';
 import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
 import { listRevisions } from './compare';
 import { compatDialog } from './compat-ui';
@@ -355,6 +362,8 @@ function applyPage(): void {
 
 /** Листы-подложки: по одному на страницу; положение, ширина и высота — как у расчёта разрывов (у разделов они разные). */
 function drawPapers(pages: number, boxes: PageBox[] = pageBoxes(view)): void {
+  // Страницы перестроены — номера страниц в оглавлении могли сдвинуться (после отрисовки, вне транзакции).
+  scheduleTocRefresh();
   const g = geometry(effPage());
   const list: PageBox[] = boxes.length === pages ? boxes
     : Array.from({ length: pages }, (_, i) => ({ top: i * g.P, H: g.H, W: meta.page.w * PX, page: meta.page, eff: effPage() }));
@@ -440,12 +449,12 @@ function paintHf(pages = pageCount(view), boxes: PageBox[] = pageBoxes(view)): v
   });
 }
 
-/** Страница (с 1), на которой стоит курсор. */
-function currentPage(n = pageCount(view)): number {
+/** Страница (с 1), на которой стоит курсор (или позиция pos). */
+function currentPage(n = pageCount(view), pos = view.state.selection.head): number {
   try {
     const box = view.dom.getBoundingClientRect();
     const scale = box.width / (view.dom as HTMLElement).offsetWidth || 1;
-    const c = view.coordsAtPos(view.state.selection.head);
+    const c = view.coordsAtPos(pos);
     const y = (c.top - box.top) / scale + 1;
     const x = (c.left - box.left) / scale + 1;
     const boxes = pageBoxes(view);
@@ -539,14 +548,23 @@ function setZoom(z: number, fromMode = false): void {
 
 // ---------------------------------------------------------------- редактор
 
+let tocTimer = 0;
+function scheduleTocRefresh(): void {
+  if (tocTimer) return;
+  tocTimer = window.setTimeout(() => { tocTimer = 0; refreshTocs(); }, 0);
+}
+
 const paginationPlugin = pagination(() => meta.page, effOf, (n, boxes) => drawPapers(n, boxes));
 let lastSecSig = '';
 let liveQuotesOn = (() => { try { return localStorage.getItem('ens-text.liveQuotes') !== '0'; } catch { return true; } })();
 const quotesPlugin = liveQuotes(() => liveQuotesOn);
 
+// Оглавление: номер страницы заголовка и перестройка страниц, если оглавление выросло или уменьшилось.
+setPageResolver((pos) => currentPage(pageCount(view), Math.min(pos + 1, view.state.doc.content.size)), () => replan(view), () => view.state.doc);
+
 const view = new EditorView($('sheet'), {
   state: createState(emptyDoc(), [paginationPlugin, quotesPlugin, rulerPreviewPlugin, tabsPlugin, hiddenMarksPlugin, dictPlugin, formulasPlugin]),
-  nodeViews: frameViews,
+  nodeViews: { ...frameViews, ...tocViews },
   editable: () => !hfSession,
   attributes: { spellcheck: 'true', lang: 'ru', 'aria-label': 'Текст документа' },
   dispatchTransaction(tr) {
@@ -581,7 +599,8 @@ const view = new EditorView($('sheet'), {
   handleClick(v, pos, event) {
     if (!event.ctrlKey && !event.metaKey) return false;
     const $pos = v.state.doc.resolve(pos);
-    const link = schema.marks.link.isInSet($pos.marks());
+    // Щелчок у самого начала ссылки: позиция ещё «до» неё, метку берём у знака справа.
+    const link = schema.marks.link.isInSet($pos.marks()) ?? schema.marks.link.isInSet($pos.nodeAfter?.marks ?? []);
     if (!link) return false;
     openHref(link.attrs.href as string);
     return true;
@@ -777,6 +796,11 @@ function formulaDialog(): void {
 
 /** Открыть адрес ссылки: в оболочке — системной программой, в браузере — новой вкладкой. */
 function openHref(href: string): void {
+  // Ссылка внутри документа: переход к закладке.
+  if (href.startsWith('#')) {
+    if (!gotoBookmark(view, href.slice(1))) toast(`Закладки «${href.slice(1)}» в документе нет. Список ссылок без цели — в окне «Закладка».`);
+    return;
+  }
   if (desktop.isDesktop) {
     desktop.openTarget(href).catch((e) => toast(String((e as Error)?.message ?? e)));
     return;
@@ -790,6 +814,8 @@ function openHref(href: string): void {
 
 function afterChange(docChanged: boolean): void {
   renderOutline();
+  renderComments();
+  if (docChanged) refreshTocs();
   // Меню закрывается только при правке документа: служебные транзакции (пересчёт страниц) его не трогают.
   if (docChanged) hideContextMenu();
   updateUi();
@@ -917,6 +943,23 @@ register(
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
+  { id: 'insert.footnote', label: 'Вставить сноску', keywords: ['сноска', 'footnote', 'примечание внизу страницы'], keys: ['Ctrl+Alt+KeyF'], run: () => insertNote(view, false) },
+  { id: 'insert.endnote', label: 'Вставить концевую сноску', keywords: ['концевая сноска', 'endnote', 'примечание в конце'], keys: ['Ctrl+Alt+KeyD'], run: () => insertNote(view, true) },
+  { id: 'note.next', label: 'Следующая сноска', keywords: ['сноска', 'перейти'], run: () => { if (!gotoNote(view, 1)) toast('Сносок нет.'); } },
+  {
+    id: 'insert.toc', label: 'Оглавление', keywords: ['оглавление', 'содержание', 'toc', 'заголовки', 'номера страниц'],
+    run: (v) => {
+      const levels = Number(v) || 3;
+      const have = findToc(view.state.doc);
+      // Оглавление уже есть: меняем число уровней и показываем его, второе не вставляем.
+      if (have) { const tr = view.state.tr.setNodeMarkup(have.pos, undefined, { levels: Number(v) || have.node.attrs.levels }); view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, have.pos)).scrollIntoView()); }
+      else view.dispatch(insertToc(view.state, levels));
+      setSelect('insert.toc', '');
+      view.focus();
+    },
+  },
+  { id: 'insert.caption', label: 'Вставить название (подпись)…', keywords: ['подпись', 'название', 'рисунок', 'таблица', 'формула', 'нумерация', 'seq', 'caption'], run: () => captionDialog(view) },
+  { id: 'insert.bookmark', label: 'Закладка…', keywords: ['закладка', 'bookmark', 'якорь', 'перейти', 'метка места'], keys: ['Ctrl+Shift+F5'], run: () => bookmarkDialog(view) },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
   { id: 'insert.nameCases', label: 'ФИО и должность по падежам', keywords: ['склонение', 'падеж', 'фио', 'должность', 'кому'], run: () => nameDialog(active) },
   { id: 'insert.deadline', label: 'Срок в рабочих днях', keywords: ['срок', 'рабочие дни', 'календарь', 'праздники', 'дедлайн'], run: () => deadlineDialog(active) },
@@ -1018,6 +1061,27 @@ register(
   },
   { id: 'review.findFormat', label: 'Поиск по форматированию', keywords: ['найти', 'шрифт', 'размер', 'курсив', 'жирный', 'стиль', 'формат'], run: () => formatSearchDialog(inspectorSource) },
   { id: 'review.mergeCopies', label: 'Объединить копии без сети', keywords: ['слияние', 'конфликт', 'основа', 'коллега', 'копии'], run: () => mergeDialog({ create: (doc, m, name) => { void guardUnsaved(() => { desktop.detach(); newFromWizard(doc, m, name); }); } }) },
+  {
+    id: 'comment.new', label: 'Создать примечание', keywords: ['примечание', 'комментарий', 'comment', 'рецензирование', 'замечание'], keys: ['Ctrl+Alt+KeyM'],
+    run: () => {
+      const tr = addComment(view.state, me());
+      if (!tr) { toast('Выделите текст, к которому относится примечание.'); return; }
+      view.dispatch(tr);
+      const id = listThreads(view.state.doc).reduce((m, t) => Math.max(m, t.id), 0);
+      openComments(view, me, id);
+    },
+  },
+  { id: 'comment.next', label: 'Следующее примечание', keywords: ['примечание', 'комментарий'], run: () => { if (!gotoThread(view, 1)) toast('Примечаний нет.'); else openComments(view, me); view.focus(); } },
+  { id: 'comment.prev', label: 'Предыдущее примечание', keywords: ['примечание', 'комментарий'], run: () => { if (!gotoThread(view, -1)) toast('Примечаний нет.'); else openComments(view, me); view.focus(); } },
+  {
+    id: 'comment.delete', label: 'Удалить примечание', keywords: ['примечание', 'комментарий', 'удалить'],
+    run: () => { const t = threadAt(view.state); if (!t) { toast('Курсор не в тексте с примечанием.'); return; } const tr = deleteThread(view.state, t.id); if (tr) view.dispatch(tr); view.focus(); },
+  },
+  {
+    id: 'comment.deleteAll', label: 'Удалить все примечания', keywords: ['примечания', 'комментарии', 'удалить все'],
+    run: () => { const n = listThreads(view.state.doc).length; const tr = deleteThread(view.state, 'all'); if (tr) { view.dispatch(tr); toast(`Удалено примечаний: ${n}. Отменить — Ctrl+Z.`); } else toast('Примечаний нет.'); view.focus(); },
+  },
+  { id: 'comment.pane', label: 'Панель примечаний', keywords: ['примечания', 'комментарии', 'показать'], checked: () => panelOpen(), run: () => { if (panelOpen()) closeComments(); else openComments(view, me); updateUi(); } },
   { id: 'review.compare', label: 'Сравнить документы…', keywords: ['сравнение', 'сравнить', 'различия', 'было', 'стало', 'исправления', 'редакции', 'версии'], run: () => openCompare() },
   { id: 'rev.next', label: 'Следующее исправление', keywords: ['исправление', 'правка', 'рецензирование'], run: () => { goRevision(active(), 1); active().focus(); } },
   { id: 'rev.prev', label: 'Предыдущее исправление', keywords: ['исправление', 'правка', 'рецензирование'], run: () => { goRevision(active(), -1); active().focus(); } },
@@ -1210,6 +1274,11 @@ const STYLES = [
   { value: '4', label: 'Заголовок 4' }, { value: '5', label: 'Заголовок 5' }, { value: '6', label: 'Заголовок 6' },
 ];
 
+const TOC_OPTIONS = [
+  { value: '', label: 'Оглавление…' },
+  { value: '3', label: 'Уровни 1–3' }, { value: '2', label: 'Уровни 1–2' }, { value: '1', label: 'Только уровень 1' }, { value: '4', label: 'Уровни 1–4' },
+];
+
 const PAGE_NUMBER_POSITIONS = [
   { value: '', label: 'Номер страницы…' },
   { value: 'footer-center', label: 'Внизу, по центру' }, { value: 'footer-right', label: 'Внизу, справа' }, { value: 'footer-left', label: 'Внизу, слева' },
@@ -1298,7 +1367,15 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
         ],
       },
-      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },
+      { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }, { type: 'large', command: 'insert.caption', icon: 'image_text', label: 'Название' }, { type: 'large', command: 'insert.bookmark', icon: 'bookmark', label: 'Закладка' }, { type: 'select', command: 'insert.toc', options: TOC_OPTIONS, width: 130 }] },
+      {
+        name: 'Сноски',
+        items: [
+          { type: 'large', command: 'insert.footnote', icon: 'note_add', label: 'Сноска' },
+          { type: 'medium', command: 'insert.endnote', icon: 'note_add', label: 'Концевая' },
+          { type: 'medium', command: 'note.next', icon: 'arrow_down', label: 'Следующая' },
+        ],
+      },
       {
         name: 'По-русски',
         items: [
@@ -1393,6 +1470,16 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'mark.green', icon: 'checkmark', label: 'Готово' },
           { type: 'large', command: 'mark.next', icon: 'arrow_redo', label: 'Следующая' },
           { type: 'large', command: 'mark.list', icon: 'book_open', label: 'Список меток' },
+        ],
+      },
+      {
+        name: 'Примечания',
+        items: [
+          { type: 'large', command: 'comment.new', icon: 'comment_add', label: 'Создать' },
+          { type: 'medium', command: 'comment.prev', icon: 'arrow_up', label: 'Назад' },
+          { type: 'medium', command: 'comment.next', icon: 'arrow_down', label: 'Далее' },
+          { type: 'medium', command: 'comment.delete', icon: 'comment_dismiss', label: 'Удалить' },
+          { type: 'large', command: 'comment.pane', icon: 'comment_edit', label: 'Показать' },
         ],
       },
       {
@@ -1886,6 +1973,12 @@ function dictDialog(): void {
 function linkDialog(): void {
   dialog((box, close) => {
     const url = el('input', { type: 'text', value: linkAt(active().state) ?? 'https://', placeholder: 'Адрес ссылки' });
+    // Место в документе: закладки (как в Word). Выбор подставляет адрес «#имя».
+    const marks = listBookmarks(view.state.doc).filter((b) => !isHidden(b.name));
+    const place = el('select', { ariaLabel: 'Место в документе' }, new Option('— адрес в интернете или файл —', ''),
+      ...marks.map((b) => new Option(`${b.name}${b.context ? ' — ' + b.context : ''}`, '#' + b.name)));
+    place.value = marks.some((b) => '#' + b.name === url.value) ? url.value : '';
+    place.addEventListener('change', () => { if (place.value) url.value = place.value; });
     const ok = el('button', { class: 'primary', textContent: 'Применить' });
     const go = () => {
       const v = url.value.trim();
@@ -1897,6 +1990,7 @@ function linkDialog(): void {
     box.append(
       el('h2', { textContent: 'Гиперссылка' }),
       el('div', { class: 'dlg-row' }, el('label', { textContent: 'Адрес' }), url),
+      ...(marks.length ? [el('div', { class: 'dlg-row' }, el('label', { textContent: 'Место в документе' }), place)] : []),
       el('p', { textContent: 'Пустой адрес убирает ссылку с выделенного текста. Открыть ссылку: Ctrl+щелчок.' }),
       el('div', { class: 'dlg-actions' }, el('button', { textContent: 'Отмена', onclick: close }), ok),
     );
@@ -2493,6 +2587,6 @@ if (desktop.isDesktop) {
 // Для автоматических проверок (Playwright): доступ к редактору из консоли.
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   (window as unknown as Record<string, unknown>).ens = {
-    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), sections: () => sections(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
+    view, schema, pm: { NodeSelection, TextSelection }, changeCase, unzip: unzipSync, zip: zipSync, pageBoxes: () => pageBoxes(view), findState: () => findKey.getState(view.state)!, pageCount: () => pageCount(view), pagStats, geometry: () => geometry(effPage()), PRESETS, hist: () => hist, snap, V, buildDocx, rollbackSave, historyHost, effPage, printPrepare, printRestore, hfSession: () => hfSession, PX, tabShifts: () => tabShifts(view.state), listCaptions: () => listCaptions(view.state.doc), listBookmarks: () => listBookmarks(view.state.doc), listRevisions: () => listRevisions(view.state.doc), revView: () => revView, compareSides, listNotes: () => listNotes(view.state.doc), listThreads: () => listThreads(view.state.doc), sections: () => sections(view.state.doc), importDocx, exportDocx, loadDoc, getMeta: () => meta, isDirty, run, A4, lastColor,
   };
 }

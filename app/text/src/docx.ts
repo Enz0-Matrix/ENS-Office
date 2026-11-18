@@ -8,6 +8,7 @@ import { Mark, type Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { schema } from './schema';
+import { tocEntries, tocPage } from './toc';
 import type { Scheme } from './numbering';
 import type { Float } from './floats';
 import type { CellBorders, Edge, FrameLine } from './schema';
@@ -189,9 +190,80 @@ interface Ctx {
   cellFormula?: string | null;
   /** Свойства разделов (w:sectPr) в порядке следования; последний — из конца w:body. */
   sects: Element[];
+  /** Примечания из comments.xml (ветки без ответов-«детей») и открытые сейчас диапазоны примечаний. */
+  comments?: { threads: Map<string, CommentThread>; replies: Set<string>; open: string[]; used: Set<string> };
+  /** Тексты сносок и концевых сносок из word/footnotes.xml и word/endnotes.xml (по w:id) и связи этих частей. */
+  notes?: { foot: Map<string, Element>; end: Map<string, Element>; footRels: Ctx['rels']; endRels: Ctx['rels'] };
+  /** Внутри результата поля TOC: глубина вложенности полей; абзацы результата пропускаются (оглавление строится заново). */
+  tocDepth?: number;
   /** Текущее исправление (внутри w:ins / w:del) и счётчик номеров исправлений. */
   rev?: { kind: 'ins' | 'del'; id: number; author: string; date: string } | null;
   revSeq: number;
+}
+
+interface CommentThread { id: number; author: string; date: string; text: string; replies: { author: string; date: string; text: string }[]; done: boolean }
+
+const W14 = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const W15 = 'http://schemas.microsoft.com/office/word/2012/wordml';
+
+/** comments.xml + commentsExtended.xml → ветки: ответы прикреплены к родителю, «решено» — из w15:done. */
+function readComments(files: Record<string, Uint8Array>, rels: Ctx['rels']): NonNullable<Ctx['comments']> {
+  const out: NonNullable<Ctx['comments']> = { threads: new Map(), replies: new Set(), open: [], used: new Set() };
+  const part = [...rels.values()].find((r) => /\/comments$/.test(r.type));
+  if (!part || !files[part.target]) return out;
+  const ext = [...rels.values()].find((r) => /\/commentsExtended$/.test(r.type));
+  const info = new Map<string, { parent: string | null; done: boolean }>();
+  if (ext && files[ext.target]) {
+    for (const e of parseXml(strFromU8(files[ext.target])).documentElement.getElementsByTagNameNS(W15, 'commentEx')) {
+      info.set(e.getAttributeNS(W15, 'paraId') ?? '', { parent: e.getAttributeNS(W15, 'paraIdParent'), done: e.getAttributeNS(W15, 'done') === '1' });
+    }
+  }
+  const byPara = new Map<string, string>();
+  const all: { id: string; paraId: string; t: CommentThread }[] = [];
+  for (const c of kids(parseXml(strFromU8(files[part.target])).documentElement, 'comment')) {
+    const id = attr(c, 'id') ?? '';
+    const paras = kids(c, 'p');
+    const text = paras.map((p) => descendants(p, 't').map((t) => t.textContent ?? '').join('')).join('\n').trim();
+    const paraId = paras.length ? paras[paras.length - 1].getAttributeNS(W14, 'paraId') ?? '' : '';
+    if (paraId) byPara.set(paraId, id);
+    all.push({ id, paraId, t: { id: Number(id) || 0, author: attr(c, 'author') ?? '', date: attr(c, 'date') ?? '', text, replies: [], done: !!info.get(paraId)?.done } });
+  }
+  const map = new Map(all.map((x) => [x.id, x.t]));
+  for (const x of all) {
+    const parent = x.paraId ? info.get(x.paraId)?.parent : null;
+    const pid = parent ? byPara.get(parent) : undefined;
+    const p = pid ? map.get(pid) : undefined;
+    if (p && pid !== x.id) { p.replies.push({ author: x.t.author, date: x.t.date, text: x.t.text }); out.replies.add(x.id); }
+  }
+  for (const x of all) if (!out.replies.has(x.id)) out.threads.set(x.id, x.t);
+  return out;
+}
+
+/** Поле TOC в абзаце: число уровней и глубина полей в конце абзаца (0 — поле закрылось в этом же абзаце). */
+function tocField(p: Element): { levels: number; depth: number } | null {
+  let depth = 0, levels = 0, seen = false, first = true;
+  for (const e of p.getElementsByTagName('*')) {
+    if (e.localName === 'fldChar') {
+      const t = attr(e, 'fldCharType');
+      if (t === 'begin') depth++;
+      else if (t === 'end') depth--;
+    } else if (e.localName === 'instrText' && first) {
+      first = false;
+      const m = /^\s*TOC\b(.*)$/i.exec(e.textContent ?? '');
+      if (!m) return null;
+      seen = true;
+      const o = /\\o\s+"(\d)\s*-\s*(\d)"/.exec(m[1]);
+      levels = o ? Math.min(6, Math.max(1, +o[2])) : 3;
+    }
+  }
+  return seen ? { levels, depth } : null;
+}
+
+/** Баланс полей в абзаце (begin − end). */
+function fieldBalance(p: Element): number {
+  let d = 0;
+  for (const e of descendants(p, 'fldChar')) { const t = attr(e, 'fldCharType'); if (t === 'begin') d++; else if (t === 'end') d--; }
+  return d;
 }
 
 const lose = (ctx: Ctx, what: string, n = 1) => ctx.lossy.set(what, (ctx.lossy.get(what) ?? 0) + n);
@@ -313,6 +385,10 @@ function marksFor(ctx: Ctx, fmt: RFmt, href: string | undefined): readonly Mark[
   const size = fmt.size && fmt.size !== d.size ? fmt.size : null;
   if (font || size || fmt.color || fmt.bg) m.push(schema.marks.textStyle.create({ font, size, color: fmt.color ?? null, bg: fmt.bg ?? null }));
   if (href) m.push(schema.marks.link.create({ href }));
+  if (ctx.comments?.open.length) for (const id of ctx.comments.open) {
+    const t = ctx.comments.threads.get(id);
+    if (t) { m.push(schema.marks.comment.create(t)); ctx.comments.used.add(id); }
+  }
   if (ctx.rev) m.push(schema.marks[ctx.rev.kind].create({ id: ctx.rev.id, author: ctx.rev.author, date: ctx.rev.date }));
   return Mark.setFrom(m);
 }
@@ -478,7 +554,13 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
           field.phase = 'result';
           const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(field.instr);
           const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(field.instr);
+          const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(field.instr);
           if (m) field.href = m[1];
+          else if (seq) {
+            // Номер подписи: число пересчитывается само, сохранённое в файле отбрасываем.
+            acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marks));
+            field.suppress = true;
+          }
           else if (/^\s*=/.test(field.instr)) ctx.cellFormula = field.instr.trim(); // формула таблицы: результат — обычный текст
           else if (pg) {
             // Номер страницы и число страниц остаются полями; сохранённое в файле число отбрасываем.
@@ -541,11 +623,23 @@ function parseRun(ctx: Ctx, r: Element, acc: InlineAcc, href: string | undefined
         break;
       }
       case 'footnoteReference':
-      case 'endnoteReference':
-        lose(ctx, 'сноски');
+      case 'endnoteReference': {
+        const end = c.localName === 'endnoteReference';
+        const note = ctx.notes?.[end ? 'end' : 'foot'].get(attr(c, 'id') ?? '');
+        if (!note) { lose(ctx, 'сноски (текст сноски не найден в файле)'); break; }
+        // Текст сноски — свои абзацы; читаем их отдельным контекстом (поля, стиль абзаца, связи части сносок).
+        const sub: Ctx = { ...ctx, rels: ctx.notes![end ? 'endRels' : 'footRels'], fields: [], sects: [], baseR: {} };
+        const blocks = walkBlocks(sub, note);
+        const content = blocks.map((b) => b.toJSON() as Record<string, unknown>);
+        // Word ставит пробел после номера в начале текста сноски: убираем его.
+        const first = content[0]?.content as { type: string; text?: string }[] | undefined;
+        if (first?.[0]?.type === 'text' && first[0].text) { first[0].text = first[0].text.replace(/^\s+/, ''); if (!first[0].text) first.shift(); }
+        acc.nodes.push(schema.nodes.footnote.create({ content, end }, null, marks.filter((m) => m.type !== schema.marks.sup)));
         break;
+      }
       case 'commentReference':
-        lose(ctx, 'примечания');
+        // Само примечание прочитано из comments.xml и лежит меткой на отмеченном тексте.
+        if (!ctx.comments?.threads.has(attr(c, 'id') ?? '') && !ctx.comments?.replies.has(attr(c, 'id') ?? '')) lose(ctx, 'примечания');
         break;
       default:
         break;
@@ -570,6 +664,12 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
         const instr = attr(c, 'instr') ?? '';
         const m = /^\s*HYPERLINK\s+"([^"]+)"/i.exec(instr);
         const pg = /^\s*(PAGE|NUMPAGES)\b/i.exec(instr);
+        const seq = /^\s*SEQ\s+("[^"]+"|\S+)/i.exec(instr);
+        if (seq) {
+          const run = kid(c, 'r');
+          acc.nodes.push(schema.nodes.seq.create({ name: seq[1].replace(/"/g, '') }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
+          break;
+        }
         if (pg) {
           const run = kid(c, 'r');
           acc.nodes.push(schema.nodes.field.create({ kind: pg[1].toUpperCase() === 'PAGE' ? 'page' : 'pages' }, null, marksFor(ctx, { ...ctx.baseR, ...parseRPr(kid(run, 'rPr')) }, href)));
@@ -599,6 +699,20 @@ function walkInline(ctx: Ctx, el: Element, acc: InlineAcc, href: string | undefi
       case 'sdt':
         walkInline(ctx, kid(c, 'sdtContent') ?? c, acc, href);
         break;
+      case 'commentRangeStart': {
+        const id = attr(c, 'id') ?? '';
+        if (ctx.comments?.threads.has(id) && !ctx.comments.open.includes(id)) ctx.comments.open.push(id);
+        break;
+      }
+      case 'commentRangeEnd':
+        if (ctx.comments) ctx.comments.open = ctx.comments.open.filter((x) => x !== (attr(c, 'id') ?? ''));
+        break;
+      case 'bookmarkStart': {
+        // Закладки — точки в начале; служебная «_GoBack» (последняя правка в Word) не переносится.
+        const name = attr(c, 'name');
+        if (name && name !== '_GoBack') acc.nodes.push(schema.nodes.bookmark.create({ name }));
+        break;
+      }
       case 'smartTag':
       case 'sdtContent':
       case 'customXml':
@@ -872,6 +986,10 @@ function walkBlocks(ctx: Ctx, parent: Element): PMNode[] {
     for (const c of el.children) {
       switch (c.localName) {
         case 'p': {
+          // Результат поля TOC (строки старого оглавления) пропускаем: оглавление построится по заголовкам.
+          if (ctx.tocDepth) { ctx.tocDepth += fieldBalance(c); if (ctx.tocDepth <= 0) ctx.tocDepth = 0; break; }
+          const toc = tocField(c);
+          if (toc) { flushFrame(); entries.push({ node: schema.nodes.toc.create({ levels: toc.levels }) }); ctx.tocDepth = Math.max(0, toc.depth); break; }
           const es = paraEntries(ctx, c);
           const fp = kid(kid(c, 'pPr'), 'framePr');
           const sp = kid(kid(c, 'pPr'), 'sectPr');
@@ -951,9 +1069,23 @@ export function importDocx(bytes: Uint8Array): Imported {
     lossy: new Map(), baseR: {}, fields: [], sects: [], revSeq: 0,
   };
   for (const [, rel] of ctx.rels) {
-    if (/\/comments$/.test(rel.type)) lose(ctx, 'примечания');
     if (/\/(footnotes|endnotes)$/.test(rel.type)) { /* считаем по ссылкам в тексте */ }
   }
+  ctx.comments = readComments(files, ctx.rels);
+  // Сноски: тексты по номерам (служебные разделители separator/continuationSeparator не нужны).
+  const notePart = (kind: 'footnotes' | 'endnotes') => {
+    const rel = [...ctx.rels.values()].find((r) => new RegExp(`/${kind}$`).test(r.type));
+    const map = new Map<string, Element>();
+    if (!rel || !files[rel.target]) return { map, rels: new Map() as Ctx['rels'] };
+    const tag = kind === 'footnotes' ? 'footnote' : 'endnote';
+    for (const n of kids(parseXml(strFromU8(files[rel.target])).documentElement, tag)) {
+      const type = attr(n, 'type');
+      if (!type || type === 'normal') map.set(attr(n, 'id') ?? '', n);
+    }
+    return { map, rels: readRels(files, rel.target) };
+  };
+  const fn = notePart('footnotes'), en = notePart('endnotes');
+  ctx.notes = { foot: fn.map, end: en.map, footRels: fn.rels, endRels: en.rels };
   themeFonts = { minor: '', major: '' };
   const themePath = [...ctx.rels.values()].find((r) => /\/theme$/.test(r.type))?.target;
   if (themePath && files[themePath]) {
@@ -1064,6 +1196,8 @@ export function importDocx(bytes: Uint8Array): Imported {
     if (part('headerReference', 'even') || part('footerReference', 'even')) lose(ctx, 'колонтитулы чётных страниц (используются обычные)');
     if (allSects.some((x) => x !== sect && (kids(x, 'headerReference').length || kids(x, 'footerReference').length) && kids(x, 'headerReference').map((r) => relAttr(r, 'id')).join() !== kids(sect, 'headerReference').map((r) => relAttr(r, 'id')).join())) lose(ctx, 'колонтитулы разных разделов (всюду — колонтитулы первого раздела)');
   }
+  // Примечание, у которого в тексте не нашлось отмеченного куска, не переносится — предупреждаем.
+  if (ctx.comments) for (const id of ctx.comments.threads.keys()) if (!ctx.comments.used.has(id)) lose(ctx, 'примечания без отмеченного текста');
   const lossy = [...ctx.lossy].map(([what, n]) => (n > 1 ? `${what}: ${n}` : what));
   const settingsXml = files['word/settings.xml'] ? strFromU8(files['word/settings.xml']) : '';
   const hy = /<w:autoHyphenation\b([^>]*)\/?>/.exec(settingsXml);
@@ -1120,6 +1254,62 @@ interface ExportCtx {
   /** Номера рисунков в документе: общие для основного текста и колонтитулов. */
   docIds: { n: number };
   linkIds: Map<string, string>;
+  /** Сноски и концевые сноски по порядку: номер в файле и текст. */
+  notes: { foot: PMNode[]; end: PMNode[] };
+  /** Весь документ (для оглавления). */
+  root?: PMNode;
+  /** Счётчики полей SEQ по имени (Рисунок, Таблица…). */
+  seq: Map<string, number>;
+  /** Номера закладок (w:id): общие для всего файла. */
+  bookmarkId: { n: number };
+  /** Примечания: номера w:id ветки и ответов, сколько отмеченных кусков осталось записать, начат ли диапазон. */
+  cmt: Map<number, { ids: number[]; left: number; started: boolean; thread: CommentThread }>;
+}
+
+/** Примечания документа по порядку: номера w:id (ветка, затем ответы) и число отмеченных кусков. */
+function collectComments(doc: PMNode): ExportCtx['cmt'] {
+  const out: ExportCtx['cmt'] = new Map();
+  let next = 0;
+  doc.descendants((node) => {
+    if (!node.isInline) return true;
+    for (const m of node.marks) {
+      if (m.type.name !== 'comment') continue;
+      const t = m.attrs as CommentThread;
+      let c = out.get(t.id);
+      if (!c) { c = { ids: [next++, ...(t.replies ?? []).map(() => next++)], left: 0, started: false, thread: t }; out.set(t.id, c); }
+      c.left++;
+    }
+    return false;
+  });
+  return out;
+}
+
+/** comments.xml и commentsExtended.xml: тексты, авторы, ответы (paraIdParent) и «решено» (done). */
+function commentsParts(ctx: ExportCtx): { comments: string; ext: string } | null {
+  if (!ctx.cmt.size) return null;
+  const para = (n: number) => (0x10000000 + n).toString(16).toUpperCase();
+  let comments = '', ext = '';
+  const one = (id: number, author: string, date: string, text: string) => {
+    const lines = (text || ' ').split('\n');
+    const initials = author.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 3);
+    comments += `<w:comment w:id="${id}" w:author="${esc(author || 'ENS-Text')}"${date ? ` w:date="${esc(date)}"` : ''} w:initials="${esc(initials)}">` +
+      lines.map((l, i) => `<w:p${i === lines.length - 1 ? ` w14:paraId="${para(id)}" w14:textId="77777777"` : ''}>${i === 0 ? '<w:r><w:annotationRef/></w:r>' : ''}<w:r><w:t xml:space="preserve">${esc(l)}</w:t></w:r></w:p>`).join('') +
+      '</w:comment>';
+  };
+  for (const c of ctx.cmt.values()) {
+    const [main, ...rest] = c.ids;
+    one(main, c.thread.author, c.thread.date, c.thread.text);
+    ext += `<w15:commentEx w15:paraId="${para(main)}" w15:done="${c.thread.done ? 1 : 0}"/>`;
+    (c.thread.replies ?? []).forEach((r, i) => {
+      one(rest[i], r.author, r.date, r.text);
+      ext += `<w15:commentEx w15:paraId="${para(rest[i])}" w15:paraIdParent="${para(main)}" w15:done="${c.thread.done ? 1 : 0}"/>`;
+    });
+  }
+  const mc = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"';
+  return {
+    comments: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="${NS.w}" xmlns:w14="${W14}" ${mc} mc:Ignorable="w14">${comments}</w:comments>`,
+    ext: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w15:commentsEx xmlns:w15="${W15}" ${mc} mc:Ignorable="w15">${ext}</w15:commentsEx>`,
+  };
 }
 
 /** Номера w:id исправлений при записи: уникальны в пределах файла. */
@@ -1237,6 +1427,9 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
   let openHref: string | null = null;
   const closeLink = () => { if (openHref !== null) { out += '</w:hyperlink>'; openHref = null; } };
   para.forEach((child) => {
+    // Начало диапазона примечания (и его ответов: в Word у ответа тот же диапазон).
+    const cmts = child.marks.filter((m) => m.type.name === 'comment').map((m) => ctx.cmt.get(m.attrs.id as number)).filter((c) => !!c);
+    for (const c of cmts) if (!c.started) { c.started = true; for (const id of c.ids) out += `<w:commentRangeStart w:id="${id}"/>`; }
     const link = child.marks.find((m) => m.type.name === 'link');
     const href = link ? (link.attrs.href as string) : null;
     if (href !== openHref) {
@@ -1272,12 +1465,33 @@ function runsXml(ctx: ExportCtx, para: PMNode): string {
       out += `<w:r>${rPr}<w:br/></w:r>`;
     } else if (child.type.name === 'image') {
       out += imageXml(ctx, child);
+    } else if (child.type.name === 'footnote') {
+      // Номер в файле: 1, 2… (0 и −1 — служебные разделители Word).
+      const end = !!child.attrs.end;
+      const list = ctx.notes[end ? 'end' : 'foot'];
+      list.push(child);
+      const tag = end ? 'endnoteReference' : 'footnoteReference';
+      out += `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${tag} w:id="${list.length}"/></w:r>`;
+    } else if (child.type.name === 'seq') {
+      // Поле SEQ с текущим числом: Word показывает его сразу, обновит при F9.
+      const name = child.attrs.name as string;
+      const n = (ctx.seq.get(name) ?? 0) + 1;
+      ctx.seq.set(name, n);
+      out += `<w:fldSimple w:instr=" SEQ ${esc(/\s/.test(name) ? `"${name}"` : name)} \\* ARABIC "><w:r>${rPr}<w:t>${n}</w:t></w:r></w:fldSimple>`;
+    } else if (child.type.name === 'bookmark') {
+      const id = ctx.bookmarkId.n++;
+      out += `<w:bookmarkStart w:id="${id}" w:name="${esc(child.attrs.name as string)}"/><w:bookmarkEnd w:id="${id}"/>`;
     }
     // Исправление: прогоны в w:ins или w:del (удалённый текст — w:delText). Поле в исправление не оборачиваем: Word так не умеет.
     if (rev && child.type.name !== 'field') {
       let runs = out.slice(start);
       if (rev.type.name === 'del') runs = runs.replace(/<w:t( [^>]*)?>/g, '<w:delText$1>').replace(/<\/w:t>/g, '</w:delText>');
       out = out.slice(0, start) + revOpen(rev.type.name, rev.attrs) + runs + `</w:${rev.type.name}>`;
+    }
+    // Последний отмеченный кусок: конец диапазона и знак примечания.
+    for (const c of cmts) if (--c.left === 0) {
+      closeLink();
+      for (const id of c.ids) out += `<w:commentRangeEnd w:id="${id}"/><w:r><w:commentReference w:id="${id}"/></w:r>`;
     }
   });
   closeLink();
@@ -1465,11 +1679,32 @@ function blocksXml(ctx: ExportCtx, parent: PMNode): string {
       case 'frame':
         out += frameXml(ctx, n);
         break;
+      case 'toc':
+        out += tocXml(ctx, n);
+        break;
       default:
         break;
     }
   });
   return out;
+}
+
+/** Оглавление: поле TOC в блоке «Table of Contents» с готовыми строками (текст, точки до правого края, номер страницы). */
+function tocXml(ctx: ExportCtx, node: PMNode): string {
+  const levels = node.attrs.levels as number;
+  const entries = ctx.root ? tocEntries(ctx.root, levels) : [];
+  const p = ctx.meta.page;
+  const right = tw(p.w - p.left - p.right);
+  const begin = `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-${levels}" \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+  const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+  const paras = entries.map((e, i) => {
+    const page = ctx.root ? tocPage(ctx.root, e.pos) : undefined;
+    return `<w:p><w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="${right}"/></w:tabs><w:spacing w:after="60"/><w:ind w:left="${(e.level - 1) * 240}"/></w:pPr>` +
+      (i === 0 ? begin : '') + `<w:r><w:t xml:space="preserve">${esc(e.text)}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>${page ?? ''}</w:t></w:r>` +
+      (i === entries.length - 1 ? end : '') + '</w:p>';
+  });
+  const body = paras.length ? paras.join('') : `<w:p>${begin}<w:r><w:t>Нет элементов оглавления.</w:t></w:r>${end}</w:p>`;
+  return `<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>${body}</w:sdtContent></w:sdt>`;
 }
 
 function stylesXml(meta: DocMeta): string {
@@ -1491,7 +1726,7 @@ function stylesXml(meta: DocMeta): string {
 }
 
 export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = ''): Uint8Array {
-  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map() };
+  const ctx: ExportCtx = { meta, rels: [], media: [], nums: [], nextRel: 10, docIds: { n: 1 }, linkIds: new Map(), seq: new Map(), bookmarkId: { n: 0 }, root: doc, notes: { foot: [], end: [] }, cmt: collectComments(doc) };
   exportRevId = 0;
   // Разделы: куски документа между узлами section_break; каждый (кроме последнего) закрывается абзацем с w:sectPr.
   const chunks: PMNode[][] = [[]];
@@ -1507,7 +1742,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
   if (chunkXml[lastChunk].endsWith('</w:tbl>')) chunkXml[lastChunk] += '<w:p/>';
   const hf = meta.hf ?? emptyHf();
   // Колонтитулы — отдельные части docx со своими связями (рисунки, ссылки).
-  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' }[] = [];
+  const parts: { path: string; tag: string; xml: string; rels: ExportCtx['rels']; kind: 'header' | 'footer' | 'footnotes' | 'endnotes' | 'comments' | 'commentsExtended' }[] = [];
   const wmText = meta.watermark?.trim() || '';
   const emptyHfDoc = (): HfDoc => schema.nodes.doc.create(null, [schema.nodes.paragraph.create()]).toJSON() as HfDoc;
   const hfRef = (json: HfDoc, kind: 'header' | 'footer', type: 'default' | 'first'): string => {
@@ -1515,7 +1750,7 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     if (!json && kind === 'header' && wmText) json = emptyHfDoc();
     if (!json) return '';
     const node = schema.nodeFromJSON(json);
-    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1 };
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1, seq: new Map() };
     let inner = blocksXml(sub, node);
     if (!inner.endsWith('</w:p>')) inner += '<w:p/>';
     if (kind === 'header' && wmText) inner = watermarkXml(wmText, parts.length + 1) + inner;
@@ -1546,6 +1781,41 @@ export function exportDocx(doc: PMNode, meta: DocMeta, title = '', history = '')
     `<w:document xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
     `<w:body>${body}${sect}</w:body></w:document>`;
+
+  const cp = commentsParts(ctx);
+  if (cp) {
+    parts.push({ path: 'word/comments.xml', tag: 'comments', kind: 'comments', rels: [], xml: cp.comments });
+    parts.push({ path: 'word/commentsExtended.xml', tag: 'commentsEx', kind: 'commentsExtended', rels: [], xml: cp.ext });
+    relId(ctx, `${REL_BASE}/comments`, 'comments.xml');
+    relId(ctx, 'http://schemas.microsoft.com/office/2011/relationships/commentsExtended', 'commentsExtended.xml');
+  }
+  // Сноски: свои части с разделителями Word и текстами (абзацы — как в основном тексте, со своими связями).
+  for (const end of [false, true]) {
+    const list = ctx.notes[end ? 'end' : 'foot'];
+    if (!list.length) continue;
+    const kind = end ? 'endnotes' : 'footnotes', tag = end ? 'endnote' : 'footnote', ref = end ? 'endnoteRef' : 'footnoteRef';
+    const sub: ExportCtx = { ...ctx, rels: [], linkIds: new Map(), nextRel: 1, notes: { foot: [], end: [] } };
+    const notes = list.map((n, i) => {
+      let inner = '';
+      try { inner = blocksXml(sub, schema.nodes.doc.create(null, (n.attrs.content as Record<string, unknown>[]).map((j) => schema.nodeFromJSON(j)))); } catch { inner = ''; }
+      const mark = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${ref}/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>`;
+      // Номер сноски — в начало первого абзаца.
+      inner = inner.startsWith('<w:p>') || inner.startsWith('<w:p ')
+        ? inner.replace(/^(<w:p\b[^>]*>(?:<w:pPr>.*?<\/w:pPr>)?)/, `$1${mark}`)
+        : `<w:p>${mark}</w:p>${inner}`;
+      return `<w:${tag} w:id="${i + 1}">${inner}</w:${tag}>`;
+    }).join('');
+    parts.push({
+      path: `word/${kind}.xml`, tag: kind, kind, rels: sub.rels,
+      xml: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<w:${kind} xmlns:w="${NS.w}" xmlns:r="${NS.r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+        `<w:${tag} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:${tag}>` +
+        `<w:${tag} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:${tag}>` +
+        `${notes}</w:${kind}>`,
+    });
+    relId(ctx, `${REL_BASE}/${kind}`, `${kind}.xml`);
+  }
 
   const base = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const fixed = [
