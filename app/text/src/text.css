@@ -481,3 +481,13 @@ svg.ic-l, svg.ic-m { display: none; }
 :root[data-rev-view] .ProseMirror del.rev-del { color: inherit; text-decoration: none; }
 :root[data-rev-view] .ProseMirror [data-rev-block] { box-shadow: none; }
 .compare-dialog .dlg-row select { max-width: 360px; }
+
+/* Окна «Иллюстрации»: фигуры, значки, диаграммы, схемы. */
+.graphics-dialog { width: min(640px, 96vw); }
+.graphics-dialog textarea, .graphics-dialog input[type=search] { width: 100%; box-sizing: border-box; }
+.gfx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 4px; margin: 6px 0; max-height: 220px; overflow: auto; }
+.gfx-grid button { height: 44px; padding: 2px; display: flex; align-items: center; justify-content: center; }
+.gfx-grid button.on { outline: 2px solid var(--accent, #2b579a); }
+.gfx-grid button svg { max-width: 100%; max-height: 100%; }
+.gfx-preview { min-height: 60px; max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; padding: 6px; background: #fff; text-align: center; margin: 6px 0; }
+.gfx-preview svg { max-width: 100%; height: auto; }

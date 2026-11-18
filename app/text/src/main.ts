@@ -34,6 +34,7 @@ import { dialog, el, setRestoreFocus, toast } from './ui';
 import { deadlineDialog, nameDialog, sumDialog } from './russian-ui';
 import { dateRu } from './russian';
 import { mergeDialog } from './merge-ui';
+import { chartDialog, iconsDialog, schemeDialog as diagramSchemeDialog, shapeDialog, videoDialog } from './graphics';
 import { compareDialog, compareSides, goRevision, resolveAll, resolveOne, REV_VIEW_LABEL, type RevView } from './compare-ui';
 import { listRevisions } from './compare';
 import { compatDialog } from './compat-ui';
@@ -913,6 +914,11 @@ register(
   { id: 'edit.replace', label: 'Заменить', keys: ['Ctrl+KeyH'], run: () => openFind(true) },
   { id: 'insert.table', label: 'Таблица', run: () => tableDialog() },
   { id: 'insert.image', label: 'Рисунок', run: () => $('image-input').click() },
+  { id: 'insert.shape', label: 'Фигура…', keywords: ['фигура', 'прямоугольник', 'овал', 'стрелка', 'звезда', 'выноска'], run: () => shapeDialog(view) },
+  { id: 'insert.icon', label: 'Значки…', keywords: ['значок', 'иконка', 'пиктограмма'], run: () => iconsDialog(view) },
+  { id: 'insert.chart', label: 'Диаграмма…', keywords: ['диаграмма', 'график', 'гистограмма', 'круговая', 'chart'], run: () => chartDialog(view) },
+  { id: 'insert.scheme', label: 'Схема (SmartArt)…', keywords: ['схема', 'smartart', 'процесс', 'оргструктура', 'иерархия', 'блок-схема'], run: () => diagramSchemeDialog(view) },
+  { id: 'insert.video', label: 'Видео из интернета…', keywords: ['видео', 'ролик', 'youtube', 'rutube', 'ссылка'], run: () => videoDialog(view) },
   { id: 'insert.excel', label: 'Таблица из Excel (.xlsx) с формулами', keywords: ['excel', 'xlsx', 'эксель', 'формулы', 'импорт'], run: () => $('xlsx-input').click() },
   { id: 'insert.link', label: 'Гиперссылка', keys: ['Ctrl+KeyK'], run: () => linkDialog() },
   { id: 'insert.sumWords', label: 'Сумма прописью', keywords: ['сумма', 'рубли', 'копейки', 'число словами'], run: () => sumDialog(active) },
@@ -1293,6 +1299,16 @@ const TABS: RibbonTab[] = [
           { type: 'large', command: 'insert.excel', icon: 'excel_table', label: 'Из Excel' },
           { type: 'large', command: 'insert.image', icon: 'image', label: 'Рисунок' },
           { type: 'large', command: 'insert.textbox', icon: 'text_box', label: 'Надпись' },
+        ],
+      },
+      {
+        name: 'Иллюстрации',
+        items: [
+          { type: 'large', command: 'insert.shape', icon: 'shapes', label: 'Фигуры' },
+          { type: 'large', command: 'insert.icon', icon: 'emoji', label: 'Значки' },
+          { type: 'large', command: 'insert.chart', icon: 'chart_bar', label: 'Диаграмма' },
+          { type: 'large', command: 'insert.scheme', icon: 'flowchart', label: 'Схема' },
+          { type: 'large', command: 'insert.video', icon: 'video', label: 'Видео' },
         ],
       },
       { name: 'Ссылки', items: [{ type: 'large', command: 'insert.link', icon: 'link', label: 'Ссылка' }] },

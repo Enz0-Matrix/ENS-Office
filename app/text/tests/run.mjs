@@ -3450,6 +3450,83 @@ await test('сравнение: версия из истории против т
   eq(r, [['ins', ' с дополнением']], 'вставка относительно версии');
   await p.context().close();
 });
+
+// --- Вставка: иллюстрации
+const images = (p) => p.evaluate(() => { const out = []; window.ens.view.state.doc.descendants((n) => { if (n.type.name === 'image') out.push({ src: n.attrs.src.slice(0, 22), w: n.attrs.width, h: n.attrs.height, alt: n.attrs.alt, href: n.marks.find((m) => m.type.name === 'link')?.attrs.href ?? null }); }); return out; });
+await test('иллюстрации: фигура с текстом и значок из поиска вставляются картинкой PNG', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.evaluate(() => window.ens.run('insert.shape'));
+  await p.waitForSelector('.graphics-dialog .gfx-grid button');
+  await p.click('.graphics-dialog .gfx-grid button[title="Звезда"]');
+  await p.fill('.graphics-dialog input[aria-label="Текст фигуры"]', 'Важно');
+  ok(await p.$('.graphics-dialog .gfx-preview svg polygon'), 'предпросмотр');
+  await p.click('.graphics-dialog button.primary');
+  await p.waitForFunction(() => { let n = 0; window.ens.view.state.doc.descendants((x) => { if (x.type.name === 'image') n++; }); return n === 1; });
+  await p.evaluate(() => window.ens.run('insert.icon'));
+  await p.waitForSelector('.graphics-dialog input[type=search]');
+  await p.fill('.graphics-dialog input[type=search]', 'почта');
+  eq(await p.$$eval('.graphics-dialog .gfx-grid button', (b) => b.length), 1, 'поиск значка по-русски');
+  await p.click('.graphics-dialog .gfx-grid button');
+  await p.waitForFunction(() => { let n = 0; window.ens.view.state.doc.descendants((x) => { if (x.type.name === 'image') n++; }); return n === 2; });
+  const r = await images(p);
+  eq(r.map((x) => [x.src, x.alt]), [['data:image/png;base64,', 'Фигура: звезда — Важно'], ['data:image/png;base64,', 'Значок: почта']], 'картинки PNG с описанием');
+  eq([r[0].w, r[0].h, r[1].w], [151, 95, 76], 'размеры: 4×2,5 см и средний значок');
+  await p.context().close();
+});
+await test('иллюстрации: диаграмма из таблицы под курсором встаёт под таблицей, данные — в описании', async () => {
+  const p = await page();
+  await p.evaluate(() => {
+    const E = window.ens, s = E.schema, P = (t) => s.nodes.paragraph.create(null, t ? s.text(t) : null);
+    const row = (...t) => s.nodes.table_row.create(null, t.map((x) => s.nodes.table_cell.create(null, P(x))));
+    E.loadDoc(s.nodes.doc.create(null, [s.nodes.table.create(null, [row('Год', 'Доход', 'Расход'), row('2024', '120', '90'), row('2025', '150,5', '100')]), P('После')]), E.getMeta(), 'ch');
+    E.view.dispatch(E.view.state.tr.setSelection(E.pm.TextSelection.create(E.view.state.doc, 4)));
+  });
+  await p.evaluate(() => window.ens.run('insert.chart'));
+  await p.waitForSelector('.graphics-dialog .gfx-preview svg rect');
+  eq(await p.$$eval('.graphics-dialog .gfx-preview svg rect[fill="#4472C4"]', (e) => e.length) >= 2, true, 'столбцы первого ряда');
+  await p.fill('.graphics-dialog input[aria-label="Название диаграммы"]', 'Доходы и расходы');
+  await p.click('.graphics-dialog button.primary');
+  await p.waitForFunction(() => { let n = 0; window.ens.view.state.doc.descendants((x) => { if (x.type.name === 'image') n++; }); return n === 1; });
+  const r = await p.evaluate(() => { const d = window.ens.view.state.doc; return { second: d.child(1).firstChild?.type.name, alt: d.child(1).firstChild?.attrs.alt }; });
+  eq(r.second, 'image', 'диаграмма сразу под таблицей');
+  eq(r.alt, 'Диаграмма (гистограмма): Доходы и расходы. ; Доход; Расход\n2024; 120; 90\n2025; 150.5; 100', 'данные в описании');
+  await p.context().close();
+});
+await test('иллюстрации: схема-процесс и оргструктура, видео-обложка со ссылкой — и в docx ссылка остаётся', async () => {
+  const p = await page();
+  await p.click('.ProseMirror');
+  await p.evaluate(() => window.ens.run('insert.scheme'));
+  await p.waitForSelector('.graphics-dialog .gfx-preview svg');
+  eq(await p.$$eval('.graphics-dialog .gfx-preview svg rect', (e) => e.length), 4, 'процесс: четыре блока');
+  await p.selectOption('.graphics-dialog select[aria-label="Вид схемы"]', 'hierarchy');
+  eq(await p.$$eval('.graphics-dialog .gfx-preview svg rect', (e) => e.length), 6, 'иерархия: шесть блоков');
+  ok(await p.$('.graphics-dialog .gfx-preview svg path'), 'линии подчинения');
+  await p.click('.graphics-dialog button.primary');
+  await p.waitForFunction(() => { let n = 0; window.ens.view.state.doc.descendants((x) => { if (x.type.name === 'image') n++; }); return n === 1; });
+  await p.evaluate(() => window.ens.run('insert.video'));
+  await p.waitForSelector('#dialog input[aria-label="Адрес видео"]');
+  await p.fill('#dialog input[aria-label="Адрес видео"]', 'не адрес');
+  await p.click('#dialog button.primary');
+  ok((await p.textContent('#dialog')).includes('http'), 'проверка адреса');
+  await p.fill('#dialog input[aria-label="Адрес видео"]', 'https://rutube.ru/video/abc/');
+  await p.fill('#dialog input[aria-label="Название видео"]', 'Инструкция');
+  await p.click('#dialog button.primary');
+  await p.waitForFunction(() => { let n = 0; window.ens.view.state.doc.descendants((x) => { if (x.type.name === 'image') n++; }); return n === 2; });
+  const r = await images(p);
+  ok(r[0].alt.startsWith('Схема (иерархия): Директор;'), r[0].alt);
+  eq([r[1].alt, r[1].href, r[1].w], ['Видео: Инструкция — https://rutube.ru/video/abc/', 'https://rutube.ru/video/abc/', 480], 'обложка видео со ссылкой');
+  const back = await p.evaluate(() => {
+    const E = window.ens, bytes = E.exportDocx(E.view.state.doc, E.getMeta(), 'x');
+    const xml = new TextDecoder().decode(E.unzip(bytes)['word/document.xml']);
+    const b = E.importDocx(bytes); const out = []; b.doc.descendants((n) => { if (n.type.name === 'image') out.push([n.attrs.alt, n.marks.find((m) => m.type.name === 'link')?.attrs.href ?? null]); });
+    return { out, hyper: /<w:hyperlink r:id="rId\d+"[^>]*><w:r><w:drawing>/.test(xml), lossy: b.meta.lossy };
+  });
+  ok(back.hyper, 'в docx обложка внутри гиперссылки');
+  eq(back.out[1], ['Видео: Инструкция — https://rutube.ru/video/abc/', 'https://rutube.ru/video/abc/'], 'ссылка и описание после круга');
+  eq(back.lossy, [], 'без потерь');
+  await p.context().close();
+});
 ok(errors.length === 0, `ошибки страницы: ${errors.join('; ')}`);
 await browser.close();
 server.kill();

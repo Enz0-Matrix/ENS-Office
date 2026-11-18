@@ -57,12 +57,17 @@ import compare24 from '@fluentui/svg-icons/icons/branch_compare_24_regular.svg?r
 import checkCircle24 from '@fluentui/svg-icons/icons/checkmark_circle_24_regular.svg?raw';
 import arrowUp24 from '@fluentui/svg-icons/icons/arrow_up_24_regular.svg?raw';
 import arrowDown24 from '@fluentui/svg-icons/icons/arrow_down_24_regular.svg?raw';
+import shapes24 from '@fluentui/svg-icons/icons/shapes_24_regular.svg?raw';
+import emoji24 from '@fluentui/svg-icons/icons/emoji_24_regular.svg?raw';
+import flow24 from '@fluentui/svg-icons/icons/flowchart_24_regular.svg?raw';
+import video24 from '@fluentui/svg-icons/icons/video_24_regular.svg?raw';
 import maximize24 from '@fluentui/svg-icons/icons/arrow_maximize_24_regular.svg?raw';
 import minimize24 from '@fluentui/svg-icons/icons/arrow_minimize_24_regular.svg?raw';
 
 Object.assign(ICONS, {
   crop_24: crop24, resize_image_24: resizeImage24, image_edit_24: imageEdit24, image_arrow_counterclockwise_24: imageReset24,
   branch_compare_24: compare24, checkmark_circle_24: checkCircle24, arrow_up_24: arrowUp24, arrow_down_24: arrowDown24,
+  shapes_24: shapes24, emoji_24: emoji24, flowchart_24: flow24, video_24: video24,
   position_to_front_24: toFront24, position_to_back_24: toBack24, delete_24: delete24, arrow_maximize_24: maximize24, arrow_minimize_24: minimize24,
 });
 
